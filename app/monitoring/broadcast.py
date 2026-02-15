@@ -3,6 +3,7 @@
 import json
 import logging
 from collections import defaultdict
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
 from fastapi import WebSocket
@@ -40,11 +41,12 @@ class ConnectionManager:
     ) -> None:
         """Connect a new WebSocket client.
 
+        Note: websocket.accept() should be called before this method.
+
         Args:
             websocket: WebSocket connection
             thread_id: Optional thread ID to subscribe to specific workflows
         """
-        await websocket.accept()
         self._all_connections.add(websocket)
 
         if thread_id:
@@ -164,6 +166,7 @@ class ConnectionManager:
         """
         message = {
             "type": event_type,
+            "timestamp": datetime.now().isoformat(),
             "thread_id": thread_id,
             "agent_name": agent_name,
             "status": status,
@@ -200,6 +203,7 @@ class ConnectionManager:
         """
         message = {
             "type": "workflow_complete",
+            "timestamp": datetime.now().isoformat(),
             "thread_id": thread_id,
             "execution_time": round(execution_time, 3),
             "success": success,
@@ -209,7 +213,9 @@ class ConnectionManager:
         if error:
             message["error"] = error
 
-        await self.broadcast(message, thread_id)
+        # Broadcast to all connections (not just thread_id subscribers)
+        # so monitoring page can see all workflow completions
+        await self.broadcast(message, None)
 
     def get_connection_count(self, thread_id: Optional[str] = None) -> int:
         """Get the number of active connections.

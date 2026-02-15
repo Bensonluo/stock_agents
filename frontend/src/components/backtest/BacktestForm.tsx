@@ -90,7 +90,7 @@ export function BacktestForm() {
               <div className="space-y-2">
                 <Label htmlFor="strategy">Strategy</Label>
                 <Select value={strategy} onValueChange={setStrategy} disabled={loading}>
-                  <SelectTrigger>
+                  <SelectTrigger id="strategy">
                     <SelectValue placeholder="Select strategy" />
                   </SelectTrigger>
                   <SelectContent>

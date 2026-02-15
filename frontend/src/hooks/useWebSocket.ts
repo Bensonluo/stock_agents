@@ -10,13 +10,25 @@ const MAX_MESSAGES = 500 // Maximum messages to store in memory
 // Allowed message types for validation
 const ALLOWED_MESSAGE_TYPES = [
   'agent_event',
+  'agent_start',
+  'agent_success',
+  'agent_failure',
+  'agent_timeout',
+  'agent_retry',
+  'workflow_complete',
+  'initial_state',
+  'system_update',
   'health_update',
+  'heartbeat',
   'circuit_breaker',
   'alert',
   'metric',
   'error',
   'subscribe',
   'unsubscribe',
+  'subscription_updated',
+  'subscription_cleared',
+  'filters_updated',
   'pong',
 ] as const
 
@@ -25,9 +37,16 @@ type AllowedMessageType = (typeof ALLOWED_MESSAGE_TYPES)[number]
 // Type definitions for WebSocket messages
 export interface WebSocketMessage {
   type: AllowedMessageType
-  timestamp: string
+  timestamp?: string
   agent_name?: string
   event_type?: string
+  thread_id?: string
+  status?: string
+  step?: number
+  execution_time?: number
+  error?: string
+  success?: boolean
+  total_steps?: number
   data?: Record<string, unknown>
 }
 
@@ -95,21 +114,34 @@ function isValidWebSocketMessage(data: unknown): data is WebSocketMessage {
     return false
   }
 
-  // Validate timestamp if present
+  // Validate optional string fields if present
   if (data.timestamp !== undefined && !isValidString(data.timestamp)) {
     console.warn('[WebSocket] Invalid message: "timestamp" must be a string')
     return false
   }
 
-  // Validate agent_name if present
   if (data.agent_name !== undefined && !isValidString(data.agent_name)) {
     console.warn('[WebSocket] Invalid message: "agent_name" must be a string')
     return false
   }
 
-  // Validate event_type if present
   if (data.event_type !== undefined && !isValidString(data.event_type)) {
     console.warn('[WebSocket] Invalid message: "event_type" must be a string')
+    return false
+  }
+
+  if (data.thread_id !== undefined && !isValidString(data.thread_id)) {
+    console.warn('[WebSocket] Invalid message: "thread_id" must be a string')
+    return false
+  }
+
+  if (data.status !== undefined && !isValidString(data.status)) {
+    console.warn('[WebSocket] Invalid message: "status" must be a string')
+    return false
+  }
+
+  if (data.error !== undefined && !isValidString(data.error)) {
+    console.warn('[WebSocket] Invalid message: "error" must be a string')
     return false
   }
 

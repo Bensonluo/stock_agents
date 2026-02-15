@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo, type ReactNode } from 'react'
+import { useEffect, useState, useMemo, useCallback, type ReactNode } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
@@ -16,6 +16,8 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react'
+import { WorkflowGraph, WORKFLOW_GRAPH } from './WorkflowGraph'
+import { AgentDetailPanel, type AgentPanelInfo, type AgentLogEntry } from './AgentDetailPanel'
 
 // Whitelist of allowed agent names for display validation
 const ALLOWED_AGENT_NAMES = [
@@ -138,12 +140,32 @@ export function RealTimeMonitor({ maxEvents = 20, className = '' }: RealTimeMoni
     status: 'idle',
   })
 
+  // Agent detail panel state
+  const [selectedAgent, setSelectedAgent] = useState<AgentPanelInfo | null>(null)
+  const [isPanelOpen, setIsPanelOpen] = useState(false)
+  const [agentLogs, setAgentLogs] = useState<Record<string, AgentLogEntry[]>>({})
+
+  // Close panel handler
+  const closePanel = useCallback(() => {
+    setSelectedAgent(null)
+    setIsPanelOpen(false)
+  }, [])
+
   // Update agent states based on WebSocket messages
   useEffect(() => {
     const latestMessages = messages.slice(-maxEvents)
 
     for (const message of latestMessages) {
-      if (message.type === 'agent_event' || message.type === 'health_update') {
+      // Handle all agent-related message types
+      const isAgentMessage = message.type === 'agent_event' ||
+        message.type === 'agent_start' ||
+        message.type === 'agent_success' ||
+        message.type === 'agent_failure' ||
+        message.type === 'agent_timeout' ||
+        message.type === 'agent_retry' ||
+        message.type === 'health_update'
+
+      if (isAgentMessage) {
         // Safely extract agent name with validation
         const agentNameFromMsg = validateAgentName(message.agent_name)
         const agentNameFromData = validateAgentName(message.data?.agent_name)
@@ -156,18 +178,30 @@ export function RealTimeMonitor({ maxEvents = 20, className = '' }: RealTimeMoni
         const displayName = AGENT_DISPLAY_NAMES[agentName] ||
           agentName.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())
 
-        // Determine status from message data
+        // Determine status from message type or status field
         let status: AgentStatus = 'idle'
-        const eventType = safeExtractString(message.event_type || message.data?.event_type, '')
 
-        if (eventType === 'started' || eventType === 'running') {
+        // Check message type first
+        if (message.type === 'agent_start') {
           status = 'running'
-        } else if (eventType === 'completed' || eventType === 'success') {
+        } else if (message.type === 'agent_success') {
           status = 'completed'
-        } else if (eventType === 'failed' || eventType === 'error') {
+        } else if (message.type === 'agent_failure' || message.type === 'agent_timeout') {
           status = 'failed'
-        } else if (eventType === 'retrying') {
+        } else if (message.type === 'agent_retry') {
           status = 'retrying'
+        } else {
+          // Fallback: check status field from backend
+          const statusField = safeExtractString((message as any).status, '')
+          if (statusField === 'running') {
+            status = 'running'
+          } else if (statusField === 'completed') {
+            status = 'completed'
+          } else if (statusField === 'failed') {
+            status = 'failed'
+          } else if (statusField === 'retrying') {
+            status = 'retrying'
+          }
         }
 
         // Get health score from message data with safe extraction
@@ -188,6 +222,50 @@ export function RealTimeMonitor({ maxEvents = 20, className = '' }: RealTimeMoni
             lastExecutionTime: timestamp,
           },
         } as Record<string, AgentState>))
+
+        // Extract log entry from message
+        const messageContent = safeExtractString(message.data?.message, '')
+        const logLevel = safeExtractString(message.data?.level, 'info')
+
+        // Create log entry for the event
+        const logMessage = messageContent || `${displayName}: ${message.type.replace('agent_', '')}`
+        const logEntry: AgentLogEntry = {
+          timestamp,
+          level: logLevel as AgentLogEntry['level'],
+          message: logMessage,
+          data: message.data,
+        }
+
+        setAgentLogs(prev => ({
+          ...prev,
+          [agentName]: [...(prev[agentName] || []), logEntry].slice(-100), // Keep last 100 logs per agent
+        }))
+      }
+
+      // Update workflow progress based on agent messages
+      if (message.type === 'agent_start') {
+        setActiveWorkflow(prev => ({
+          ...prev,
+          status: 'running',
+        }))
+        // Update current step based on step field
+        const step = safeExtractNumber((message as any).step, 0)
+        if (step > 0) {
+          setActiveWorkflow(prev => ({
+            ...prev,
+            currentStep: step,
+          }))
+        }
+      }
+
+      // Handle workflow_complete message
+      if (message.type === 'workflow_complete') {
+        const success = (message as any).success !== false
+        setActiveWorkflow(prev => ({
+          ...prev,
+          status: success ? 'completed' : 'failed',
+          currentStep: WORKFLOW_STEPS.length,
+        }))
       }
 
       // Update workflow progress
@@ -379,6 +457,38 @@ export function RealTimeMonitor({ maxEvents = 20, className = '' }: RealTimeMoni
     )
   }
 
+  // Convert agent states to workflow node statuses for WorkflowGraph
+  const workflowNodeStatuses = useMemo(() => {
+    const statuses: Record<string, { status: 'pending' | 'running' | 'completed' | 'failed'; executionTime?: number; error?: string }> = {}
+
+    WORKFLOW_GRAPH.nodes.forEach((node) => {
+      const agentState = agentStates[node.id]
+      if (agentState) {
+        statuses[node.id] = {
+          status: agentState.status === 'idle' ? 'pending' : agentState.status === 'retrying' ? 'running' : agentState.status,
+        }
+      } else {
+        statuses[node.id] = { status: 'pending' }
+      }
+    })
+
+    return statuses
+  }, [agentStates])
+
+  // Handle workflow node click
+  const handleNodeClick = useCallback((nodeId: string) => {
+    const agentState = agentStates[nodeId]
+    if (agentState) {
+      setSelectedAgent({
+        name: agentState.name,
+        displayName: agentState.displayName,
+        status: agentState.status === 'retrying' ? 'running' : agentState.status,
+        healthScore: agentState.healthScore,
+      })
+      setIsPanelOpen(true)
+    }
+  }, [agentStates])
+
   const agentEntries = Object.entries(agentStates)
 
   return (
@@ -400,65 +510,12 @@ export function RealTimeMonitor({ maxEvents = 20, className = '' }: RealTimeMoni
         </div>
       </div>
 
-      {/* Active Workflow Progress */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span className="flex items-center gap-2">
-              <Activity className="h-5 w-5" />
-              Active Workflow
-            </span>
-            <Badge
-              variant={activeWorkflow.status === 'completed' ? 'success' : activeWorkflow.status === 'failed' ? 'destructive' : 'default'}
-            >
-              {activeWorkflow.status.charAt(0).toUpperCase() + activeWorkflow.status.slice(1)}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">
-                Step {activeWorkflow.currentStep} of {activeWorkflow.totalSteps}
-              </span>
-              <span className="font-medium">{Math.round(workflowProgress)}%</span>
-            </div>
-            <Progress value={workflowProgress} className="h-2" />
-          </div>
-
-          <div className="grid grid-cols-7 gap-2">
-            {WORKFLOW_STEPS.map((step, index) => {
-              const isCompleted = index < activeWorkflow.currentStep
-              const isCurrent = index === activeWorkflow.currentStep
-              const isFailed = activeWorkflow.status === 'failed' && index === activeWorkflow.currentStep
-
-              return (
-                <div
-                  key={step.key}
-                  className={`
-                    flex flex-col items-center justify-center p-2 rounded-lg border transition-all
-                    ${isCompleted ? 'bg-green-500/10 border-green-500/30' : ''}
-                    ${isCurrent ? 'bg-blue-500/10 border-blue-500/30 ring-2 ring-blue-500/20' : ''}
-                    ${isFailed ? 'bg-destructive/10 border-destructive/30' : ''}
-                    ${!isCompleted && !isCurrent ? 'bg-muted/30 border-border' : ''}
-                  `}
-                >
-                  <div className={`
-                    w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium
-                    ${isCompleted ? 'bg-green-500 text-white' : ''}
-                    ${isCurrent ? 'bg-blue-500 text-white' : ''}
-                    ${isFailed ? 'bg-destructive text-white' : ''}
-                    ${!isCompleted && !isCurrent ? 'bg-muted text-muted-foreground' : ''}
-                  `}>
-                    {isCompleted ? <CheckCircle2 className="h-4 w-4" /> : isFailed ? <XCircle className="h-4 w-4" /> : index + 1}
-                  </div>
-                  <span className="text-xs mt-1 text-center leading-tight">{step.label.split(' ')[0]}</span>
-                </div>
-              )
-            })}
-          </div>
-        </CardContent>
-      </Card>
+      {/* Active Workflow Graph */}
+      <WorkflowGraph
+        nodeStatuses={workflowNodeStatuses}
+        onNodeClick={handleNodeClick}
+        selectedNodeId={selectedAgent?.name}
+      />
 
       {/* Agent Status Cards */}
       <Card>
@@ -480,7 +537,16 @@ export function RealTimeMonitor({ maxEvents = 20, className = '' }: RealTimeMoni
               {agentEntries.map(([agentKey, agent]) => (
                 <div
                   key={agentKey}
-                  className={`p-4 rounded-lg border transition-all ${getHealthScoreBg(agent.healthScore)}`}
+                  className={`p-4 rounded-lg border transition-all cursor-pointer hover:border-primary ${getHealthScoreBg(agent.healthScore)}`}
+                  onClick={() => {
+                    setSelectedAgent({
+                      name: agent.name,
+                      displayName: agent.displayName,
+                      status: agent.status === 'retrying' ? 'running' : agent.status,
+                      healthScore: agent.healthScore,
+                    })
+                    setIsPanelOpen(true)
+                  }}
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-2">
@@ -570,6 +636,13 @@ export function RealTimeMonitor({ maxEvents = 20, className = '' }: RealTimeMoni
           )}
         </CardContent>
       </Card>
+
+      {/* Agent Detail Panel */}
+      <AgentDetailPanel
+        agent={selectedAgent}
+        logs={selectedAgent ? (agentLogs[selectedAgent.name] || []) : []}
+        onClose={closePanel}
+      />
     </div>
   )
 }

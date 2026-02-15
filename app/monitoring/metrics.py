@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import statistics
 
@@ -259,4 +259,39 @@ class EventLog:
             "agent": self.agent,
             "timestamp": self.timestamp.isoformat(),
             "data": self.data,
+        }
+
+
+@dataclass
+class AgentExecutionLog:
+    """智能体执行日志 - 记录详细执行步骤
+
+    This class tracks detailed execution steps for agents:
+    - Step-by-step logging with log levels
+    - Thread-based correlation for workflow tracking
+    - Optional timing data for performance analysis
+    """
+
+    log_id: str
+    thread_id: str
+    agent_name: str
+    step: int
+    level: str  # 'info', 'warning', 'error', 'debug'
+    message: str
+    timestamp: datetime
+    data: Dict[str, Any] = field(default_factory=dict)
+    duration_ms: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, any]:
+        """Convert log to dictionary."""
+        return {
+            "log_id": self.log_id,
+            "thread_id": self.thread_id,
+            "agent_name": self.agent_name,
+            "step": self.step,
+            "level": self.level,
+            "message": self.message,
+            "timestamp": self.timestamp.isoformat(),
+            "data": self.data,
+            "duration_ms": self.duration_ms,
         }

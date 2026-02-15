@@ -2,10 +2,10 @@
 
 import uuid
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from app.orchestration.state import AgentState
 from app.monitoring.metrics import (
+    AgentExecutionLog,
     Alert,
     AlertSeverity,
     AgentMetrics,
@@ -13,6 +13,9 @@ from app.monitoring.metrics import (
     EventLog,
 )
 from app.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from app.orchestration.state import AgentState
 
 logger = get_logger(__name__)
 
@@ -45,6 +48,7 @@ class AgentMonitor:
         self.alert_handlers: List[Callable] = []
         self.event_log: List[EventLog] = []
         self.alerts: List[Alert] = []
+        self.execution_logs: Dict[str, List[AgentExecutionLog]] = {}
 
         self._lock = None  # Could use threading.Lock for thread safety
         self.broadcast_manager = None  # Optional ConnectionManager for WebSocket broadcasts
@@ -62,7 +66,7 @@ class AgentMonitor:
     def on_agent_start(
         self,
         agent_name: str,
-        state: AgentState,
+        state: "AgentState",
         metadata: Optional[Dict] = None,
     ) -> None:
         """Called when an agent starts execution.
@@ -82,6 +86,7 @@ class AgentMonitor:
             agent=agent_name,
             timestamp=datetime.now(),
             data={
+                "thread_id": state.get("thread_id"),
                 "symbols": state.get("symbols", []),
                 "query": state.get("query", ""),
                 "step": state.get("current_step", 0),
@@ -98,6 +103,7 @@ class AgentMonitor:
         execution_time: float,
         result: Optional[Dict] = None,
         metadata: Optional[Dict] = None,
+        thread_id: Optional[str] = None,
     ) -> None:
         """Called when an agent completes successfully.
 
@@ -106,6 +112,7 @@ class AgentMonitor:
             execution_time: Time taken for execution in seconds
             result: Optional result data
             metadata: Optional additional metadata
+            thread_id: Optional workflow thread ID
         """
         self.register_agent(agent_name)
 
@@ -121,6 +128,7 @@ class AgentMonitor:
             agent=agent_name,
             timestamp=datetime.now(),
             data={
+                "thread_id": thread_id,
                 "execution_time": execution_time,
                 "result_summary": self._summarize_result(result) if result else {},
                 "metadata": metadata or {},
@@ -140,6 +148,7 @@ class AgentMonitor:
         execution_time: float,
         error_type: str = "UnknownError",
         metadata: Optional[Dict] = None,
+        thread_id: Optional[str] = None,
     ) -> None:
         """Called when an agent fails.
 
@@ -149,6 +158,7 @@ class AgentMonitor:
             execution_time: Time taken before failure
             error_type: Type of error
             metadata: Optional additional metadata
+            thread_id: Optional workflow thread ID
         """
         self.register_agent(agent_name)
 
@@ -166,6 +176,7 @@ class AgentMonitor:
             agent=agent_name,
             timestamp=datetime.now(),
             data={
+                "thread_id": thread_id,
                 "error": error,
                 "error_type": error_type,
                 "execution_time": execution_time,
@@ -442,6 +453,137 @@ class AgentMonitor:
         """Clear the alert history."""
         self.alerts.clear()
         logger.info("Cleared alerts")
+
+    # ========== Execution Logging Methods ==========
+
+    def log_agent_step(
+        self,
+        thread_id: str,
+        agent_name: str,
+        step: int,
+        level: str,
+        message: str,
+        data: Optional[Dict] = None,
+        duration_ms: Optional[int] = None,
+    ) -> None:
+        """Record an agent execution step.
+
+        Args:
+            thread_id: Thread ID for correlating logs across a workflow
+            agent_name: Name of the agent
+            step: Step number in the execution sequence
+            level: Log level ('info', 'warning', 'error', 'debug')
+            message: Log message
+            data: Optional additional data
+            duration_ms: Optional duration in milliseconds
+        """
+        log_entry = AgentExecutionLog(
+            log_id=str(uuid.uuid4()),
+            thread_id=thread_id,
+            agent_name=agent_name,
+            step=step,
+            level=level,
+            message=message,
+            timestamp=datetime.now(),
+            data=data or {},
+            duration_ms=duration_ms,
+        )
+
+        # Initialize agent log list if not exists
+        if agent_name not in self.execution_logs:
+            self.execution_logs[agent_name] = []
+
+        self.execution_logs[agent_name].append(log_entry)
+
+        # Limit log size per agent
+        if len(self.execution_logs[agent_name]) > 5000:
+            self.execution_logs[agent_name] = self.execution_logs[agent_name][-5000:]
+
+        # Log based on level
+        log_msg = f"[{thread_id}] {agent_name} step={step}: {message}"
+        if level == "error":
+            logger.error(log_msg)
+        elif level == "warning":
+            logger.warning(log_msg)
+        elif level == "debug":
+            logger.debug(log_msg)
+        else:
+            logger.info(log_msg)
+
+    def get_agent_logs(
+        self,
+        agent_name: str,
+        thread_id: Optional[str] = None,
+        level: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict]:
+        """Get logs for a specific agent.
+
+        Args:
+            agent_name: Name of the agent
+            thread_id: Optional thread ID filter
+            level: Optional log level filter
+            limit: Maximum number of logs to return
+
+        Returns:
+            List of log entries as dictionaries
+        """
+        logs = self.execution_logs.get(agent_name, [])
+
+        # Apply filters
+        if thread_id:
+            logs = [log for log in logs if log.thread_id == thread_id]
+        if level:
+            logs = [log for log in logs if log.level == level]
+
+        # Get most recent logs
+        logs = logs[-limit:]
+
+        return [log.to_dict() for log in reversed(logs)]
+
+    def get_workflow_logs(
+        self,
+        thread_id: str,
+        limit: int = 500,
+    ) -> List[Dict]:
+        """Get all logs for a workflow thread.
+
+        Args:
+            thread_id: Thread ID to filter by
+            limit: Maximum number of logs to return
+
+        Returns:
+            List of log entries as dictionaries, sorted by timestamp
+        """
+        all_logs = []
+
+        # Collect logs from all agents for this thread
+        for agent_logs in self.execution_logs.values():
+            for log in agent_logs:
+                if log.thread_id == thread_id:
+                    all_logs.append(log)
+
+        # Sort by timestamp
+        all_logs.sort(key=lambda x: x.timestamp)
+
+        # Apply limit
+        all_logs = all_logs[-limit:]
+
+        return [log.to_dict() for log in all_logs]
+
+    def clear_agent_logs(self, agent_name: Optional[str] = None) -> None:
+        """Clear execution logs.
+
+        Args:
+            agent_name: Optional agent name. If None, clears all logs.
+        """
+        if agent_name:
+            if agent_name in self.execution_logs:
+                del self.execution_logs[agent_name]
+                logger.info(f"Cleared execution logs for agent: {agent_name}")
+        else:
+            self.execution_logs.clear()
+            logger.info("Cleared all execution logs")
 
     # ========== Private Methods ==========
 

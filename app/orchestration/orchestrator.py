@@ -379,15 +379,42 @@ class MultiAgentOrchestrator:
             )
         monitor.on_agent_start(agent_name, state)
 
+        # Log agent start
+        symbols = state.get("symbols", [])
+        monitor.log_agent_step(
+            thread_id=thread_id,
+            agent_name=agent_name,
+            step=step,
+            level="info",
+            message=f"Starting data collection for symbols: {symbols}",
+            data={"symbols": symbols, "query": state.get("query", "")}
+        )
+
         agent_start_time = time.time()
 
         try:
+            # Log fetching market data
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="debug",
+                message="Fetching market data from yfinance",
+            )
+
             # Execute data collection
             agent_result = await self.data_agent.run(state)
 
             # If we have Chinese symbols, also use AkShare
-            symbols = state.get("symbols", [])
             cn_symbols = [s for s in symbols if s.isdigit() and len(s) == 6]
+            if cn_symbols:
+                monitor.log_agent_step(
+                    thread_id=thread_id,
+                    agent_name=agent_name,
+                    step=step,
+                    level="debug",
+                    message=f"Fetching additional data from AkShare for CN symbols: {cn_symbols}",
+                )
             if cn_symbols:
                 akshare_result = await self.akshare_agent.run(state)
                 # Merge results
@@ -413,6 +440,18 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Log successful completion
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="info",
+                message="Data collection completed successfully",
+                data={"market_data_keys": list(state.get("market_data", {}).keys()) if state.get("market_data") else []},
+                duration_ms=int(execution_time * 1000)
+            )
+
             if monitor.broadcast_manager:
                 await monitor.broadcast_manager.broadcast_agent_event(
                     event_type="agent_success",
@@ -422,11 +461,23 @@ class MultiAgentOrchestrator:
                     step=step,
                     execution_time=execution_time,
                 )
-            monitor.on_agent_success(agent_name, execution_time)
+            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
 
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Data collection node error: {e}")
+
+            # Log failure
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="error",
+                message=f"Data collection failed: {str(e)}",
+                data={"error_type": type(e).__name__},
+                duration_ms=int(execution_time * 1000)
+            )
+
             state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
             agent_status[agent_name] = "failed"
             state["agent_status"] = agent_status
@@ -442,7 +493,7 @@ class MultiAgentOrchestrator:
                     execution_time=execution_time,
                     error=str(e),
                 )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__)
+            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
 
         return AgentState(**state)
 
@@ -483,9 +534,29 @@ class MultiAgentOrchestrator:
             )
         monitor.on_agent_start(agent_name, state)
 
+        # Log agent start
+        symbols = state.get("symbols", [])
+        monitor.log_agent_step(
+            thread_id=thread_id,
+            agent_name=agent_name,
+            step=step,
+            level="info",
+            message=f"Starting technical analysis for symbols: {symbols}",
+            data={"symbols": symbols}
+        )
+
         agent_start_time = time.time()
 
         try:
+            # Log computing indicators
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="debug",
+                message="Computing technical indicators (RSI, MACD, Bollinger Bands, etc.)",
+            )
+
             # Execute technical analysis
             agent_result = await self.technical_agent.run(state)
 
@@ -505,6 +576,22 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Log successful completion
+            technical_data = state.get("technical_analysis", {})
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="info",
+                message="Technical analysis completed successfully",
+                data={
+                    "indicators_computed": list(technical_data.keys()) if technical_data else [],
+                    "symbols_analyzed": symbols
+                },
+                duration_ms=int(execution_time * 1000)
+            )
+
             if monitor.broadcast_manager:
                 await monitor.broadcast_manager.broadcast_agent_event(
                     event_type="agent_success",
@@ -514,11 +601,23 @@ class MultiAgentOrchestrator:
                     step=step,
                     execution_time=execution_time,
                 )
-            monitor.on_agent_success(agent_name, execution_time)
+            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
 
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Technical analysis node error: {e}")
+
+            # Log failure
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="error",
+                message=f"Technical analysis failed: {str(e)}",
+                data={"error_type": type(e).__name__},
+                duration_ms=int(execution_time * 1000)
+            )
+
             state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
             agent_status[agent_name] = "failed"
             state["agent_status"] = agent_status
@@ -534,7 +633,7 @@ class MultiAgentOrchestrator:
                     execution_time=execution_time,
                     error=str(e),
                 )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__)
+            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
 
         return AgentState(**state)
 
@@ -575,9 +674,29 @@ class MultiAgentOrchestrator:
             )
         monitor.on_agent_start(agent_name, state)
 
+        # Log agent start
+        symbols = state.get("symbols", [])
+        monitor.log_agent_step(
+            thread_id=thread_id,
+            agent_name=agent_name,
+            step=step,
+            level="info",
+            message=f"Starting fundamental analysis for symbols: {symbols}",
+            data={"symbols": symbols}
+        )
+
         agent_start_time = time.time()
 
         try:
+            # Log analyzing fundamentals
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="debug",
+                message="Analyzing financial statements, P/E ratios, and company fundamentals",
+            )
+
             # Execute fundamental analysis
             agent_result = await self.fundamental_agent.run(state)
 
@@ -596,6 +715,22 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Log successful completion
+            fundamental_data = state.get("fundamental_analysis", {})
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="info",
+                message="Fundamental analysis completed successfully",
+                data={
+                    "metrics_analyzed": list(fundamental_data.keys()) if fundamental_data else [],
+                    "symbols_analyzed": symbols
+                },
+                duration_ms=int(execution_time * 1000)
+            )
+
             if monitor.broadcast_manager:
                 await monitor.broadcast_manager.broadcast_agent_event(
                     event_type="agent_success",
@@ -605,11 +740,23 @@ class MultiAgentOrchestrator:
                     step=step,
                     execution_time=execution_time,
                 )
-            monitor.on_agent_success(agent_name, execution_time)
+            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
 
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Fundamental analysis node error: {e}")
+
+            # Log failure
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="error",
+                message=f"Fundamental analysis failed: {str(e)}",
+                data={"error_type": type(e).__name__},
+                duration_ms=int(execution_time * 1000)
+            )
+
             state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
             agent_status[agent_name] = "failed"
             state["agent_status"] = agent_status
@@ -625,7 +772,7 @@ class MultiAgentOrchestrator:
                     execution_time=execution_time,
                     error=str(e),
                 )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__)
+            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
 
         return AgentState(**state)
 
@@ -666,9 +813,29 @@ class MultiAgentOrchestrator:
             )
         monitor.on_agent_start(agent_name, state)
 
+        # Log agent start
+        symbols = state.get("symbols", [])
+        monitor.log_agent_step(
+            thread_id=thread_id,
+            agent_name=agent_name,
+            step=step,
+            level="info",
+            message=f"Starting sentiment analysis for symbols: {symbols}",
+            data={"symbols": symbols}
+        )
+
         agent_start_time = time.time()
 
         try:
+            # Log fetching news and analyzing sentiment
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="debug",
+                message="Fetching news and analyzing sentiment with LLM",
+            )
+
             # Execute sentiment analysis - call process() directly like other StatelessAgent nodes
             agent_result = await self.sentiment_agent.process(state)
             # Convert numpy types before assigning to prevent serialization issues
@@ -680,6 +847,22 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Log successful completion
+            sentiment_data = state.get("sentiment_analysis", {})
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="info",
+                message="Sentiment analysis completed successfully",
+                data={
+                    "overall_sentiment": sentiment_data.get("overall_sentiment"),
+                    "news_count": len(sentiment_data.get("news_items", []))
+                },
+                duration_ms=int(execution_time * 1000)
+            )
+
             if monitor.broadcast_manager:
                 await monitor.broadcast_manager.broadcast_agent_event(
                     event_type="agent_success",
@@ -689,13 +872,25 @@ class MultiAgentOrchestrator:
                     step=step,
                     execution_time=execution_time,
                 )
-            monitor.on_agent_success(agent_name, execution_time)
+            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
 
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Sentiment analysis node error: {e}")
             import traceback
             traceback.print_exc()
+
+            # Log failure
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="error",
+                message=f"Sentiment analysis failed: {str(e)}",
+                data={"error_type": type(e).__name__},
+                duration_ms=int(execution_time * 1000)
+            )
+
             state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
             agent_status[agent_name] = "failed"
             state["agent_status"] = agent_status
@@ -711,7 +906,7 @@ class MultiAgentOrchestrator:
                     execution_time=execution_time,
                     error=str(e),
                 )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__)
+            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
 
         return AgentState(**state)
 
@@ -752,9 +947,29 @@ class MultiAgentOrchestrator:
             )
         monitor.on_agent_start(agent_name, state)
 
+        # Log agent start
+        symbols = state.get("symbols", [])
+        monitor.log_agent_step(
+            thread_id=thread_id,
+            agent_name=agent_name,
+            step=step,
+            level="info",
+            message=f"Starting risk assessment for symbols: {symbols}",
+            data={"symbols": symbols}
+        )
+
         agent_start_time = time.time()
 
         try:
+            # Log computing risk metrics
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="debug",
+                message="Computing risk metrics (VaR, Beta, volatility, compliance checks)",
+            )
+
             # Execute risk assessment
             agent_result = await self.risk_agent.process(state)
             # Convert numpy types before assigning to prevent serialization issues
@@ -766,6 +981,22 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Log successful completion
+            risk_data = state.get("risk_assessment", {})
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="info",
+                message="Risk assessment completed successfully",
+                data={
+                    "overall_risk_level": risk_data.get("overall_risk_level"),
+                    "risk_factors_count": len(risk_data.get("risk_factors", []))
+                },
+                duration_ms=int(execution_time * 1000)
+            )
+
             if monitor.broadcast_manager:
                 await monitor.broadcast_manager.broadcast_agent_event(
                     event_type="agent_success",
@@ -775,11 +1006,23 @@ class MultiAgentOrchestrator:
                     step=step,
                     execution_time=execution_time,
                 )
-            monitor.on_agent_success(agent_name, execution_time)
+            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
 
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Risk assessment node error: {e}")
+
+            # Log failure
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="error",
+                message=f"Risk assessment failed: {str(e)}",
+                data={"error_type": type(e).__name__},
+                duration_ms=int(execution_time * 1000)
+            )
+
             state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
             agent_status[agent_name] = "failed"
             state["agent_status"] = agent_status
@@ -795,7 +1038,7 @@ class MultiAgentOrchestrator:
                     execution_time=execution_time,
                     error=str(e),
                 )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__)
+            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
 
         return AgentState(**state)
 
@@ -836,9 +1079,29 @@ class MultiAgentOrchestrator:
             )
         monitor.on_agent_start(agent_name, state)
 
+        # Log agent start
+        symbols = state.get("symbols", [])
+        monitor.log_agent_step(
+            thread_id=thread_id,
+            agent_name=agent_name,
+            step=step,
+            level="info",
+            message=f"Starting decision making for symbols: {symbols}",
+            data={"symbols": symbols}
+        )
+
         agent_start_time = time.time()
 
         try:
+            # Log analyzing all data for decision
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="debug",
+                message="Synthesizing technical, fundamental, sentiment, and risk analysis for investment decision",
+            )
+
             # Execute decision making
             agent_result = await self.decision_agent.process(state)
             # Convert numpy types before assigning to prevent serialization issues
@@ -850,6 +1113,23 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Log successful completion
+            decision_data = state.get("decision", {})
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="info",
+                message="Decision making completed successfully",
+                data={
+                    "recommendation": decision_data.get("recommendation"),
+                    "confidence": decision_data.get("confidence"),
+                    "action": decision_data.get("action")
+                },
+                duration_ms=int(execution_time * 1000)
+            )
+
             if monitor.broadcast_manager:
                 await monitor.broadcast_manager.broadcast_agent_event(
                     event_type="agent_success",
@@ -859,11 +1139,23 @@ class MultiAgentOrchestrator:
                     step=step,
                     execution_time=execution_time,
                 )
-            monitor.on_agent_success(agent_name, execution_time)
+            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
 
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Decision making node error: {e}")
+
+            # Log failure
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="error",
+                message=f"Decision making failed: {str(e)}",
+                data={"error_type": type(e).__name__},
+                duration_ms=int(execution_time * 1000)
+            )
+
             state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
             agent_status[agent_name] = "failed"
             state["agent_status"] = agent_status
@@ -879,7 +1171,7 @@ class MultiAgentOrchestrator:
                     execution_time=execution_time,
                     error=str(e),
                 )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__)
+            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
 
         return AgentState(**state)
 
@@ -920,9 +1212,29 @@ class MultiAgentOrchestrator:
             )
         monitor.on_agent_start(agent_name, state)
 
+        # Log agent start
+        symbols = state.get("symbols", [])
+        monitor.log_agent_step(
+            thread_id=thread_id,
+            agent_name=agent_name,
+            step=step,
+            level="info",
+            message=f"Starting report generation for symbols: {symbols}",
+            data={"symbols": symbols}
+        )
+
         agent_start_time = time.time()
 
         try:
+            # Log generating report with LLM
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="debug",
+                message="Generating comprehensive analysis report with LLM",
+            )
+
             # Execute report generation
             agent_result = await self.report_agent.process(state)
             # Convert numpy types before assigning to prevent serialization issues
@@ -934,6 +1246,23 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Log successful completion
+            report_data = state.get("report", {})
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="info",
+                message="Report generation completed successfully",
+                data={
+                    "has_summary": bool(report_data.get("summary")),
+                    "sections_count": len(report_data.get("sections", [])),
+                    "has_charts": bool(report_data.get("charts"))
+                },
+                duration_ms=int(execution_time * 1000)
+            )
+
             if monitor.broadcast_manager:
                 await monitor.broadcast_manager.broadcast_agent_event(
                     event_type="agent_success",
@@ -943,11 +1272,23 @@ class MultiAgentOrchestrator:
                     step=step,
                     execution_time=execution_time,
                 )
-            monitor.on_agent_success(agent_name, execution_time)
+            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
 
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Report generation node error: {e}")
+
+            # Log failure
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="error",
+                message=f"Report generation failed: {str(e)}",
+                data={"error_type": type(e).__name__},
+                duration_ms=int(execution_time * 1000)
+            )
+
             state = add_error(state, agent_name, type(e).__name__, str(e), retryable=False)
             agent_status[agent_name] = "failed"
             state["agent_status"] = agent_status
@@ -963,7 +1304,7 @@ class MultiAgentOrchestrator:
                     execution_time=execution_time,
                     error=str(e),
                 )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__)
+            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
 
         return AgentState(**state)
 
