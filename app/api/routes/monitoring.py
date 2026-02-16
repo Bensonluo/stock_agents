@@ -278,10 +278,11 @@ async def get_workflow_logs(
     # Get all events
     all_events = monitor.get_events(limit=2000)
 
-    # Filter by thread_id in metadata
+    # Filter by thread_id in data (direct or in metadata)
     workflow_events = [
         e for e in all_events
-        if e.get("data", {}).get("metadata", {}).get("thread_id") == thread_id
+        if e.get("data", {}).get("thread_id") == thread_id or
+           e.get("data", {}).get("metadata", {}).get("thread_id") == thread_id
     ]
 
     # Apply limit

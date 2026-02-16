@@ -9,6 +9,7 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
 
+from app.storage.database import get_database, AnalysisRecord
 from app.agents import (
     AkShareDataAgent,
     DataCollectionAgent,
@@ -19,6 +20,7 @@ from app.agents import (
     SentimentAnalysisAgent,
     TechnicalAnalysisAgent,
 )
+from app.api.routes.monitor import init_workflow, update_agent_status, add_log
 from app.monitoring import get_connection_manager, get_monitor
 from app.orchestration.checkpoint import PostgresCheckpointManager
 from app.orchestration.state import (
@@ -279,6 +281,23 @@ class MultiAgentOrchestrator:
             **kwargs,
         )
 
+        # Initialize monitoring state
+        init_workflow(thread_id)
+        add_log(thread_id, "system", "info", f"Workflow started for symbols: {symbols}")
+
+        # 保存初始记录到数据库
+        try:
+            db = get_database()
+            db.create_record(AnalysisRecord(
+                thread_id=thread_id,
+                symbols=json.dumps(symbols),
+                query=query,
+                status="running"
+            ))
+            logger.info(f"[Orchestrator] 创建历史记录: thread_id={thread_id}")
+        except Exception as e:
+            logger.error(f"[Orchestrator] 创建历史记录失败: {e}")
+
         logger.info(
             f"Starting workflow execution: thread_id={thread_id}, "
             f"symbols={symbols}, query={query}"
@@ -320,6 +339,39 @@ class MultiAgentOrchestrator:
                 total_steps=total_steps,
             )
 
+            # 更新数据库中的记录状态
+            try:
+                db = get_database()
+                final_state = result.get("agent_status", {})
+                all_completed = all(s == "completed" for s in final_state.values())
+                any_failed = any(s == "failed" for s in final_state.values())
+
+                final_status = "completed" if all_completed else ("failed" if any_failed else "partial")
+
+                # 序列化结果
+                result_data = {
+                    "symbols": symbols,
+                    "query": query,
+                    "decision": result.get("decision"),
+                    "report": result.get("report"),
+                    "agent_status": result.get("agent_status"),
+                    "technical_analysis": result.get("technical_analysis"),
+                    "fundamental_analysis": result.get("fundamental_analysis"),
+                    "sentiment_analysis": result.get("sentiment_analysis"),
+                    "risk_assessment": result.get("risk_assessment"),
+                    "execution_metadata": result.get("execution_metadata")
+                }
+
+                db.update_status(
+                    thread_id=thread_id,
+                    status=final_status,
+                    result=json.dumps(result_data, default=str),
+                    execution_time=result.get("execution_metadata", {}).get("execution_time", 0)
+                )
+                logger.info(f"[Orchestrator] 更新历史记录: thread_id={thread_id}, status={final_status}")
+            except Exception as e:
+                logger.error(f"[Orchestrator] 更新历史记录失败: {e}")
+
             return result
 
         except Exception as e:
@@ -339,6 +391,25 @@ class MultiAgentOrchestrator:
             initial_state["execution_metadata"]["failed_at"] = datetime.now()
             initial_state["execution_metadata"]["execution_time"] = execution_time
             initial_state["execution_metadata"]["error"] = str(e)
+
+            # 更新数据库中的记录状态（失败）
+            try:
+                db = get_database()
+                result_data = {
+                    "symbols": symbols,
+                    "query": query,
+                    "error": str(e),
+                    "execution_metadata": initial_state.get("execution_metadata")
+                }
+                db.update_status(
+                    thread_id=thread_id,
+                    status="failed",
+                    result=json.dumps(result_data, default=str),
+                    execution_time=execution_time
+                )
+                logger.info(f"[Orchestrator] 更新历史记录（失败）: thread_id={thread_id}")
+            except Exception as db_error:
+                logger.error(f"[Orchestrator] 更新历史记录失败: {db_error}")
 
             return _convert_to_serializable(initial_state)
 
@@ -393,6 +464,10 @@ class MultiAgentOrchestrator:
         agent_start_time = time.time()
 
         try:
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "running")
+            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
+
             # Log fetching market data
             monitor.log_agent_step(
                 thread_id=thread_id,
@@ -441,6 +516,10 @@ class MultiAgentOrchestrator:
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
 
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "completed")
+            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
+
             # Log successful completion
             monitor.log_agent_step(
                 thread_id=thread_id,
@@ -466,6 +545,10 @@ class MultiAgentOrchestrator:
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Data collection node error: {e}")
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "failed", str(e))
+            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
 
             # Log failure
             monitor.log_agent_step(
@@ -548,6 +631,10 @@ class MultiAgentOrchestrator:
         agent_start_time = time.time()
 
         try:
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "running")
+            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
+
             # Log computing indicators
             monitor.log_agent_step(
                 thread_id=thread_id,
@@ -576,6 +663,10 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "completed")
+            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
 
             # Log successful completion
             technical_data = state.get("technical_analysis", {})
@@ -606,6 +697,10 @@ class MultiAgentOrchestrator:
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Technical analysis node error: {e}")
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "failed", str(e))
+            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
 
             # Log failure
             monitor.log_agent_step(
@@ -688,6 +783,10 @@ class MultiAgentOrchestrator:
         agent_start_time = time.time()
 
         try:
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "running")
+            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
+
             # Log analyzing fundamentals
             monitor.log_agent_step(
                 thread_id=thread_id,
@@ -715,6 +814,10 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "completed")
+            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
 
             # Log successful completion
             fundamental_data = state.get("fundamental_analysis", {})
@@ -745,6 +848,10 @@ class MultiAgentOrchestrator:
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Fundamental analysis node error: {e}")
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "failed", str(e))
+            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
 
             # Log failure
             monitor.log_agent_step(
@@ -827,6 +934,10 @@ class MultiAgentOrchestrator:
         agent_start_time = time.time()
 
         try:
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "running")
+            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
+
             # Log fetching news and analyzing sentiment
             monitor.log_agent_step(
                 thread_id=thread_id,
@@ -847,6 +958,10 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "completed")
+            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
 
             # Log successful completion
             sentiment_data = state.get("sentiment_analysis", {})
@@ -879,6 +994,10 @@ class MultiAgentOrchestrator:
             logger.error(f"Sentiment analysis node error: {e}")
             import traceback
             traceback.print_exc()
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "failed", str(e))
+            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
 
             # Log failure
             monitor.log_agent_step(
@@ -961,6 +1080,10 @@ class MultiAgentOrchestrator:
         agent_start_time = time.time()
 
         try:
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "running")
+            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
+
             # Log computing risk metrics
             monitor.log_agent_step(
                 thread_id=thread_id,
@@ -981,6 +1104,10 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "completed")
+            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
 
             # Log successful completion
             risk_data = state.get("risk_assessment", {})
@@ -1011,6 +1138,10 @@ class MultiAgentOrchestrator:
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Risk assessment node error: {e}")
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "failed", str(e))
+            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
 
             # Log failure
             monitor.log_agent_step(
@@ -1093,6 +1224,10 @@ class MultiAgentOrchestrator:
         agent_start_time = time.time()
 
         try:
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "running")
+            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
+
             # Log analyzing all data for decision
             monitor.log_agent_step(
                 thread_id=thread_id,
@@ -1113,6 +1248,10 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "completed")
+            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
 
             # Log successful completion
             decision_data = state.get("decision", {})
@@ -1144,6 +1283,10 @@ class MultiAgentOrchestrator:
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Decision making node error: {e}")
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "failed", str(e))
+            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
 
             # Log failure
             monitor.log_agent_step(
@@ -1226,6 +1369,10 @@ class MultiAgentOrchestrator:
         agent_start_time = time.time()
 
         try:
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "running")
+            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
+
             # Log generating report with LLM
             monitor.log_agent_step(
                 thread_id=thread_id,
@@ -1246,6 +1393,10 @@ class MultiAgentOrchestrator:
 
             # Broadcast agent success
             execution_time = time.time() - agent_start_time
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "completed")
+            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
 
             # Log successful completion
             report_data = state.get("report", {})
@@ -1277,6 +1428,10 @@ class MultiAgentOrchestrator:
         except Exception as e:
             execution_time = time.time() - agent_start_time
             logger.error(f"Report generation node error: {e}")
+
+            # Update monitoring API status
+            update_agent_status(thread_id, agent_name, "failed", str(e))
+            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
 
             # Log failure
             monitor.log_agent_step(

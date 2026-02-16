@@ -1,156 +1,292 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Card, CardContent } from '@/components/ui/card'
-import { RealTimeMonitor } from '@/components/monitoring/RealTimeMonitor'
-import { WorkflowTimeline, WorkflowTimelineCompact, type AgentNodeStatus } from '@/components/monitoring/WorkflowTimeline'
-import { MonitoringDashboard } from '@/components/monitoring/MonitoringDashboard'
+import { useState, useEffect, useCallback, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { RefreshCw, Wifi, WifiOff } from 'lucide-react'
-import { useWebSocket } from '@/hooks/useWebSocket'
+import { Progress } from '@/components/ui/progress'
+import { cn } from '@/lib/utils'
+import {
+  Database, TrendingUp, BarChart3, MessageSquare, Shield, Brain, FileText,
+  Loader2, CheckCircle2, XCircle, Clock, RefreshCw, ArrowLeft
+} from 'lucide-react'
 
-export default function MonitoringPage() {
-  const [activeTab, setActiveTab] = useState('realtime')
-  const [isRefreshing, setIsRefreshing] = useState(false)
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') + '/api'
 
-  // WebSocket connection for real-time updates
-  const { connected, connectionStatus, clearMessages } = useWebSocket()
+const AGENTS = [
+  { key: 'data_collection', name: 'Data Collection', icon: Database },
+  { key: 'technical_analysis', name: 'Technical Analysis', icon: TrendingUp },
+  { key: 'fundamental_analysis', name: 'Fundamental Analysis', icon: BarChart3 },
+  { key: 'sentiment_analysis', name: 'Sentiment Analysis', icon: MessageSquare },
+  { key: 'risk_assessment', name: 'Risk Assessment', icon: Shield },
+  { key: 'decision_making', name: 'Decision Making', icon: Brain },
+  { key: 'report_generation', name: 'Report Generation', icon: FileText },
+]
 
-  // Simulated workflow status - in a real implementation, this would come from the API or WebSocket
-  const [workflowStatus, setWorkflowStatus] = useState<Record<string, AgentNodeStatus>>({
-    data_collection: { status: 'pending' },
-    technical_analysis: { status: 'pending' },
-    sentiment_analysis: { status: 'pending' },
-    fundamental_analysis: { status: 'pending' },
-    risk_assessment: { status: 'pending' },
-    decision_making: { status: 'pending' },
-    report_generation: { status: 'pending' },
-  })
+interface AgentState {
+  name: string
+  status: string
+  started_at?: string
+  completed_at?: string
+  error?: string
+}
 
-  const [currentAgent, setCurrentAgent] = useState<string | undefined>(undefined)
+interface WorkflowState {
+  thread_id: string
+  status: string
+  agents: Record<string, AgentState>
+  current_agent: string | null
+  progress: number
+  updated_at: string
+}
 
-  // Handle manual refresh
-  const handleRefresh = useCallback(async () => {
-    setIsRefreshing(true)
-    // Clear messages and trigger a refresh
-    clearMessages()
-    // In a real implementation, you'd fetch fresh data here
-    setTimeout(() => setIsRefreshing(false), 500)
-  }, [clearMessages])
+interface LogEntry {
+  timestamp: string
+  agent: string
+  level: string
+  message: string
+}
 
-  // Connection status indicator
-  const ConnectionIndicator = () => (
-    <div className="flex items-center gap-2">
-      {connected ? (
-        <div className="flex items-center gap-1.5 text-green-500 bg-green-500/10 px-3 py-1.5 rounded-full text-sm">
-          <Wifi className="h-3.5 w-3.5" />
-          <span>Connected</span>
-        </div>
-      ) : (
-        <div className="flex items-center gap-1.5 text-muted-foreground bg-muted/50 px-3 py-1.5 rounded-full text-sm">
-          <WifiOff className="h-3.5 w-3.5" />
-          <span>
-            {connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
-          </span>
-        </div>
-      )}
-    </div>
-  )
+function MonitoringPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const threadId = searchParams.get('thread_id')
+
+  const [workflow, setWorkflow] = useState<WorkflowState | null>(null)
+  const [logs, setLogs] = useState<LogEntry[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [polling, setPolling] = useState(true)
+
+  // 获取工作流状态
+  const fetchWorkflow = useCallback(async () => {
+    if (!threadId) return
+
+    try {
+      const res = await fetch(`${API_BASE}/monitor/workflow/${threadId}`)
+      if (!res.ok) {
+        if (res.status === 404) {
+          setError('Workflow not found')
+          return
+        }
+        throw new Error(`HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      setWorkflow(data)
+      setError(null)
+
+      // 如果完成或失败，停止轮询
+      if (data.status === 'completed' || data.status === 'failed') {
+        setPolling(false)
+      }
+    } catch (e) {
+      console.error('Failed to fetch workflow:', e)
+      setError(e instanceof Error ? e.message : 'Unknown error')
+    }
+  }, [threadId])
+
+  // 获取日志
+  const fetchLogs = useCallback(async () => {
+    if (!threadId) return
+
+    try {
+      const res = await fetch(`${API_BASE}/monitor/workflow/${threadId}/logs?limit=100`)
+      if (res.ok) {
+        const data = await res.json()
+        setLogs(data.logs || [])
+      }
+    } catch (e) {
+      console.error('Failed to fetch logs:', e)
+    }
+  }, [threadId])
+
+  // 轮询
+  useEffect(() => {
+    if (!threadId || !polling) return
+
+    fetchWorkflow()
+    fetchLogs()
+
+    const interval = setInterval(() => {
+      fetchWorkflow()
+      fetchLogs()
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [threadId, polling, fetchWorkflow, fetchLogs])
+
+  // 获取状态图标
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'completed': return <CheckCircle2 className="h-5 w-5 text-green-500" />
+      case 'running': return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />
+      case 'failed': return <XCircle className="h-5 w-5 text-red-500" />
+      default: return <Clock className="h-5 w-5 text-gray-400" />
+    }
+  }
+
+  // 获取状态颜色
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed': return 'bg-green-500/10 border-green-500/50'
+      case 'running': return 'bg-blue-500/10 border-blue-500/50'
+      case 'failed': return 'bg-red-500/10 border-red-500/50'
+      default: return 'bg-gray-500/10 border-gray-500/50'
+    }
+  }
+
+  if (!threadId) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <Card>
+          <CardContent className="p-8 text-center">
+            <p className="text-muted-foreground">No workflow selected</p>
+            <Button className="mt-4" onClick={() => router.push('/')}>
+              Start New Analysis
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   return (
-    <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-6">
+    <div className="max-w-5xl mx-auto p-4 md:p-6 space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold">System Monitoring</h1>
-          <p className="text-muted-foreground mt-1">
-            Real-time agent health, workflow status, and system metrics
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <ConnectionIndicator />
-          <Button
-            onClick={handleRefresh}
-            size="sm"
-            variant="outline"
-            disabled={isRefreshing}
-          >
-            <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            Refresh
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => router.push('/')}>
+            <ArrowLeft className="h-5 w-5" />
           </Button>
+          <div>
+            <h1 className="text-2xl font-bold">Workflow Monitor</h1>
+            <p className="text-sm text-muted-foreground">Thread: {threadId.slice(0, 20)}...</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {polling && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
+          <Badge variant={workflow?.status === 'completed' ? 'success' : workflow?.status === 'failed' ? 'destructive' : 'default'}>
+            {workflow?.status || 'loading'}
+          </Badge>
         </div>
       </div>
 
-      {/* Tabs for different views */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full max-w-md grid-cols-2">
-          <TabsTrigger value="realtime">Real-time View</TabsTrigger>
-          <TabsTrigger value="historical">Historical Metrics</TabsTrigger>
-        </TabsList>
+      {/* Error */}
+      {error && (
+        <Card className="border-red-500">
+          <CardContent className="p-4 text-red-500">
+            Error: {error}
+          </CardContent>
+        </Card>
+      )}
 
-        {/* Real-time View Tab */}
-        <TabsContent value="realtime" className="space-y-6">
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            {/* Main Real-Time Monitor - spans 2 columns on large screens */}
-            <div className="xl:col-span-2">
-              <RealTimeMonitor maxEvents={30} />
-            </div>
+      {/* Progress */}
+      {workflow && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex justify-between">
+              <span>Progress</span>
+              <span>{Math.round(workflow.progress)}%</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Progress value={workflow.progress} className="h-2" />
+          </CardContent>
+        </Card>
+      )}
 
-            {/* Workflow Timeline - spans 1 column */}
-            <div className="xl:col-span-1">
-              <div className="sticky top-6 space-y-6">
-                <Card>
-                  <CardContent className="p-4">
-                    <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
-                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                      Active Workflows
-                    </h3>
-                    <WorkflowTimelineCompact
-                      workflowStatus={workflowStatus}
-                      currentAgent={currentAgent}
-                    />
-                  </CardContent>
-                </Card>
+      {/* Agents */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {AGENTS.map(agent => {
+          const state = workflow?.agents?.[agent.key]
+          const status = state?.status || 'pending'
 
-                {/* Connection Info Card */}
-                <Card>
-                  <CardContent className="p-4">
-                    <h3 className="text-sm font-semibold mb-3">Connection Details</h3>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Status:</span>
-                        <span className={connected ? 'text-green-500' : 'text-muted-foreground'}>
-                          {connectionStatus}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Mode:</span>
-                        <span>WebSocket</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Update Rate:</span>
-                        <span>Real-time</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            </div>
+          return (
+            <Card key={agent.key} className={cn('border-2', getStatusColor(status))}>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-10 h-10 rounded-full border-2 bg-background">
+                    {status === 'running' 
+                      ? <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
+                      : <agent.icon className={cn(
+                          'h-5 w-5',
+                          status === 'completed' && 'text-green-500',
+                          status === 'failed' && 'text-red-500',
+                          status === 'pending' && 'text-gray-400'
+                        )} />
+                    }
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-medium text-sm">{agent.name}</p>
+                    <p className="text-xs text-muted-foreground capitalize">{status}</p>
+                  </div>
+                  {getStatusIcon(status)}
+                </div>
+                {state?.error && (
+                  <p className="mt-2 text-xs text-red-500 truncate">{state.error}</p>
+                )}
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
+
+      {/* Logs */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center justify-between">
+            <span>Execution Logs</span>
+            <span className="text-muted-foreground font-normal">{logs.length} entries</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-1 max-h-64 overflow-y-auto font-mono text-xs bg-muted/30 p-3 rounded">
+            {logs.length === 0 ? (
+              <p className="text-muted-foreground text-center py-4">No logs yet</p>
+            ) : (
+              logs.map((log, i) => (
+                <div key={i} className={cn(
+                  'py-1 border-b border-border/30 last:border-0',
+                  log.level === 'error' && 'text-red-500',
+                  log.level === 'warning' && 'text-yellow-500'
+                )}>
+                  <span className="text-muted-foreground">
+                    {new Date(log.timestamp).toLocaleTimeString()}
+                  </span>
+                  <span className="text-primary mx-2">[{log.agent}]</span>
+                  <span>{log.message}</span>
+                </div>
+              ))
+            )}
           </div>
+        </CardContent>
+      </Card>
 
-          {/* Full Workflow Timeline at bottom */}
-          <WorkflowTimeline
-            workflowStatus={workflowStatus}
-            currentAgent={currentAgent}
-          />
-        </TabsContent>
-
-        {/* Historical Metrics Tab */}
-        <TabsContent value="historical" className="space-y-6">
-          <MonitoringDashboard />
-        </TabsContent>
-      </Tabs>
+      {/* Actions */}
+      <div className="flex justify-center gap-4">
+        <Button variant="outline" onClick={() => router.push('/')}>
+          New Analysis
+        </Button>
+        {workflow?.status === 'completed' && (
+          <Button onClick={() => router.push(`/result?thread_id=${threadId}`)}>
+            View Results
+          </Button>
+        )}
+      </div>
     </div>
+  )
+}
+
+// Wrap with Suspense for useSearchParams
+export default function MonitoringPageWrapper() {
+  return (
+    <Suspense fallback={
+      <div className="max-w-5xl mx-auto p-6 flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+      </div>
+    }>
+      <MonitoringPage />
+    </Suspense>
   )
 }
