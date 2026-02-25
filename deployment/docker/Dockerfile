@@ -1,20 +1,20 @@
 # Multi-stage build for stock-agent application
+# 使用 SQLite 作为数据库
 
-FROM python:3.11-slim as builder
+# Stage 1: Builder
+FROM python:3.11-slim AS builder
 
-# Install system dependencies
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
-    postgresql-client \
-    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /build
 
 # Copy Poetry files
-COPY pyproject.toml ./
+COPY pyproject.toml poetry.lock* ./
 
 # Install Poetry
 RUN pip install poetry==1.8.0
@@ -23,15 +23,15 @@ RUN pip install poetry==1.8.0
 RUN poetry config virtualenvs.create false
 
 # Install dependencies
-RUN poetry install --no-interaction --no-root --no-dev
+RUN poetry install --no-interaction --no-root --only main
 
-# Production stage
-FROM python:3.11-slim as production
+# Stage 2: Production
+FROM python:3.11-slim AS production
 
-# Install runtime dependencies
+# Install runtime dependencies (curl for healthcheck, sqlite3 for debugging)
 RUN apt-get update && apt-get install -y \
     curl \
-    postgresql-client \
+    sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -47,8 +47,8 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application code
 COPY app ./app
 
-# Create logs directory
-RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+# Create data and logs directories
+RUN mkdir -p /app/data /app/logs && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser

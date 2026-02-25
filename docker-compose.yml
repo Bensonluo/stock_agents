@@ -1,65 +1,68 @@
-version: '3.8'
+# Stock Agents - Docker Compose Configuration
+#
+# 实际架构：
+# - 后端: FastAPI + SQLite (data/analysis_history.db)
+# - 前端: Next.js 14
+#
+# 使用方式：
+#   开发模式: docker-compose up -d
+#   查看日志: docker-compose logs -f
+#   停止服务: docker-compose down
 
 services:
-  # PostgreSQL database with pgvector
-  postgres:
-    image: pgvector/pgvector:pg16
-    container_name: stock_agent_postgres
-    environment:
-      POSTGRES_DB: stockdb
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stockagent123}
-      POSTGRES_INITDB_ARGS: "-c shared_preload_libraries=vector"
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d stockdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Redis cache
-  redis:
-    image: redis:7-alpine
-    container_name: stock_agent_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Stock Agent API
+  # ===========================================
+  # 后端 API 服务 (FastAPI + SQLite)
+  # ===========================================
   api:
     build:
-      context: ..
+      context: .
       dockerfile: deployment/docker/Dockerfile
     container_name: stock_agent_api
-    environment:
-      DATABASE_URL: postgresql://admin:${POSTGRES_PASSWORD:-stockagent123}@postgres:5432/stockdb
-      REDIS_URL: redis://redis:6379
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      DEBUG: ${DEBUG:-false}
+    env_file:
+      - .env
     ports:
-      - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - "8001:8000"  # 修改为 8001，避免与 rag_chatbot 冲突
+    volumes:
+      # 持久化 SQLite 数据库
+      - ./data:/app/data
+      # 持久化日志
+      - ./logs:/app/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 40s
     restart: unless-stopped
 
+  # ===========================================
+  # 前端服务 (Next.js 14)
+  # ===========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=/stock-api
+    container_name: stock_agent_frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=/stock-api
+    ports:
+      - "3002:3000"  # 修改为 3002，避免与 portfolio-fe 冲突
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+# ===========================================
+# 数据卷（用于持久化）
+# ===========================================
 volumes:
-  postgres_data:
-  redis_data:
+  api_data:
+  api_logs:

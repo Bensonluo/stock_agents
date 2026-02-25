@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
+import Link from 'next/link'
 import './globals.css'
 
 const inter = Inter({ subsets: ['latin'] })
@@ -21,25 +22,27 @@ export default function RootLayout({
           <header className="border-b">
             <div className="container mx-auto px-4 py-4">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-                    <span className="text-primary-foreground font-bold text-lg">SA</span>
+                <Link href="/">
+                  <div className="flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
+                      <span className="text-primary-foreground font-bold text-lg">SA</span>
+                    </div>
+                    <div>
+                      <h1 className="text-xl font-bold">Stock Agent</h1>
+                      <p className="text-xs text-muted-foreground">Multi-Agent Analysis System</p>
+                    </div>
                   </div>
-                  <div>
-                    <h1 className="text-xl font-bold">Stock Agent</h1>
-                    <p className="text-xs text-muted-foreground">Multi-Agent Analysis System</p>
-                  </div>
-                </div>
+                </Link>
                 <nav className="flex gap-4">
-                  <a href="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                  <Link href="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
                     Analysis
-                  </a>
-                  <a href="/backtest" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                  </Link>
+                  <Link href="/backtest" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
                     Backtest
-                  </a>
-                  <a href="/monitoring" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                  </Link>
+                  <Link href="/monitoring" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
                     Monitoring
-                  </a>
+                  </Link>
                 </nav>
               </div>
             </div>
