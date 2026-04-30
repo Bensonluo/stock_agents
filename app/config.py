@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 2000
     llm_timeout: int = 60
 
+    # Agent Settings (ReAct)
+    agent_max_iterations: int = 15
+    agent_cost_limit: float = 0.50  # USD
+    agent_reasoning_model: str = "glm-4.7"
+    agent_reflection_model: str = "glm-4.5-air"
+
     # Data Sources
     akshare_enabled: bool = True
     yfinance_enabled: bool = True

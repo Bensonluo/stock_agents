@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import analysis, backtest, health, history as history_router, monitor as monitor_router, monitoring, websocket as ws_router
+from app.api.routes.agent import router as agent_router
 from app.config import settings
 from app.utils.logging import get_logger, setup_logging
 
@@ -87,6 +88,7 @@ app.include_router(backtest.router, prefix="/api/backtest", tags=["Backtest"])
 app.include_router(history_router.router, prefix="/api/history", tags=["History"])
 app.include_router(monitor_router.router, prefix="/api/monitor", tags=["Monitor"])
 app.include_router(monitoring.router, prefix="/api/monitoring", tags=["Monitoring"])
+app.include_router(agent_router, prefix="/api", tags=["Agent"])
 app.include_router(ws_router.router, prefix="/api", tags=["WebSocket"])
 
 

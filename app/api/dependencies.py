@@ -37,7 +37,7 @@ def get_llm():
             max_tokens=settings.llm_max_tokens,
             timeout=settings.llm_timeout,
             openai_api_key=settings.zhipuai_api_key,
-            openai_api_base="https://open.bigmodel.cn/api/paas/v4/",
+            openai_api_base="https://open.bigmodel.cn/api/coding/paas/v4/",
         )
 
     # OpenAI fallback
