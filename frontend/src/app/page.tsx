@@ -11,12 +11,12 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
   Loader2, TrendingUp, History, Search, Trash2, Clock,
-  CheckCircle2, XCircle, AlertCircle, ChevronRight
+  CheckCircle2, XCircle, AlertCircle, ChevronRight, Bot
 } from 'lucide-react'
+import { API } from '@/lib/utils'
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') + '/api'
 
-// 历史记录接口
 interface HistoryItem {
   id: number
   thread_id: string
@@ -40,20 +40,17 @@ export default function HomePage() {
   const router = useRouter()
   const [tab, setTab] = useState('analyze')
 
-  // 分析表单状态
   const [symbols, setSymbols] = useState('AAPL')
   const [query, setQuery] = useState('分析这只股票的投资价值')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // 历史记录状态
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [page, setPage] = useState(1)
   const [hasMore, setHasMore] = useState(false)
   const [searchKeyword, setSearchKeyword] = useState('')
 
-  // 获取历史记录
   const fetchHistory = async (pageNum: number = 1, keyword: string = '') => {
     setHistoryLoading(true)
     try {
@@ -81,14 +78,12 @@ export default function HomePage() {
     }
   }
 
-  // 切换到历史 tab 时加载数据
   useEffect(() => {
     if (tab === 'history') {
       fetchHistory(1, searchKeyword)
     }
   }, [tab, searchKeyword])
 
-  // 开始分析
   const handleAnalyze = async () => {
     setLoading(true)
     setError(null)
@@ -102,20 +97,8 @@ export default function HomePage() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/analysis/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query,
-          symbols: symbolList,
-          max_retries: 1
-        })
-      })
-
-      if (!res.ok) throw new Error('启动分析失败')
-
-      const data = await res.json()
-      router.push(`/monitoring?thread_id=${data.thread_id}`)
+      const data = await API.reactAnalyze({ query, symbols: symbolList })
+      router.push(`/monitoring?thread_id=${data.thread_id}&mode=react`)
     } catch (e) {
       setError(e instanceof Error ? e.message : '发生错误')
     } finally {
@@ -123,12 +106,9 @@ export default function HomePage() {
     }
   }
 
-  // 删除历史记录
   const handleDelete = async (threadId: string, e: React.MouseEvent) => {
     e.stopPropagation()
-
     if (!confirm('确定要删除这条记录吗？')) return
-
     try {
       await fetch(`${API_BASE}/history/${threadId}`, { method: 'DELETE' })
       setHistory(prev => prev.filter(h => h.thread_id !== threadId))
@@ -137,12 +117,15 @@ export default function HomePage() {
     }
   }
 
-  // 查看历史详情
   const viewHistory = (threadId: string) => {
-    router.push(`/result?thread_id=${threadId}`)
+    const isReact = threadId.startsWith('react-')
+    if (isReact) {
+      router.push(`/result?thread_id=${threadId}&mode=react`)
+    } else {
+      router.push(`/result?thread_id=${threadId}`)
+    }
   }
 
-  // 获取状态图标
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed': return <CheckCircle2 className="h-4 w-4 text-green-500" />
@@ -152,7 +135,6 @@ export default function HomePage() {
     }
   }
 
-  // 获取状态颜色
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed': return 'bg-green-100 text-green-700'
@@ -162,7 +144,6 @@ export default function HomePage() {
     }
   }
 
-  // 格式化时间
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr)
     return date.toLocaleString('zh-CN', {
@@ -176,17 +157,15 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
       <div className="max-w-4xl mx-auto p-4 md:p-8">
-        {/* 标题 */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-slate-900">股票分析系统</h1>
-          <p className="text-slate-500 mt-2">多智能体协作的智能股票分析平台</p>
+          <p className="text-slate-500 mt-2">ReAct Agent 自主决策的智能股票分析平台</p>
         </div>
 
-        {/* Tab 切换 */}
         <Tabs value={tab} onValueChange={setTab} className="w-full">
           <TabsList className="grid w-full grid-cols-2 mb-6">
             <TabsTrigger value="analyze" className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" />
+              <Bot className="h-4 w-4" />
               新建分析
             </TabsTrigger>
             <TabsTrigger value="history" className="flex items-center gap-2">
@@ -195,13 +174,15 @@ export default function HomePage() {
             </TabsTrigger>
           </TabsList>
 
-          {/* 新建分析 Tab */}
           <TabsContent value="analyze">
             <Card>
               <CardHeader>
-                <CardTitle>开始分析</CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  <Bot className="h-5 w-5 text-blue-600" />
+                  ReAct Agent 分析
+                </CardTitle>
                 <CardDescription>
-                  输入股票代码，启动多智能体分析
+                  输入股票代码，Agent 将自主调用工具进行多维度分析
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -250,7 +231,7 @@ export default function HomePage() {
                     </>
                   ) : (
                     <>
-                      <TrendingUp className="mr-2 h-4 w-4" />
+                      <Bot className="mr-2 h-4 w-4" />
                       开始分析
                     </>
                   )}
@@ -259,7 +240,6 @@ export default function HomePage() {
             </Card>
           </TabsContent>
 
-          {/* 历史记录 Tab */}
           <TabsContent value="history">
             <Card>
               <CardHeader>
@@ -301,54 +281,62 @@ export default function HomePage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {history.map((item) => (
-                      <div
-                        key={item.thread_id}
-                        className="flex items-center justify-between p-4 rounded-lg border hover:bg-slate-50 cursor-pointer transition-colors"
-                        onClick={() => viewHistory(item.thread_id)}
-                      >
-                        <div className="flex items-center gap-4 flex-1 min-w-0">
-                          {getStatusIcon(item.status)}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium truncate">
-                                {item.symbols.join(', ')}
-                              </span>
-                              <Badge variant="outline" className={getStatusColor(item.status)}>
-                                {item.status === 'completed' ? '已完成' :
-                                 item.status === 'failed' ? '失败' :
-                                 item.status === 'running' ? '运行中' : '待处理'}
-                              </Badge>
-                            </div>
-                            <p className="text-sm text-muted-foreground truncate mt-1">
-                              {item.query || '无描述'}
-                            </p>
-                            <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-                              <span className="flex items-center gap-1">
-                                <Clock className="h-3 w-3" />
-                                {formatTime(item.created_at)}
-                              </span>
-                              {item.execution_time > 0 && (
-                                <span>{item.execution_time.toFixed(1)}秒</span>
-                              )}
+                    {history.map((item) => {
+                      const isReact = item.thread_id.startsWith('react-')
+                      return (
+                        <div
+                          key={item.thread_id}
+                          className="flex items-center justify-between p-4 rounded-lg border hover:bg-slate-50 cursor-pointer transition-colors"
+                          onClick={() => viewHistory(item.thread_id)}
+                        >
+                          <div className="flex items-center gap-4 flex-1 min-w-0">
+                            {getStatusIcon(item.status)}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium truncate">
+                                  {item.symbols.join(', ')}
+                                </span>
+                                <Badge variant="outline" className={getStatusColor(item.status)}>
+                                  {item.status === 'completed' ? '已完成' :
+                                   item.status === 'failed' ? '失败' :
+                                   item.status === 'running' ? '运行中' : '待处理'}
+                                </Badge>
+                                {isReact && (
+                                  <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                    <Bot className="h-3 w-3 mr-1" />
+                                    Agent
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground truncate mt-1">
+                                {item.query || '无描述'}
+                              </p>
+                              <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                                <span className="flex items-center gap-1">
+                                  <Clock className="h-3 w-3" />
+                                  {formatTime(item.created_at)}
+                                </span>
+                                {item.execution_time > 0 && (
+                                  <span>{item.execution_time.toFixed(1)}秒</span>
+                                )}
+                              </div>
                             </div>
                           </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={(e) => handleDelete(item.thread_id, e)}
+                              className="text-muted-foreground hover:text-red-500"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={(e) => handleDelete(item.thread_id, e)}
-                            className="text-muted-foreground hover:text-red-500"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
 
-                    {/* 加载更多 */}
                     {hasMore && (
                       <Button
                         variant="outline"

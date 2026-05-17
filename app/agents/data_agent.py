@@ -13,6 +13,9 @@ from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Semaphore to cap concurrent yfinance calls and avoid rate-limiting
+_yfinance_semaphore = asyncio.Semaphore(5)
+
 
 def convert_to_yahoo_symbol(symbol: str) -> str:
     """Convert local symbol format to Yahoo Finance format.
@@ -77,6 +80,188 @@ def detect_symbol_type(symbol: str) -> str:
         return "cn"
 
     return "unknown"
+
+
+def _sync_fetch_market_data(yahoo_symbol: str, symbol: str, hist_converter) -> Dict[str, Any]:
+    """Synchronous yfinance market data fetch — runs in thread pool."""
+    ticker = yf.Ticker(yahoo_symbol)
+    info = ticker.info
+
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=90)
+    hist = ticker.history(start=start_date, end=end_date)
+
+    if hist.empty:
+        return {}
+
+    hist_data = hist_converter(hist)
+
+    current_price = info.get("currentPrice") or info.get("regularMarketPrice")
+    previous_close = info.get("previousClose")
+
+    change = None
+    change_percent = None
+    if current_price and previous_close:
+        change = current_price - previous_close
+        change_percent = (change / previous_close) * 100
+
+    return {
+        "symbol": symbol,
+        "yahoo_symbol": yahoo_symbol,
+        "current_price": current_price,
+        "previous_close": previous_close,
+        "change": change,
+        "change_percent": change_percent,
+        "volume": info.get("volume"),
+        "avg_volume": info.get("averageVolume"),
+        "market_cap": info.get("marketCap"),
+        "52_week_high": info.get("fiftyTwoWeekHigh"),
+        "52_week_low": info.get("fiftyTwoWeekLow"),
+        "company_name": info.get("longName"),
+        "sector": info.get("sector"),
+        "industry": info.get("industry"),
+        "description": info.get("longBusinessSummary"),
+        "historical_data": hist_data,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -> Dict[str, Any]:
+    """Synchronous yfinance financial data fetch — runs in thread pool."""
+    ticker = yf.Ticker(yahoo_symbol)
+
+    income_stmt = ticker.income_stmt
+    balance_sheet = ticker.balance_sheet
+    cash_flow = ticker.cashflow
+    info = ticker.info
+
+    earnings_dates = []
+    if ticker.earnings_dates is not None:
+        earnings_dates = ticker.earnings_dates.to_dict("records")
+
+    return {
+        "symbol": symbol,
+        "metrics": {
+            "roe": info.get("returnOnEquity"),
+            "roa": info.get("returnOnAssets"),
+            "profit_margin": info.get("profitMargins"),
+            "operating_margin": info.get("operatingMargins"),
+            "pe_ratio": info.get("trailingPE"),
+            "forward_pe": info.get("forwardPE"),
+            "pb_ratio": info.get("priceToBook"),
+            "ps_ratio": info.get("priceToSalesTrailing12Months"),
+            "peg_ratio": info.get("pegRatio"),
+            "enterprise_value": info.get("enterpriseValue"),
+            "ev_ebitda": info.get("enterpriseToEbitda"),
+            "debt_to_equity": info.get("debtToEquity"),
+            "current_ratio": info.get("currentRatio"),
+            "quick_ratio": info.get("quickRatio"),
+            "total_cash": info.get("totalCash"),
+            "total_debt": info.get("totalDebt"),
+            "total_revenue": info.get("totalRevenue"),
+            "revenue_per_share": info.get("revenuePerShare"),
+            "dividend_yield": info.get("dividendYield"),
+            "dividend_rate": info.get("dividendRate"),
+            "payout_ratio": info.get("payoutRatio"),
+        },
+        "income_statement": stmt_converter(income_stmt) if income_stmt is not None else {},
+        "balance_sheet": stmt_converter(balance_sheet) if balance_sheet is not None else {},
+        "cash_flow": stmt_converter(cash_flow) if cash_flow is not None else {},
+        "earnings_dates": earnings_dates,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+def _sync_fetch_news(yahoo_symbol: str, symbol: str) -> List[Dict[str, Any]]:
+    """Synchronous yfinance news fetch — runs in thread pool."""
+    ticker = yf.Ticker(yahoo_symbol)
+    news = ticker.news
+
+    if not news:
+        return []
+
+    articles = []
+    for item in news[:20]:
+        content = item.get("content", {})
+        title = content.get("title") or item.get("title")
+        summary = content.get("summary") or item.get("summary")
+
+        link = None
+        if content.get("canonicalUrl"):
+            link = content["canonicalUrl"].get("url")
+        if not link and item.get("link"):
+            link = item.get("link")
+
+        provider = content.get("provider", {})
+        source = provider.get("displayName") or item.get("publisher")
+        published = content.get("pubDate") or item.get("providerPublishTime")
+
+        related = item.get("relatedTickers", [])
+        if symbol not in related:
+            related.append(symbol)
+        if yahoo_symbol not in related:
+            related.append(yahoo_symbol)
+
+        if title:
+            articles.append({
+                "title": title,
+                "link": link,
+                "published": published,
+                "source": source,
+                "summary": summary,
+                "related_symbols": related,
+                "original_symbol": symbol,
+            })
+
+    return articles
+
+
+def _sync_fetch_akshare_stock_info(symbol: str, ak) -> Optional[Dict[str, Any]]:
+    """Synchronous AkShare stock info fetch — runs in thread pool."""
+    df = ak.stock_zh_a_spot_em()
+    stock_row = df[df["代码"] == symbol]
+
+    if stock_row.empty:
+        return None
+
+    row = stock_row.iloc[0]
+    return {
+        "symbol": symbol,
+        "current_price": row.get("最新价"),
+        "change": row.get("涨跌幅", 0),
+        "change_percent": row.get("涨跌幅", 0),
+        "volume": row.get("成交量"),
+        "amount": row.get("成交额"),
+        "amplitude": row.get("振幅"),
+        "high": row.get("最高"),
+        "low": row.get("最低"),
+        "open": row.get("今开"),
+        "previous_close": row.get("昨收"),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+def _sync_fetch_akshare_financials(symbol: str, ak) -> Optional[Dict[str, Any]]:
+    """Synchronous AkShare financials fetch — runs in thread pool."""
+    df = ak.stock_financial_analysis_indicator(symbol=symbol)
+
+    if df.empty:
+        return None
+
+    latest = df.iloc[-1]
+    return {
+        "symbol": symbol,
+        "metrics": {
+            "roe": latest.get("净资产收益率"),
+            "roa": latest.get("总资产净利率"),
+            "gross_margin": latest.get("销售毛利率"),
+            "net_margin": latest.get("销售净利率"),
+            "debt_to_asset": latest.get("资产负债率"),
+            "current_ratio": latest.get("流动比率"),
+            "quick_ratio": latest.get("速动比率"),
+        },
+        "timestamp": datetime.now().isoformat(),
+    }
 
 
 class DataCollectionAgent(BaseAgent):
@@ -183,54 +368,14 @@ class DataCollectionAgent(BaseAgent):
             Dictionary containing price data and statistics
         """
         try:
-            # Convert to Yahoo Finance format for Chinese stocks
             yahoo_symbol = convert_to_yahoo_symbol(symbol)
             logger.info(f"Fetching market data for {symbol} (Yahoo: {yahoo_symbol})")
 
-            ticker = yf.Ticker(yahoo_symbol)
-
-            # Get current info
-            info = ticker.info
-
-            # Get historical data (last 3 months)
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=90)
-
-            hist = ticker.history(start=start_date, end=end_date)
-
-            if hist.empty:
-                logger.warning(f"No historical data found for {symbol} (Yahoo: {yahoo_symbol})")
-                return {}
-
-            # Convert to dict
-            hist_data = self._historical_data_to_dict(hist)
-
-            return {
-                "symbol": symbol,
-                "yahoo_symbol": yahoo_symbol,
-                "current_price": info.get("currentPrice") or info.get("regularMarketPrice"),
-                "previous_close": info.get("previousClose"),
-                "change": info.get("currentPrice") - info.get("previousClose", 0)
-                if info.get("currentPrice") and info.get("previousClose")
-                else None,
-                "change_percent": (
-                    (info.get("currentPrice") - info.get("previousClose", 0))
-                    / info.get("previousClose", 1) * 100
-                    if info.get("currentPrice") and info.get("previousClose")
-                    else None
-                ),
-                "volume": info.get("volume"),
-                "avg_volume": info.get("averageVolume"),
-                "market_cap": info.get("marketCap"),
-                "52_week_high": info.get("fiftyTwoWeekHigh"),
-                "52_week_low": info.get("fiftyTwoWeekLow"),
-                "company_name": info.get("longName"),
-                "sector": info.get("sector"),
-                "industry": info.get("industry"),
-                "description": info.get("longBusinessSummary"),
-                "historical_data": hist_data,
-                "timestamp": datetime.now().isoformat(),
-            }
+            async with _yfinance_semaphore:
+                result = await asyncio.to_thread(
+                    _sync_fetch_market_data, yahoo_symbol, symbol, self._historical_data_to_dict
+                )
+            return result
 
         except Exception as e:
             logger.error(f"Error fetching market data for {symbol}: {e}")
@@ -247,67 +392,12 @@ class DataCollectionAgent(BaseAgent):
         """
         try:
             yahoo_symbol = convert_to_yahoo_symbol(symbol)
-            ticker = yf.Ticker(yahoo_symbol)
 
-            # Get financial statements
-            income_stmt = ticker.income_stmt
-            balance_sheet = ticker.balance_sheet
-            cash_flow = ticker.cashflow
-
-            # Get info
-            info = ticker.info
-
-            return {
-                "symbol": symbol,
-                "metrics": {
-                    # Profitability
-                    "roe": info.get("returnOnEquity"),
-                    "roa": info.get("returnOnAssets"),
-                    "profit_margin": info.get("profitMargins"),
-                    "operating_margin": info.get("operatingMargins"),
-                    # Valuation
-                    "pe_ratio": info.get("trailingPE"),
-                    "forward_pe": info.get("forwardPE"),
-                    "pb_ratio": info.get("priceToBook"),
-                    "ps_ratio": info.get("priceToSalesTrailing12Months"),
-                    "peg_ratio": info.get("pegRatio"),
-                    "enterprise_value": info.get("enterpriseValue"),
-                    "ev_ebitda": info.get("enterpriseToEbitda"),
-                    # Financial health
-                    "debt_to_equity": info.get("debtToEquity"),
-                    "current_ratio": info.get("currentRatio"),
-                    "quick_ratio": info.get("quickRatio"),
-                    "total_cash": info.get("totalCash"),
-                    "total_debt": info.get("totalDebt"),
-                    "total_revenue": info.get("totalRevenue"),
-                    "revenue_per_share": info.get("revenuePerShare"),
-                    # Dividends
-                    "dividend_yield": info.get("dividendYield"),
-                    "dividend_rate": info.get("dividendRate"),
-                    "payout_ratio": info.get("payoutRatio"),
-                },
-                "income_statement": (
-                    self._financial_statement_to_dict(income_stmt)
-                    if income_stmt is not None
-                    else {}
-                ),
-                "balance_sheet": (
-                    self._financial_statement_to_dict(balance_sheet)
-                    if balance_sheet is not None
-                    else {}
-                ),
-                "cash_flow": (
-                    self._financial_statement_to_dict(cash_flow)
-                    if cash_flow is not None
-                    else {}
-                ),
-                "earnings_dates": (
-                    ticker.earnings_dates.to_dict("records")
-                    if ticker.earnings_dates is not None
-                    else []
-                ),
-                "timestamp": datetime.now().isoformat(),
-            }
+            async with _yfinance_semaphore:
+                result = await asyncio.to_thread(
+                    _sync_fetch_financial_data, yahoo_symbol, symbol, self._financial_statement_to_dict
+                )
+            return result
 
         except Exception as e:
             logger.error(f"Error fetching financial data for {symbol}: {e}")
@@ -324,54 +414,9 @@ class DataCollectionAgent(BaseAgent):
         """
         try:
             yahoo_symbol = convert_to_yahoo_symbol(symbol)
-            ticker = yf.Ticker(yahoo_symbol)
-            news = ticker.news
 
-            if not news:
-                logger.debug(f"No news found for {symbol} (Yahoo: {yahoo_symbol})")
-                return []
-
-            articles = []
-            for item in news[:20]:  # Limit to 20 most recent
-                # Handle new Yahoo Finance news structure (nested content object)
-                content = item.get("content", {})
-
-                # Extract fields from new structure
-                title = content.get("title") or item.get("title")
-                summary = content.get("summary") or item.get("summary")
-                link = None
-                if content.get("canonicalUrl"):
-                    link = content["canonicalUrl"].get("url")
-                if not link and item.get("link"):
-                    link = item.get("link")
-
-                # Publisher/source
-                provider = content.get("provider", {})
-                source = provider.get("displayName") or item.get("publisher")
-
-                # Published date
-                published = content.get("pubDate") or item.get("providerPublishTime")
-
-                # Related tickers - ensure original symbol is included
-                related = item.get("relatedTickers", [])
-                if symbol not in related:
-                    related.append(symbol)
-                if yahoo_symbol not in related:
-                    related.append(yahoo_symbol)
-
-                article = {
-                    "title": title,
-                    "link": link,
-                    "published": published,
-                    "source": source,
-                    "summary": summary,
-                    "related_symbols": related,
-                    "original_symbol": symbol,
-                }
-
-                # Only include if we have at least a title
-                if title:
-                    articles.append(article)
+            async with _yfinance_semaphore:
+                articles = await asyncio.to_thread(_sync_fetch_news, yahoo_symbol, symbol)
 
             logger.info(f"Fetched {len(articles)} news articles for {symbol}")
             return articles
@@ -491,35 +536,9 @@ class AkShareDataAgent(BaseAgent):
             Dictionary containing stock data
         """
         try:
-            # Determine market (SH or SZ)
-            exchange = "sh" if symbol.startswith("6") else "sz"
-            stock_code = f"{symbol}.{exchange.upper()}"
-
-            # Get real-time quote
-            df = ak.stock_zh_a_spot_em()
-
-            stock_row = df[df["代码"] == symbol]
-
-            if stock_row.empty:
-                return None
-
-            row = stock_row.iloc[0]
-
-            return {
-                "symbol": symbol,
-                "current_price": row.get("最新价"),
-                "change": row.get("涨跌幅", 0),
-                "change_percent": row.get("涨跌幅", 0),
-                "volume": row.get("成交量"),
-                "amount": row.get("成交额"),
-                "amplitude": row.get("振幅"),
-                "high": row.get("最高"),
-                "low": row.get("最低"),
-                "open": row.get("今开"),
-                "previous_close": row.get("昨收"),
-                "timestamp": datetime.now().isoformat(),
-            }
-
+            return await asyncio.to_thread(
+                _sync_fetch_akshare_stock_info, symbol, ak
+            )
         except Exception as e:
             logger.error(f"Error fetching AkShare data for {symbol}: {e}")
             return None
@@ -537,28 +556,9 @@ class AkShareDataAgent(BaseAgent):
             Dictionary containing financial data
         """
         try:
-            # Get main financial indicators
-            df = ak.stock_financial_analysis_indicator(symbol=symbol)
-
-            if df.empty:
-                return None
-
-            latest = df.iloc[-1]
-
-            return {
-                "symbol": symbol,
-                "metrics": {
-                    "roe": latest.get("净资产收益率"),
-                    "roa": latest.get("总资产净利率"),
-                    "gross_margin": latest.get("销售毛利率"),
-                    "net_margin": latest.get("销售净利率"),
-                    "debt_to_asset": latest.get("资产负债率"),
-                    "current_ratio": latest.get("流动比率"),
-                    "quick_ratio": latest.get("速动比率"),
-                },
-                "timestamp": datetime.now().isoformat(),
-            }
-
+            return await asyncio.to_thread(
+                _sync_fetch_akshare_financials, symbol, ak
+            )
         except Exception as e:
             logger.error(f"Error fetching AkShare financials for {symbol}: {e}")
             return None

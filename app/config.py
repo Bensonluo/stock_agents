@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     yfinance_enabled: bool = True
     cache_ttl: int = 300  # 5 minutes
 
+    # Agent Settings (ReAct)
+    agent_max_iterations: int = 15
+    agent_cost_limit: float = 0.50  # USD
+    agent_reasoning_model: str = "glm-4.7"
+    agent_reflection_model: str = "glm-4.5-air"
+
     # Backtesting
     backtest_initial_cash: float = 10000.0
     backtest_commission: float = 0.001

@@ -413,33 +413,45 @@ class MultiAgentOrchestrator:
 
             return _convert_to_serializable(initial_state)
 
-    async def _data_collection_node(self, state: AgentState) -> AgentState:
-        """Data collection node.
+    async def _run_agent_node(
+        self,
+        state: AgentState,
+        agent_name: str,
+        agent,
+        mode: str = "run",
+        state_key: Optional[str] = None,
+        post_process=None,
+    ) -> AgentState:
+        """Shared agent node runner with monitoring, broadcasting, and error handling.
 
         Args:
             state: Current agent state
+            agent_name: Name for status tracking and monitoring
+            agent: Agent instance to execute
+            mode: "run" for BaseAgent.run(), "process" for StatelessAgent.process()
+            state_key: If set, assign process() result to this state key
+            post_process: Optional async callback(state, agent_result) for extra logic
 
         Returns:
-            Updated state with data collection results
+            Updated agent state
         """
         import time
 
-        agent_name = "data_collection"
         thread_id = state.get("thread_id", "unknown")
 
-        # Create a mutable copy and update tracking
+        # Set tracking
         state = dict(state)
         state["current_agent"] = agent_name
         state["current_step"] = state.get("current_step", 0) + 1
         step = state["current_step"]
-
-        # Update agent status
         agent_status = state.get("agent_status", {})
         agent_status[agent_name] = "running"
         state["agent_status"] = agent_status
 
-        # Broadcast agent start
+        # Broadcast and monitor start
         monitor = get_monitor()
+        symbols = state.get("symbols", [])
+
         if monitor.broadcast_manager:
             await monitor.broadcast_manager.broadcast_agent_event(
                 event_type="agent_start",
@@ -450,1028 +462,167 @@ class MultiAgentOrchestrator:
             )
         monitor.on_agent_start(agent_name, state)
 
-        # Log agent start
-        symbols = state.get("symbols", [])
         monitor.log_agent_step(
             thread_id=thread_id,
             agent_name=agent_name,
             step=step,
             level="info",
-            message=f"Starting data collection for symbols: {symbols}",
-            data={"symbols": symbols, "query": state.get("query", "")}
+            message=f"Starting {agent_name} for symbols: {symbols}",
+            data={"symbols": symbols},
         )
 
-        agent_start_time = time.time()
+        update_agent_status(thread_id, agent_name, "running")
+        add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
+
+        start_time = time.time()
 
         try:
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "running")
-            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
+            # Execute agent
+            if mode == "run":
+                agent_result = await agent.run(state)
+            else:
+                agent_result = await agent.process(state)
 
-            # Log fetching market data
+            agent_result = _convert_to_serializable(agent_result)
+
+            # Merge results into state
+            if mode == "run":
+                if isinstance(agent_result, dict):
+                    for key, value in agent_result.items():
+                        if key not in ("agent_outputs", "errors", "agent_status", "current_agent", "current_step"):
+                            state[key] = value
+            elif state_key:
+                state[state_key] = agent_result
+
+            # Post-process hook (e.g., AkShare merge for data_collection)
+            if post_process:
+                await post_process(state, agent_result)
+
+            # Mark completed
+            agent_status[agent_name] = "completed"
+            state["agent_status"] = agent_status
+            execution_time = time.time() - start_time
+
+            update_agent_status(thread_id, agent_name, "completed")
+            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
+
             monitor.log_agent_step(
                 thread_id=thread_id,
                 agent_name=agent_name,
                 step=step,
-                level="debug",
-                message="Fetching market data from yfinance",
+                level="info",
+                message=f"{agent_name} completed successfully",
+                duration_ms=int(execution_time * 1000),
             )
 
-            # Execute data collection
-            agent_result = await self.data_agent.run(state)
+            if monitor.broadcast_manager:
+                await monitor.broadcast_manager.broadcast_agent_event(
+                    event_type="agent_success",
+                    agent_name=agent_name,
+                    thread_id=thread_id,
+                    status="completed",
+                    step=step,
+                    execution_time=execution_time,
+                )
+            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
 
-            # If we have Chinese symbols, also use AkShare
+        except Exception as e:
+            execution_time = time.time() - start_time
+            logger.error(f"{agent_name} node error: {e}")
+
+            update_agent_status(thread_id, agent_name, "failed", str(e))
+            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
+
+            monitor.log_agent_step(
+                thread_id=thread_id,
+                agent_name=agent_name,
+                step=step,
+                level="error",
+                message=f"{agent_name} failed: {str(e)}",
+                data={"error_type": type(e).__name__},
+                duration_ms=int(execution_time * 1000),
+            )
+
+            state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
+            agent_status[agent_name] = "failed"
+            state["agent_status"] = agent_status
+
+            if monitor.broadcast_manager:
+                await monitor.broadcast_manager.broadcast_agent_event(
+                    event_type="agent_failure",
+                    agent_name=agent_name,
+                    thread_id=thread_id,
+                    status="failed",
+                    step=step,
+                    execution_time=execution_time,
+                    error=str(e),
+                )
+            monitor.on_agent_failure(
+                agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id
+            )
+
+        return AgentState(**state)
+
+    async def _data_collection_node(self, state: AgentState) -> AgentState:
+        """Data collection node with AkShare merge for Chinese stocks."""
+
+        async def merge_akshare(state, _agent_result):
+            symbols = state.get("symbols", [])
             cn_symbols = [s for s in symbols if s.isdigit() and len(s) == 6]
             if cn_symbols:
-                monitor.log_agent_step(
-                    thread_id=thread_id,
-                    agent_name=agent_name,
-                    step=step,
-                    level="debug",
-                    message=f"Fetching additional data from AkShare for CN symbols: {cn_symbols}",
-                )
-            if cn_symbols:
                 akshare_result = await self.akshare_agent.run(state)
-                # Merge results
+                akshare_result = _convert_to_serializable(akshare_result)
                 for key, value in akshare_result.items():
-                    if key not in ["agent_outputs", "errors", "agent_status", "current_agent", "current_step"]:
-                        if key in agent_result and isinstance(agent_result.get(key), dict) and isinstance(value, dict):
-                            agent_result[key] = {**agent_result[key], **value}
+                    if key not in ("agent_outputs", "errors", "agent_status", "current_agent", "current_step"):
+                        if key in state and isinstance(state.get(key), dict) and isinstance(value, dict):
+                            state[key] = {**state[key], **value}
                         else:
-                            agent_result[key] = value
+                            state[key] = value
 
-            # Convert numpy types before merging to prevent serialization issues
-            agent_result = _convert_to_serializable(agent_result)
-
-            # Merge agent result into state
-            if isinstance(agent_result, dict):
-                for key, value in agent_result.items():
-                    if key not in ["agent_outputs", "errors", "agent_status", "current_agent", "current_step"]:
-                        state[key] = value
-
-            # Mark as completed
-            agent_status[agent_name] = "completed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent success
-            execution_time = time.time() - agent_start_time
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "completed")
-            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
-
-            # Log successful completion
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="info",
-                message="Data collection completed successfully",
-                data={"market_data_keys": list(state.get("market_data", {}).keys()) if state.get("market_data") else []},
-                duration_ms=int(execution_time * 1000)
-            )
-
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_success",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="completed",
-                    step=step,
-                    execution_time=execution_time,
-                )
-            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
-
-        except Exception as e:
-            execution_time = time.time() - agent_start_time
-            logger.error(f"Data collection node error: {e}")
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "failed", str(e))
-            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
-
-            # Log failure
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="error",
-                message=f"Data collection failed: {str(e)}",
-                data={"error_type": type(e).__name__},
-                duration_ms=int(execution_time * 1000)
-            )
-
-            state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
-            agent_status[agent_name] = "failed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent failure
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_failure",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="failed",
-                    step=step,
-                    execution_time=execution_time,
-                    error=str(e),
-                )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
-
-        return AgentState(**state)
+        return await self._run_agent_node(
+            state,
+            agent_name="data_collection",
+            agent=self.data_agent,
+            mode="run",
+            post_process=merge_akshare,
+        )
 
     async def _technical_analysis_node(self, state: AgentState) -> AgentState:
-        """Technical analysis node.
-
-        Args:
-            state: Current agent state
-
-        Returns:
-            Updated state with technical analysis results
-        """
-        import time
-
-        agent_name = "technical_analysis"
-        thread_id = state.get("thread_id", "unknown")
-
-        # Create a mutable copy and update tracking
-        state = dict(state)
-        state["current_agent"] = agent_name
-        state["current_step"] = state.get("current_step", 0) + 1
-        step = state["current_step"]
-
-        # Update agent status
-        agent_status = state.get("agent_status", {})
-        agent_status[agent_name] = "running"
-        state["agent_status"] = agent_status
-
-        # Broadcast agent start
-        monitor = get_monitor()
-        if monitor.broadcast_manager:
-            await monitor.broadcast_manager.broadcast_agent_event(
-                event_type="agent_start",
-                agent_name=agent_name,
-                thread_id=thread_id,
-                status="running",
-                step=step,
-            )
-        monitor.on_agent_start(agent_name, state)
-
-        # Log agent start
-        symbols = state.get("symbols", [])
-        monitor.log_agent_step(
-            thread_id=thread_id,
-            agent_name=agent_name,
-            step=step,
-            level="info",
-            message=f"Starting technical analysis for symbols: {symbols}",
-            data={"symbols": symbols}
+        return await self._run_agent_node(
+            state, agent_name="technical_analysis", agent=self.technical_agent, mode="run",
         )
-
-        agent_start_time = time.time()
-
-        try:
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "running")
-            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
-
-            # Log computing indicators
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="debug",
-                message="Computing technical indicators (RSI, MACD, Bollinger Bands, etc.)",
-            )
-
-            # Execute technical analysis
-            agent_result = await self.technical_agent.run(state)
-
-            # Convert numpy types before merging to prevent serialization issues
-            agent_result = _convert_to_serializable(agent_result)
-
-            # agent_result is now Dict[str, Any] with just technical_analysis key
-            # Merge it into state
-            if isinstance(agent_result, dict):
-                for key, value in agent_result.items():
-                    if key not in ["agent_outputs", "errors", "agent_status", "current_agent", "current_step"]:
-                        state[key] = value
-
-            # Mark as completed
-            agent_status[agent_name] = "completed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent success
-            execution_time = time.time() - agent_start_time
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "completed")
-            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
-
-            # Log successful completion
-            technical_data = state.get("technical_analysis", {})
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="info",
-                message="Technical analysis completed successfully",
-                data={
-                    "indicators_computed": list(technical_data.keys()) if technical_data else [],
-                    "symbols_analyzed": symbols
-                },
-                duration_ms=int(execution_time * 1000)
-            )
-
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_success",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="completed",
-                    step=step,
-                    execution_time=execution_time,
-                )
-            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
-
-        except Exception as e:
-            execution_time = time.time() - agent_start_time
-            logger.error(f"Technical analysis node error: {e}")
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "failed", str(e))
-            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
-
-            # Log failure
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="error",
-                message=f"Technical analysis failed: {str(e)}",
-                data={"error_type": type(e).__name__},
-                duration_ms=int(execution_time * 1000)
-            )
-
-            state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
-            agent_status[agent_name] = "failed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent failure
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_failure",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="failed",
-                    step=step,
-                    execution_time=execution_time,
-                    error=str(e),
-                )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
-
-        return AgentState(**state)
 
     async def _fundamental_analysis_node(self, state: AgentState) -> AgentState:
-        """Fundamental analysis node.
-
-        Args:
-            state: Current agent state
-
-        Returns:
-            Updated state with fundamental analysis results
-        """
-        import time
-
-        agent_name = "fundamental_analysis"
-        thread_id = state.get("thread_id", "unknown")
-
-        # Create a mutable copy and update tracking
-        state = dict(state)
-        state["current_agent"] = agent_name
-        state["current_step"] = state.get("current_step", 0) + 1
-        step = state["current_step"]
-
-        # Update agent status
-        agent_status = state.get("agent_status", {})
-        agent_status[agent_name] = "running"
-        state["agent_status"] = agent_status
-
-        # Broadcast agent start
-        monitor = get_monitor()
-        if monitor.broadcast_manager:
-            await monitor.broadcast_manager.broadcast_agent_event(
-                event_type="agent_start",
-                agent_name=agent_name,
-                thread_id=thread_id,
-                status="running",
-                step=step,
-            )
-        monitor.on_agent_start(agent_name, state)
-
-        # Log agent start
-        symbols = state.get("symbols", [])
-        monitor.log_agent_step(
-            thread_id=thread_id,
-            agent_name=agent_name,
-            step=step,
-            level="info",
-            message=f"Starting fundamental analysis for symbols: {symbols}",
-            data={"symbols": symbols}
+        return await self._run_agent_node(
+            state, agent_name="fundamental_analysis", agent=self.fundamental_agent, mode="run",
         )
-
-        agent_start_time = time.time()
-
-        try:
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "running")
-            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
-
-            # Log analyzing fundamentals
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="debug",
-                message="Analyzing financial statements, P/E ratios, and company fundamentals",
-            )
-
-            # Execute fundamental analysis
-            agent_result = await self.fundamental_agent.run(state)
-
-            # Convert numpy types before merging to prevent serialization issues
-            agent_result = _convert_to_serializable(agent_result)
-
-            # Merge agent result into state
-            if isinstance(agent_result, dict):
-                for key, value in agent_result.items():
-                    if key not in ["agent_outputs", "errors", "agent_status", "current_agent", "current_step"]:
-                        state[key] = value
-
-            # Mark as completed
-            agent_status[agent_name] = "completed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent success
-            execution_time = time.time() - agent_start_time
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "completed")
-            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
-
-            # Log successful completion
-            fundamental_data = state.get("fundamental_analysis", {})
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="info",
-                message="Fundamental analysis completed successfully",
-                data={
-                    "metrics_analyzed": list(fundamental_data.keys()) if fundamental_data else [],
-                    "symbols_analyzed": symbols
-                },
-                duration_ms=int(execution_time * 1000)
-            )
-
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_success",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="completed",
-                    step=step,
-                    execution_time=execution_time,
-                )
-            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
-
-        except Exception as e:
-            execution_time = time.time() - agent_start_time
-            logger.error(f"Fundamental analysis node error: {e}")
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "failed", str(e))
-            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
-
-            # Log failure
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="error",
-                message=f"Fundamental analysis failed: {str(e)}",
-                data={"error_type": type(e).__name__},
-                duration_ms=int(execution_time * 1000)
-            )
-
-            state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
-            agent_status[agent_name] = "failed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent failure
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_failure",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="failed",
-                    step=step,
-                    execution_time=execution_time,
-                    error=str(e),
-                )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
-
-        return AgentState(**state)
 
     async def _sentiment_analysis_node(self, state: AgentState) -> AgentState:
-        """Sentiment analysis node.
-
-        Args:
-            state: Current agent state
-
-        Returns:
-            Updated state with sentiment analysis results
-        """
-        import time
-
-        agent_name = "sentiment_analysis"
-        thread_id = state.get("thread_id", "unknown")
-
-        # Create a mutable copy and update tracking
-        state = dict(state)
-        state["current_agent"] = agent_name
-        state["current_step"] = state.get("current_step", 0) + 1
-        step = state["current_step"]
-
-        # Update agent status
-        agent_status = state.get("agent_status", {})
-        agent_status[agent_name] = "running"
-        state["agent_status"] = agent_status
-
-        # Broadcast agent start
-        monitor = get_monitor()
-        if monitor.broadcast_manager:
-            await monitor.broadcast_manager.broadcast_agent_event(
-                event_type="agent_start",
-                agent_name=agent_name,
-                thread_id=thread_id,
-                status="running",
-                step=step,
-            )
-        monitor.on_agent_start(agent_name, state)
-
-        # Log agent start
-        symbols = state.get("symbols", [])
-        monitor.log_agent_step(
-            thread_id=thread_id,
-            agent_name=agent_name,
-            step=step,
-            level="info",
-            message=f"Starting sentiment analysis for symbols: {symbols}",
-            data={"symbols": symbols}
+        return await self._run_agent_node(
+            state, agent_name="sentiment_analysis", agent=self.sentiment_agent,
+            mode="process", state_key="sentiment_analysis",
         )
-
-        agent_start_time = time.time()
-
-        try:
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "running")
-            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
-
-            # Log fetching news and analyzing sentiment
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="debug",
-                message="Fetching news and analyzing sentiment with LLM",
-            )
-
-            # Execute sentiment analysis - call process() directly like other StatelessAgent nodes
-            agent_result = await self.sentiment_agent.process(state)
-            # Convert numpy types before assigning to prevent serialization issues
-            state["sentiment_analysis"] = _convert_to_serializable(agent_result)
-
-            # Mark as completed
-            agent_status[agent_name] = "completed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent success
-            execution_time = time.time() - agent_start_time
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "completed")
-            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
-
-            # Log successful completion
-            sentiment_data = state.get("sentiment_analysis", {})
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="info",
-                message="Sentiment analysis completed successfully",
-                data={
-                    "overall_sentiment": sentiment_data.get("overall_sentiment"),
-                    "news_count": len(sentiment_data.get("news_items", []))
-                },
-                duration_ms=int(execution_time * 1000)
-            )
-
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_success",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="completed",
-                    step=step,
-                    execution_time=execution_time,
-                )
-            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
-
-        except Exception as e:
-            execution_time = time.time() - agent_start_time
-            logger.error(f"Sentiment analysis node error: {e}")
-            import traceback
-            traceback.print_exc()
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "failed", str(e))
-            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
-
-            # Log failure
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="error",
-                message=f"Sentiment analysis failed: {str(e)}",
-                data={"error_type": type(e).__name__},
-                duration_ms=int(execution_time * 1000)
-            )
-
-            state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
-            agent_status[agent_name] = "failed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent failure
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_failure",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="failed",
-                    step=step,
-                    execution_time=execution_time,
-                    error=str(e),
-                )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
-
-        return AgentState(**state)
 
     async def _risk_assessment_node(self, state: AgentState) -> AgentState:
-        """Risk assessment node.
-
-        Args:
-            state: Current agent state
-
-        Returns:
-            Updated state with risk assessment results
-        """
-        import time
-
-        agent_name = "risk_assessment"
-        thread_id = state.get("thread_id", "unknown")
-
-        # Create a mutable copy and update tracking
-        state = dict(state)
-        state["current_agent"] = agent_name
-        state["current_step"] = state.get("current_step", 0) + 1
-        step = state["current_step"]
-
-        # Update agent status
-        agent_status = state.get("agent_status", {})
-        agent_status[agent_name] = "running"
-        state["agent_status"] = agent_status
-
-        # Broadcast agent start
-        monitor = get_monitor()
-        if monitor.broadcast_manager:
-            await monitor.broadcast_manager.broadcast_agent_event(
-                event_type="agent_start",
-                agent_name=agent_name,
-                thread_id=thread_id,
-                status="running",
-                step=step,
-            )
-        monitor.on_agent_start(agent_name, state)
-
-        # Log agent start
-        symbols = state.get("symbols", [])
-        monitor.log_agent_step(
-            thread_id=thread_id,
-            agent_name=agent_name,
-            step=step,
-            level="info",
-            message=f"Starting risk assessment for symbols: {symbols}",
-            data={"symbols": symbols}
+        return await self._run_agent_node(
+            state, agent_name="risk_assessment", agent=self.risk_agent,
+            mode="process", state_key="risk_assessment",
         )
-
-        agent_start_time = time.time()
-
-        try:
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "running")
-            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
-
-            # Log computing risk metrics
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="debug",
-                message="Computing risk metrics (VaR, Beta, volatility, compliance checks)",
-            )
-
-            # Execute risk assessment
-            agent_result = await self.risk_agent.process(state)
-            # Convert numpy types before assigning to prevent serialization issues
-            state["risk_assessment"] = _convert_to_serializable(agent_result)
-
-            # Mark as completed
-            agent_status[agent_name] = "completed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent success
-            execution_time = time.time() - agent_start_time
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "completed")
-            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
-
-            # Log successful completion
-            risk_data = state.get("risk_assessment", {})
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="info",
-                message="Risk assessment completed successfully",
-                data={
-                    "overall_risk_level": risk_data.get("overall_risk_level"),
-                    "risk_factors_count": len(risk_data.get("risk_factors", []))
-                },
-                duration_ms=int(execution_time * 1000)
-            )
-
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_success",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="completed",
-                    step=step,
-                    execution_time=execution_time,
-                )
-            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
-
-        except Exception as e:
-            execution_time = time.time() - agent_start_time
-            logger.error(f"Risk assessment node error: {e}")
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "failed", str(e))
-            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
-
-            # Log failure
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="error",
-                message=f"Risk assessment failed: {str(e)}",
-                data={"error_type": type(e).__name__},
-                duration_ms=int(execution_time * 1000)
-            )
-
-            state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
-            agent_status[agent_name] = "failed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent failure
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_failure",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="failed",
-                    step=step,
-                    execution_time=execution_time,
-                    error=str(e),
-                )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
-
-        return AgentState(**state)
 
     async def _decision_making_node(self, state: AgentState) -> AgentState:
-        """Decision making node.
-
-        Args:
-            state: Current agent state
-
-        Returns:
-            Updated state with decision making results
-        """
-        import time
-
-        agent_name = "decision_making"
-        thread_id = state.get("thread_id", "unknown")
-
-        # Create a mutable copy and update tracking
-        state = dict(state)
-        state["current_agent"] = agent_name
-        state["current_step"] = state.get("current_step", 0) + 1
-        step = state["current_step"]
-
-        # Update agent status
-        agent_status = state.get("agent_status", {})
-        agent_status[agent_name] = "running"
-        state["agent_status"] = agent_status
-
-        # Broadcast agent start
-        monitor = get_monitor()
-        if monitor.broadcast_manager:
-            await monitor.broadcast_manager.broadcast_agent_event(
-                event_type="agent_start",
-                agent_name=agent_name,
-                thread_id=thread_id,
-                status="running",
-                step=step,
-            )
-        monitor.on_agent_start(agent_name, state)
-
-        # Log agent start
-        symbols = state.get("symbols", [])
-        monitor.log_agent_step(
-            thread_id=thread_id,
-            agent_name=agent_name,
-            step=step,
-            level="info",
-            message=f"Starting decision making for symbols: {symbols}",
-            data={"symbols": symbols}
+        return await self._run_agent_node(
+            state, agent_name="decision_making", agent=self.decision_agent,
+            mode="process", state_key="decision",
         )
-
-        agent_start_time = time.time()
-
-        try:
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "running")
-            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
-
-            # Log analyzing all data for decision
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="debug",
-                message="Synthesizing technical, fundamental, sentiment, and risk analysis for investment decision",
-            )
-
-            # Execute decision making
-            agent_result = await self.decision_agent.process(state)
-            # Convert numpy types before assigning to prevent serialization issues
-            state["decision"] = _convert_to_serializable(agent_result)
-
-            # Mark as completed
-            agent_status[agent_name] = "completed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent success
-            execution_time = time.time() - agent_start_time
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "completed")
-            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
-
-            # Log successful completion
-            decision_data = state.get("decision", {})
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="info",
-                message="Decision making completed successfully",
-                data={
-                    "recommendation": decision_data.get("recommendation"),
-                    "confidence": decision_data.get("confidence"),
-                    "action": decision_data.get("action")
-                },
-                duration_ms=int(execution_time * 1000)
-            )
-
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_success",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="completed",
-                    step=step,
-                    execution_time=execution_time,
-                )
-            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
-
-        except Exception as e:
-            execution_time = time.time() - agent_start_time
-            logger.error(f"Decision making node error: {e}")
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "failed", str(e))
-            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
-
-            # Log failure
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="error",
-                message=f"Decision making failed: {str(e)}",
-                data={"error_type": type(e).__name__},
-                duration_ms=int(execution_time * 1000)
-            )
-
-            state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
-            agent_status[agent_name] = "failed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent failure
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_failure",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="failed",
-                    step=step,
-                    execution_time=execution_time,
-                    error=str(e),
-                )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
-
-        return AgentState(**state)
 
     async def _report_generation_node(self, state: AgentState) -> AgentState:
-        """Report generation node.
-
-        Args:
-            state: Current agent state
-
-        Returns:
-            Updated state with report generation results
-        """
-        import time
-
-        agent_name = "report_generation"
-        thread_id = state.get("thread_id", "unknown")
-
-        # Create a mutable copy and update tracking
-        state = dict(state)
-        state["current_agent"] = agent_name
-        state["current_step"] = state.get("current_step", 0) + 1
-        step = state["current_step"]
-
-        # Update agent status
-        agent_status = state.get("agent_status", {})
-        agent_status[agent_name] = "running"
-        state["agent_status"] = agent_status
-
-        # Broadcast agent start
-        monitor = get_monitor()
-        if monitor.broadcast_manager:
-            await monitor.broadcast_manager.broadcast_agent_event(
-                event_type="agent_start",
-                agent_name=agent_name,
-                thread_id=thread_id,
-                status="running",
-                step=step,
-            )
-        monitor.on_agent_start(agent_name, state)
-
-        # Log agent start
-        symbols = state.get("symbols", [])
-        monitor.log_agent_step(
-            thread_id=thread_id,
-            agent_name=agent_name,
-            step=step,
-            level="info",
-            message=f"Starting report generation for symbols: {symbols}",
-            data={"symbols": symbols}
+        return await self._run_agent_node(
+            state, agent_name="report_generation", agent=self.report_agent,
+            mode="process", state_key="report",
         )
 
-        agent_start_time = time.time()
-
-        try:
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "running")
-            add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
-
-            # Log generating report with LLM
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="debug",
-                message="Generating comprehensive analysis report with LLM",
-            )
-
-            # Execute report generation
-            agent_result = await self.report_agent.process(state)
-            # Convert numpy types before assigning to prevent serialization issues
-            state["report"] = _convert_to_serializable(agent_result)
-
-            # Mark as completed
-            agent_status[agent_name] = "completed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent success
-            execution_time = time.time() - agent_start_time
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "completed")
-            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
-
-            # Log successful completion
-            report_data = state.get("report", {})
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="info",
-                message="Report generation completed successfully",
-                data={
-                    "has_summary": bool(report_data.get("summary")),
-                    "sections_count": len(report_data.get("sections", [])),
-                    "has_charts": bool(report_data.get("charts"))
-                },
-                duration_ms=int(execution_time * 1000)
-            )
-
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_success",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="completed",
-                    step=step,
-                    execution_time=execution_time,
-                )
-            monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
-
-        except Exception as e:
-            execution_time = time.time() - agent_start_time
-            logger.error(f"Report generation node error: {e}")
-
-            # Update monitoring API status
-            update_agent_status(thread_id, agent_name, "failed", str(e))
-            add_log(thread_id, agent_name, "error", f"Failed: {str(e)}")
-
-            # Log failure
-            monitor.log_agent_step(
-                thread_id=thread_id,
-                agent_name=agent_name,
-                step=step,
-                level="error",
-                message=f"Report generation failed: {str(e)}",
-                data={"error_type": type(e).__name__},
-                duration_ms=int(execution_time * 1000)
-            )
-
-            state = add_error(state, agent_name, type(e).__name__, str(e), retryable=False)
-            agent_status[agent_name] = "failed"
-            state["agent_status"] = agent_status
-
-            # Broadcast agent failure
-            if monitor.broadcast_manager:
-                await monitor.broadcast_manager.broadcast_agent_event(
-                    event_type="agent_failure",
-                    agent_name=agent_name,
-                    thread_id=thread_id,
-                    status="failed",
-                    step=step,
-                    execution_time=execution_time,
-                    error=str(e),
-                )
-            monitor.on_agent_failure(agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id)
-
-        return AgentState(**state)
-
     async def _error_handler_node(self, state: AgentState) -> AgentState:
-        """Error handler node.
-
-        Args:
-            state: Current agent state
-
-        Returns:
-            Updated state with error summary
-        """
+        """Error handler node."""
         errors = state.get("errors", [])
 
         error_summary = {
@@ -1480,7 +631,6 @@ class MultiAgentOrchestrator:
             "last_error": errors[-1] if errors else None,
         }
 
-        # Group errors by agent
         for error in errors:
             agent = error.get("agent", "unknown")
             if agent not in error_summary["errors_by_agent"]:
@@ -1489,7 +639,6 @@ class MultiAgentOrchestrator:
 
         logger.error(f"Error handler processed {len(errors)} errors")
 
-        # Create a mutable copy and update
         state = dict(state)
         state["error_summary"] = error_summary
         execution_metadata = state.get("execution_metadata", {})

@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import analysis, backtest, health, history as history_router, monitor as monitor_router, monitoring, websocket as ws_router
+from app.api.routes import agent, analysis, backtest, health, history as history_router, monitor as monitor_router, monitoring, websocket as ws_router
 from app.config import settings
 from app.utils.logging import get_logger, setup_logging
 
@@ -81,6 +81,7 @@ async def general_exception_handler(request, exc):
 
 
 # Include routers
+app.include_router(agent.router, prefix="/api", tags=["Agent"])
 app.include_router(health.router, prefix="/api", tags=["Health"])
 app.include_router(analysis.router, prefix="/api/analysis", tags=["Analysis"])
 app.include_router(backtest.router, prefix="/api/backtest", tags=["Backtest"])

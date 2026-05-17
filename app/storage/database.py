@@ -44,13 +44,12 @@ class AnalysisRecord:
 
 
 class Database:
-    """SQLite 数据库管理类
+    """SQLite database manager with thread-safe connections."""
 
-    功能：
-    - 自动初始化数据库
-    - 线程安全的连接管理
-    - 完整的日志记录
-    """
+    _VALID_COLUMNS = {
+        "thread_id", "symbols", "query", "status", "result",
+        "created_at", "updated_at", "execution_time",
+    }
 
     _instance = None
     _lock = threading.Lock()
@@ -187,32 +186,40 @@ class Database:
             return None
 
     def update_record(self, thread_id: str, **kwargs) -> bool:
-        """更新记录
+        """Update a record by thread_id.
 
         Args:
-            thread_id: 工作流线程 ID
-            **kwargs: 要更新的字段
+            thread_id: Workflow thread ID
+            **kwargs: Fields to update
 
         Returns:
-            是否更新成功
+            True if update succeeded
+
+        Raises:
+            ValueError: If any column name is invalid
         """
         if not kwargs:
             return False
 
-        # 构建 SET 子句
-        set_clause = ', '.join(f'{k} = ?' for k in kwargs.keys())
-        kwargs['updated_at'] = datetime.now().isoformat()
+        # Validate column names against whitelist
+        invalid = set(kwargs.keys()) - self._VALID_COLUMNS
+        if invalid:
+            raise ValueError(f"Invalid columns: {invalid}")
+
+        kwargs["updated_at"] = datetime.now().isoformat()
+
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
 
         with self._get_connection() as conn:
             cursor = conn.execute(
-                f'UPDATE analysis_history SET {set_clause}, updated_at = ? WHERE thread_id = ?',
-                (*kwargs.values(), kwargs['updated_at'], thread_id)
+                f"UPDATE analysis_history SET {set_clause} WHERE thread_id = ?",
+                (*kwargs.values(), thread_id)
             )
             conn.commit()
 
             success = cursor.rowcount > 0
             if success:
-                logger.info(f"[DB] 更新记录: thread_id={thread_id}, fields={list(kwargs.keys())}")
+                logger.info(f"[DB] Updated record: thread_id={thread_id}, fields={list(kwargs.keys())}")
             return success
 
     def update_status(self, thread_id: str, status: str, result: str = None, execution_time: float = 0.0) -> bool:
