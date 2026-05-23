@@ -1,41 +1,46 @@
 # Stock Analysis Multi-Agent System
 
-A production-grade multi-agent system for stock market analysis powered by LangGraph orchestration.
+A production-grade multi-agent stock analysis system supporting both US/international and Chinese A-share markets, powered by LangGraph orchestration with a Next.js frontend.
 
 ## Features
 
-- **Multi-Agent Architecture**: 7 specialized agents working together
-  - Data Collection Agent
-  - Technical Analysis Agent
-  - Fundamental Analysis Agent
-  - Sentiment Analysis Agent
-  - Risk Assessment Agent
-  - Decision Making Agent
-  - Report Generation Agent
+- **Multi-Agent Architecture**: 7 specialized agents in a sequential pipeline
+  - Data Collection (yfinance + AkShare for Chinese A-shares)
+  - Technical Analysis
+  - Fundamental Analysis
+  - Sentiment Analysis
+  - Risk Assessment
+  - Decision Making
+  - Report Generation
 
-- **LangGraph Orchestration**: State-based workflow management with persistence
-- **Enterprise Monitoring**: Real-time metrics, event tracking, and alerts
-- **Resilience Patterns**: Retry, circuit breaker, and timeout protection
-- **REST API**: FastAPI-based HTTP API
+- **ReAct Agent**: An interactive ReAct agent with auto-fetching analysis tools for on-demand stock queries
+- **LangGraph Orchestration**: State-based workflow with conditional retry edges and error handling
+- **Enterprise Monitoring**: Real-time metrics, WebSocket event broadcasting, circuit breakers
+- **Chinese A-Share Support**: Automatic AkShare data fetching when 6-digit stock codes are used
+- **Next.js Frontend**: Dashboard UI for stock analysis and monitoring
+- **REST API**: FastAPI-based HTTP API with async/sync analysis endpoints
 - **Backtesting**: Strategy backtesting with Backtrader
+- **Production Deployment**: Nginx reverse proxy, systemd service, deployment scripts included
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.11+
-- Poetry (for dependency management)
-- Docker (optional, for containerized deployment)
+- Node.js 18+ (for frontend)
+- Poetry (for Python dependency management)
+- PostgreSQL
+- Redis (optional, for caching)
 
-### Installation
+### Backend Setup
 
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd stock_agent
+cd stock_agents
 ```
 
-2. Install dependencies with Poetry:
+2. Install Python dependencies:
 ```bash
 poetry install
 ```
@@ -46,12 +51,22 @@ cp .env.example .env
 # Edit .env with your configuration
 ```
 
-4. Run the application:
+4. Run the backend server:
 ```bash
 poetry run uvicorn app.main:app --reload
 ```
 
 The API will be available at `http://localhost:8000`
+
+### Frontend Setup
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend will be available at `http://localhost:3000`
 
 ### Docker Deployment
 
@@ -64,24 +79,35 @@ docker-compose up -d
 ### Analyze Stocks
 
 ```bash
+# Async analysis (returns workflow ID immediately)
 curl -X POST "http://localhost:8000/api/analysis/analyze" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "Analyze these stocks",
     "symbols": ["AAPL", "MSFT"]
   }'
+
+# Chinese A-shares (use 6-digit codes)
+curl -X POST "http://localhost:8000/api/analysis/analyze" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "分析这些股票",
+    "symbols": ["600000", "000001"]
+  }'
+
+# Sync analysis (waits for completion)
+curl -X POST "http://localhost:8000/api/analysis/analyze/sync" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Analyze AAPL",
+    "symbols": ["AAPL"]
+  }'
 ```
 
-### Check Workflow Status
+### Query Analysis History
 
 ```bash
-curl "http://localhost:8000/api/analysis/workflow/{thread_id}"
-```
-
-### Get Analysis Result
-
-```bash
-curl "http://localhost:8000/api/analysis/result/{thread_id}"
+curl "http://localhost:8000/api/history/"
 ```
 
 ### Run Backtest
@@ -99,75 +125,137 @@ curl -X POST "http://localhost:8000/api/backtest/run" \
 
 ### Monitoring Endpoints
 
-- `/api/monitoring/health` - System health overview
-- `/api/monitoring/metrics` - Agent metrics
-- `/api/monitoring/alerts` - Alert history
-- `/api/monitoring/circuit-breakers` - Circuit breaker status
+- `GET /api/monitoring/health` - System health overview
+- `GET /api/monitoring/metrics` - Agent execution metrics
+- `GET /api/monitoring/alerts` - Alert history
+- `GET /api/monitoring/circuit-breakers` - Circuit breaker status
+- `WS  /api/ws/monitoring` - Real-time WebSocket event stream
 
 ## Architecture
 
+### Agent Pipeline
+
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     FastAPI API Layer                    │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────┐
-│                 LangGraph Orchestrator                  │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │              State Management                      │   │
-│  │      (PostgreSQL Checkpoint Persistence)          │   │
-│  └──────────────────────────────────────────────────┘   │
-└──────────┬──────────────────────────────────────────────┘
-           │
-    ┌──────┴──────┬──────────────┬──────────────┬─────────┐
-    │             │              │              │         │
-┌───▼────┐  ┌───▼─────┐  ┌───▼─────┐  ┌───▼─────┐ ┌───▼────┐
-│  Data  │  │Analysis │  │  Risk  │  │Decision│ │ Report │
-│ Agent  │  │ Agents  │  │ Agent  │  │ Agent  │ │ Agent  │
-└────┬───┘  └────┬────┘  └────┬────┘  └────┬────┘ └────┬───┘
-     │            │            │            │           │
-     └────────────┴────────────┴────────────┴───────────┘
+data_collection -> technical_analysis -> sentiment_analysis -> fundamental_analysis -> risk_assessment -> decision_making -> report_generation
+```
+
+- **BaseAgent subclasses** (data, technical, fundamental): include circuit breaker, timeout, and monitoring via `agent.run()`
+- **StatelessAgent subclasses** (sentiment, risk, decision, report): called via `agent.process()` with protections at the orchestrator node level
+
+### System Overview
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                  Next.js Frontend (:3000)                │
+└─────────────────────────┬────────────────────────────────┘
                           │
-    ┌─────────────────────┴─────────────────────┐
-    │         Monitoring & Resilience Layer      │
-    │  • Metrics Collection  • Circuit Breaker   │
-    │  • Alert Management    • Retry Logic        │
-    │  • Event Logging       • Timeout Control    │
-    └────────────────────────────────────────────┘
+┌─────────────────────────▼────────────────────────────────┐
+│                    Nginx Reverse Proxy                    │
+└─────────────────────────┬────────────────────────────────┘
+                          │
+┌─────────────────────────▼────────────────────────────────┐
+│                   FastAPI API (:8000)                     │
+│  ┌────────────┐  ┌────────────┐  ┌────────────────────┐  │
+│  │ Analysis   │  │ Backtest   │  │ History (PostgreSQL)│ │
+│  └────────────┘  └────────────┘  └────────────────────┘  │
+└─────────────────────────┬────────────────────────────────┘
+                          │
+┌─────────────────────────▼────────────────────────────────┐
+│               LangGraph Orchestrator                      │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │              State Management                       │  │
+│  │      (PostgreSQL Checkpoint Persistence)            │  │
+│  └────────────────────────────────────────────────────┘  │
+└───────┬──────────┬──────────┬──────────┬────────────────┘
+        │          │          │          │
+   ┌────▼───┐ ┌───▼────┐ ┌──▼───┐ ┌───▼──────┐
+   │  Data  │ │Analysis│ │ Risk │ │ Decision │
+   │ Agent  │ │ Agents │ │Agent │ │  + Report│
+   └────┬───┘ └───┬────┘ └──┬───┘ └────┬─────┘
+        │          │         │          │
+        └──────────┴─────────┴──────────┘
+                       │
+    ┌──────────────────▼──────────────────┐
+    │      Monitoring & Resilience        │
+    │  • Metrics   • Circuit Breaker      │
+    │  • Alerts    • Retry / Timeout      │
+    │  • WebSocket Broadcast              │
+    └─────────────────────────────────────┘
 ```
+
+### Data Sources
+
+| Source | Scope | Trigger |
+|--------|-------|---------|
+| **yfinance** | US & international stocks | Always active (configurable via `YFINANCE_ENABLED`) |
+| **AkShare** | Chinese A-shares | Auto-triggered for 6-digit stock codes (configurable via `AKSHARE_ENABLED`) |
+
+### LLM Integration
+
+Uses Zhipu AI (GLM models) as primary LLM via OpenAI-compatible API. Falls back to OpenAI if `ZHIPUAI_API_KEY` is not set.
+
+| Model | Use Case |
+|-------|----------|
+| `glm-4.7` | Primary analysis (default) |
+| `glm-4.5-air` | Fast / batch operations |
+| `glm-4.5` | Standard tasks |
 
 ## Project Structure
 
 ```
-stock_agent/
-├── app/                          # Application core
-│   ├── agents/                   # Agent implementations
-│   ├── api/                      # FastAPI routes
-│   ├── db/                       # Database layer
-│   ├── models/                   # Data models
-│   ├── monitoring/               # Monitoring system
-│   ├── orchestration/            # LangGraph orchestration
-│   ├── resilience/               # Resilience patterns
-│   ├── services/                 # Business services
-│   └── utils/                    # Utilities
-├── deployment/                   # Deployment configs
-├── tests/                        # Test suite
-├── pyproject.toml                # Poetry dependencies
-└── docker-compose.yml            # Docker orchestration
+stock_agents/
+├── app/                           # Backend application
+│   ├── agents/                    # Agent implementations
+│   │   ├── base.py                # BaseAgent with circuit breaker
+│   │   ├── data_agent.py          # yfinance data collection
+│   │   ├── analysis_agent.py      # Technical + fundamental analysis
+│   │   ├── sentiment_agent.py     # Sentiment analysis
+│   │   ├── risk_agent.py          # Risk assessment
+│   │   ├── decision_agent.py      # Decision making
+│   │   └── report_agent.py        # Report generation
+│   ├── react_agent/               # ReAct agent with tool use
+│   ├── api/                       # FastAPI routes
+│   │   └── routes/                # analysis, backtest, history, monitoring, websocket
+│   ├── orchestration/             # LangGraph workflow orchestration
+│   ├── monitoring/                # Metrics, WebSocket broadcast
+│   ├── resilience/                # Circuit breaker, retry, timeout
+│   ├── storage/                   # PostgreSQL database layer
+│   ├── tools/                     # Agent tool registry
+│   ├── models/                    # Data models
+│   └── utils/                     # Logging, validators, helpers
+├── frontend/                      # Next.js frontend dashboard
+│   └── src/
+│       ├── app/                   # Pages
+│       ├── components/            # UI components
+│       ├── hooks/                 # React hooks
+│       └── lib/                   # Utilities
+├── deploy/                        # Production deployment scripts
+│   ├── deploy.sh                  # Automated deployment
+│   ├── install-nginx.sh           # Nginx setup
+│   └── nginx-full-config.conf     # Nginx configuration
+├── tests/                         # Test suite
+│   ├── unit/                      # Unit tests
+│   ├── integration/               # Integration tests
+│   └── e2e/                       # End-to-end tests
+├── pyproject.toml                 # Poetry config
+├── docker-compose.yml             # Docker orchestration
+└── test_system.py                 # Quick validation script
 ```
 
 ## Configuration
 
-Key environment variables:
+Key environment variables (see `.env.example` for full list):
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | postgresql://... |
-| `REDIS_URL` | Redis connection string | redis://localhost:6379 |
-| `OPENAI_API_KEY` | OpenAI API key (for LLM features) | - |
-| `LOG_LEVEL` | Logging level | INFO |
-| `MAX_RETRIES` | Max retry attempts per agent | 3 |
-| `TIMEOUT_PER_AGENT` | Timeout per agent (seconds) | 300 |
+| `ZHIPUAI_API_KEY` | Zhipu AI API key (primary LLM) | - |
+| `PRIMARY_LLM_MODEL` | LLM model for analysis | `glm-4.7` |
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://...` |
+| `REDIS_URL` | Redis connection string | `redis://localhost:6379` |
+| `FRONTEND_URL` | Frontend URL for CORS | `http://localhost:3000` |
+| `LOG_LEVEL` | Logging level | `INFO` |
+| `MAX_RETRIES` | Max retry attempts per agent | `3` |
+| `TIMEOUT_PER_AGENT` | Timeout per agent (seconds) | `300` |
 
 ## Development
 
@@ -175,6 +263,12 @@ Key environment variables:
 
 ```bash
 poetry run pytest
+
+# With coverage
+poetry run pytest --cov=app tests/
+
+# Quick validation (no pytest required)
+poetry run python test_system.py
 ```
 
 ### Code Quality
@@ -185,20 +279,21 @@ poetry run black app/
 
 # Lint code
 poetry run ruff check app/
-
-# Type check
-poetry run mypy app/
 ```
 
-## Learning Focus
+## Production Deployment
 
-This project is designed to help you learn:
+See `deploy/` directory for automated deployment scripts:
 
-1. **Multi-Agent Orchestration**: Using LangGraph for complex workflows
-2. **State Management**: Patterns for managing distributed state
-3. **Resilience Patterns**: Retry, circuit breaker, timeout control
-4. **Monitoring**: Building enterprise-grade monitoring systems
-5. **Production Deployment**: Docker Compose for local development
+```bash
+# Deploy to server
+./deploy/deploy.sh
+
+# Install and configure Nginx
+./deploy/install-nginx.sh
+```
+
+Includes Nginx reverse proxy config with API and frontend routing.
 
 ## License
 
