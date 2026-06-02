@@ -63,6 +63,7 @@ def build_react_graph():
     graph.add_node("reflect", reflect_node)
 
     graph.set_entry_point("agent_reason")
+    # Update the graph: agent_reason now always goes to tool_execute or reflect
     graph.add_conditional_edges("agent_reason", _agent_reason_decision)
     graph.add_edge("tool_execute", "observe")
     graph.add_edge("observe", "reflect")
@@ -90,16 +91,16 @@ def agent_reason_node(state: ReActState) -> dict[str, Any]:
     return {"messages": [response], "iteration": iteration + 1}
 
 
-def _agent_reason_decision(state: ReActState) -> Literal["tool_execute", "__end__"]:
+def _agent_reason_decision(state: ReActState) -> Literal["tool_execute", "reflect"]:
     messages = state.get("messages", [])
     if not messages:
-        return END
+        return "reflect"
     last_message = messages[-1]
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-        # Check if any tool is generate_report — if so, route through tool_execute
-        # but then skip reflect and end directly
         return "tool_execute"
-    return END
+    # No tool calls → go to reflect instead of END,
+    # so reflect can decide whether to continue or finish.
+    return "reflect"
 
 
 async def tool_execute_node(state: ReActState) -> dict[str, Any]:
@@ -177,7 +178,7 @@ def observe_node(state: ReActState) -> dict[str, Any]:
 def reflect_node(state: ReActState) -> dict[str, Any]:
     iteration = state.get("iteration", 0)
     max_iterations = state.get("max_iterations", 15)
-    tools_used = state.get("tools_used", [])
+    tools_used = list(state.get("tools_used", []))
     query = state.get("query", "")
     messages = list(state.get("messages", []))
 
@@ -218,10 +219,28 @@ def reflect_node(state: ReActState) -> dict[str, Any]:
         logger.info(f"Cost limit (${cost}) reached, finishing")
         return {"final_answer": f"Analysis stopped due to cost limit (${cost}). Partial results available."}
 
-    # Heuristic: if only data-fetching tools used, always continue to actual analysis
+    # Minimum tools check: ensure at least 3 distinct analysis tools are used
     analysis_tools = {"analyze_technical", "analyze_fundamental", "analyze_sentiment",
                       "assess_risk", "calculate_position_size", "generate_report"}
-    has_analysis = bool(set(tools_used) & analysis_tools)
+    used_analysis = set(tools_used) & analysis_tools
+    unique_tools_used = len(set(tools_used))
+
+    if unique_tools_used < 3 and iteration < max_iterations:
+        logger.info(f"Only {unique_tools_used} tools used so far, forcing continuation")
+        missing = analysis_tools - set(tools_used)
+        missing_hint = ", ".join(sorted(missing)) if missing else "more analysis tools"
+        return {
+            "messages": [
+                HumanMessage(
+                    content=f"You have only used {unique_tools_used} tools. A thorough analysis requires at least 3-4 tools. "
+                    f"Available tools you haven't used yet: {missing_hint}. "
+                    "Call these tools now to complete the analysis. Do NOT write a final answer yet."
+                )
+            ]
+        }
+
+    # Heuristic: if only data-fetching tools used, always continue to actual analysis
+    has_analysis = bool(used_analysis)
     if not has_analysis and iteration < max_iterations:
         logger.info(f"No analysis tools used yet (only {tools_used}), continuing")
         return {
@@ -235,7 +254,7 @@ def reflect_node(state: ReActState) -> dict[str, Any]:
         }
 
     # Heuristic: if very few iterations, keep going unless we already have a report
-    if iteration < 2 and "generate_report" not in tools_used:
+    if iteration < 3 and "generate_report" not in tools_used:
         logger.info(f"Too early to finish (iteration {iteration}), continuing")
         return {
             "messages": [
@@ -302,6 +321,19 @@ def _reflect_decision(state: ReActState) -> Literal["agent_reason", "__end__"]:
         return END
     if state.get("iteration", 0) >= state.get("max_iterations", 15):
         return END
+
+    # Check if the last AI message contains a substantial final answer (no tool calls)
+    messages = state.get("messages", [])
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage):
+            # If the last AI message has tool calls, we should continue
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                return "agent_reason"
+            # If the AI gave a substantial text response (>200 chars), treat as final
+            if msg.content and len(msg.content) > 200:
+                return END
+            break
+
     return "agent_reason"
 
 

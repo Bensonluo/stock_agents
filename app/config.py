@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     secondary_llm_model: str = "glm-4.5-air"  # GLM-4.5-Air for faster responses
     batch_llm_model: str = "glm-4.5-air"  # GLM-4.5-Air for batch operations
     llm_temperature: float = 0.3
-    llm_max_tokens: int = 2000
+    llm_max_tokens: int = 4096
     llm_timeout: int = 60
 
     # Data Sources
