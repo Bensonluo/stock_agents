@@ -110,11 +110,16 @@ async def tool_execute_node(state: ReActState) -> dict[str, Any]:
     if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
         return {}
 
-    tool_results = []
+    tool_result_messages: list[ToolMessage] = []
     tool_calls = last_message.tool_calls
     tools_used = list(state.get("tools_used", []))
     tool_call_history = list(state.get("tool_call_history", []))
     errors = list(state.get("errors", []))
+
+    # Read-modify-write tool_results so we return the FULL dict and the
+    # `merge_dicts` reducer doesn't lose prior tool results (and so the
+    # manual-merge in `ReActAgent.analyze()` doesn't drop them either).
+    accumulated_tool_results: dict[str, Any] = dict(state.get("tool_results") or {})
 
     for tool_call in tool_calls:
         tool_name = tool_call.get("name", "")
@@ -124,26 +129,180 @@ async def tool_execute_node(state: ReActState) -> dict[str, Any]:
         tools_used.append(tool_name)
         tool_call_history.append({"tool": tool_name, "args": tool_args})
 
+        # Special handling: generate_report requires state-aware data assembly.
+        # The LLM has no way to know what's in state, so build args from state.
+        if tool_name == "generate_report":
+            tool_args = {"data": _build_report_data(state)}
+
         tool = get_tool(tool_name)
         if not tool:
             error_msg = f"Tool '{tool_name}' not found."
-            tool_results.append(ToolMessage(content=error_msg, tool_call_id=tool_id, name=tool_name))
-            errors.append({"agent": "react_agent", "error_type": "ToolNotFound", "message": error_msg})
-        else:
-            try:
-                result = await tool.ainvoke(tool_args)
-                tool_results.append(ToolMessage(content=str(result), tool_call_id=tool_id, name=tool_name))
-            except Exception as e:
-                error_msg = f"Error executing {tool_name}: {str(e)}"
-                tool_results.append(ToolMessage(content=error_msg, tool_call_id=tool_id, name=tool_name))
-                errors.append({"agent": "react_agent", "error_type": "ToolExecutionError", "message": error_msg})
+            tool_result_messages.append(
+                ToolMessage(content=error_msg, tool_call_id=tool_id, name=tool_name)
+            )
+            errors.append({
+                "agent": "react_agent", "error_type": "ToolNotFound", "message": error_msg,
+            })
+            continue
+
+        try:
+            result = await tool.ainvoke(tool_args)
+        except Exception as e:
+            error_msg = f"Error executing {tool_name}: {str(e)}"
+            tool_result_messages.append(
+                ToolMessage(content=error_msg, tool_call_id=tool_id, name=tool_name)
+            )
+            errors.append({
+                "agent": "react_agent", "error_type": "ToolExecutionError", "message": error_msg,
+            })
+            continue
+
+        tool_result_messages.append(
+            ToolMessage(content=str(result), tool_call_id=tool_id, name=tool_name)
+        )
+
+        # Index result by symbol. Two shapes are possible:
+        #   (a) `{"symbol": "AAPL", "indicators": ...}` — single-symbol tools
+        #       (analyze_technical, analyze_fundamental, analyze_sentiment,
+        #        assess_risk) — wrap as bucket["AAPL"] = result.
+        #   (b) `{"AAPL": {...}, "MSFT": {...}}` — multi-symbol tools
+        #       (fetch_stock_data_tool, calculate_position_size) — merge into
+        #       bucket directly so each symbol is addressable.
+        if isinstance(result, dict):
+            bucket = accumulated_tool_results.setdefault(tool_name, {})
+            sym = result.get("symbol") if isinstance(result.get("symbol"), str) else None
+            if sym:
+                bucket[sym] = result
+            else:
+                bucket.update(result)
 
     return {
-        "messages": tool_results,
+        "messages": tool_result_messages,
         "tools_used": tools_used,
         "tool_call_history": tool_call_history,
         "errors": errors,
+        "tool_results": accumulated_tool_results,
     }
+
+
+def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
+    """Assemble the `data` argument for `generate_report` from accumulated state.
+
+    The LLM cannot know the report's expected schema (and its `data: dict` arg
+    has no internal structure description), so the orchestrator injects the
+    state-derived values here. Handles structural mismatches between tool
+    outputs and the report's expected shape.
+    """
+    symbols = list(state.get("symbols") or [])
+    tr = state.get("tool_results") or {}
+
+    data: dict[str, Any] = {
+        "query": state.get("query", ""),
+        "symbols": symbols,
+    }
+
+    # D3: fetch_stock_data returns nested {symbol: {market_data, financial_data, news_data}}
+    # Report expects flat data["market_data"][symbol] = {company_name, ...}, etc.
+    fetch = tr.get("fetch_stock_data", {})
+    if isinstance(fetch, dict) and fetch:
+        market_data = {
+            sym: (r.get("market_data") or {})
+            for sym, r in fetch.items() if isinstance(r, dict)
+        }
+        financial_data = {
+            sym: (r.get("financial_data") or {})
+            for sym, r in fetch.items() if isinstance(r, dict)
+        }
+        if market_data:
+            data["market_data"] = market_data
+        if financial_data:
+            data["financial_data"] = financial_data
+        all_news: list[dict] = []
+        for r in fetch.values():
+            if isinstance(r, dict):
+                all_news.extend(r.get("news_data") or [])
+        if all_news:
+            data["news_data"] = all_news
+
+    # analyze_technical / fundamental / assess_risk: result has "symbol" key, already indexed
+    for tool_name, key in (
+        ("analyze_technical", "technical_analysis"),
+        ("analyze_fundamental", "fundamental_analysis"),
+        ("assess_risk", "risk_assessment"),
+    ):
+        bucket = tr.get(tool_name, {})
+        if isinstance(bucket, dict) and bucket:
+            data[key] = dict(bucket)
+
+    # D2: analyze_sentiment returns flat {symbol: {sentiment, overall_sentiment, ...}}
+    # Report expects {"sentiment_by_symbol": {symbol}, "overall_sentiment": ...}
+    sent_bucket = tr.get("analyze_sentiment", {})
+    if isinstance(sent_bucket, dict) and sent_bucket:
+        data["sentiment_analysis"] = {
+            "sentiment_by_symbol": {
+                sym: r.get("sentiment", {})
+                for sym, r in sent_bucket.items() if isinstance(r, dict)
+            },
+            "overall_sentiment": next(
+                (r.get("overall_sentiment", {}) for r in sent_bucket.values() if isinstance(r, dict)),
+                {},
+            ),
+        }
+
+    # calculate_position_size: synthesize "action" from position_size since the
+    # tool doesn't return one (otherwise the report's recommendations would
+    # always fall back to "hold"). If the LLM called it with empty risk_data,
+    # the result will be {} — derive a fallback decision per symbol from the
+    # available risk_assessment so the recommendations section isn't empty.
+    pos_bucket = tr.get("calculate_position_size", {})
+    risk_bucket = tr.get("assess_risk", {})
+    decisions: dict[str, dict] = {}
+
+    if isinstance(pos_bucket, dict) and pos_bucket:
+        for sym, r in pos_bucket.items():
+            if not isinstance(r, dict):
+                continue
+            ps = r.get("position_size", 0) or 0
+            action = "buy" if ps > 10 else "add" if ps > 5 else "hold" if ps > 2 else "reduce"
+            decisions[sym] = {
+                **r,
+                "action": action,
+                "confidence": round(min(1.0, ps / 20.0), 2),
+            }
+
+    # Fallback: derive a recommendation per symbol from risk_assessment
+    if not decisions and isinstance(risk_bucket, dict):
+        for sym, r in risk_bucket.items():
+            if not isinstance(r, dict):
+                continue
+            risk_score = r.get("risk_score", 50) or 50
+            risk_level = r.get("risk_level", "medium")
+            if risk_score >= 70:
+                action, ps, conf = "reduce", 2.0, 0.8
+            elif risk_score >= 50:
+                action, ps, conf = "hold", 5.0, 0.5
+            elif risk_score >= 30:
+                action, ps, conf = "add", 10.0, 0.6
+            else:
+                action, ps, conf = "buy", 15.0, 0.7
+            decisions[sym] = {
+                "symbol": sym,
+                "action": action,
+                "position_size": ps,
+                "risk_level": risk_level,
+                "risk_score": risk_score,
+                "confidence": conf,
+                "rationale": (
+                    f"Derived from assess_risk result (risk_score={risk_score}, "
+                    f"risk_level={risk_level}); calculate_position_size did not "
+                    f"return data for this symbol."
+                ),
+            }
+
+    if decisions:
+        data["decision"] = {"decisions": decisions}
+
+    return data
 
 
 def observe_node(state: ReActState) -> dict[str, Any]:
@@ -219,121 +378,67 @@ def reflect_node(state: ReActState) -> dict[str, Any]:
         logger.info(f"Cost limit (${cost}) reached, finishing")
         return {"final_answer": f"Analysis stopped due to cost limit (${cost}). Partial results available."}
 
-    # Minimum tools check: ensure at least 3 distinct analysis tools are used
-    analysis_tools = {"analyze_technical", "analyze_fundamental", "analyze_sentiment",
-                      "assess_risk", "calculate_position_size", "generate_report"}
-    used_analysis = set(tools_used) & analysis_tools
-    unique_tools_used = len(set(tools_used))
+    # State-aware progression: drive the LLM through analysis → report → finish.
+    # We never need to re-run the same tool. The previous "iteration < 3" and
+    # "unique_tools_used < 3" heuristics caused each tool to be called multiple
+    # times — see commit 1850c81.
+    analysis_tools = {
+        "analyze_technical", "analyze_fundamental", "analyze_sentiment",
+        "assess_risk", "calculate_position_size",
+    }
+    tools_set = set(tools_used)
+    report_called = "generate_report" in tools_set
+    all_analysis_done = analysis_tools.issubset(tools_set)
 
-    if unique_tools_used < 3 and iteration < max_iterations:
-        logger.info(f"Only {unique_tools_used} tools used so far, forcing continuation")
-        missing = analysis_tools - set(tools_used)
-        missing_hint = ", ".join(sorted(missing)) if missing else "more analysis tools"
+    if report_called:
+        # observe_node has already extracted final_answer from the report. Reflect
+        # should not inject further messages; the next decision will END.
+        return {}
+
+    if not all_analysis_done:
+        missing = sorted(analysis_tools - tools_set)
+        logger.info(f"Reflect: {len(missing)} analysis tools still needed: {missing}")
         return {
             "messages": [
                 HumanMessage(
-                    content=f"You have only used {unique_tools_used} tools. A thorough analysis requires at least 3-4 tools. "
-                    f"Available tools you haven't used yet: {missing_hint}. "
-                    "Call these tools now to complete the analysis. Do NOT write a final answer yet."
+                    content=(
+                        f"You still need to call: {', '.join(missing)}. "
+                        "Call them now (one tool call per message is fine), "
+                        "then call generate_report to compile the final report."
+                    )
                 )
             ]
         }
 
-    # Heuristic: if only data-fetching tools used, always continue to actual analysis
-    has_analysis = bool(used_analysis)
-    if not has_analysis and iteration < max_iterations:
-        logger.info(f"No analysis tools used yet (only {tools_used}), continuing")
-        return {
-            "messages": [
-                HumanMessage(
-                    content="Data has been collected. Now use analysis tools (analyze_technical, "
-                    "analyze_fundamental, analyze_sentiment, assess_risk) to analyze the data, "
-                    "then generate a report."
-                )
-            ]
-        }
-
-    # Heuristic: if very few iterations, keep going unless we already have a report
-    if iteration < 3 and "generate_report" not in tools_used:
-        logger.info(f"Too early to finish (iteration {iteration}), continuing")
-        return {
-            "messages": [
-                HumanMessage(
-                    content="Continue the analysis. Use remaining analysis tools to cover "
-                    "different perspectives, then write the final report."
-                )
-            ]
-        }
-
-    # LLM reflection
-    reflection_prompt = format_reflection_prompt(
-        iteration=iteration, max_iterations=max_iterations, tools_used=tools_used, query=query,
-    )
-    reflect_llm = _get_reflection_llm()
-    compact_messages = _truncate_messages_for_reflection(messages)
-    reflection_messages = compact_messages + [HumanMessage(content=reflection_prompt)]
-
-    try:
-        response = reflect_llm.invoke(reflection_messages)
-        content = response.content
-        if "{" in content and "}" in content:
-            start = content.find("{")
-            end = content.rfind("}") + 1
-            decision = json.loads(content[start:end])
-            if decision.get("decision") == "finish":
-                return {
-                    "messages": [
-                        HumanMessage(
-                            content="Reflection indicates analysis is complete. Based on all data collected, "
-                            "write your final comprehensive analysis report in markdown format now. "
-                            "Do NOT call any more tools."
-                        )
-                    ]
-                }
-            elif decision.get("decision") == "error":
-                return {
-                    "messages": [
-                        HumanMessage(
-                            content="You indicated an error. Instead of giving up, write a comprehensive analysis "
-                            "report in markdown format based on whatever data you have collected. If data is incomplete, "
-                            "state what is missing and provide your best assessment with available information. "
-                            "Do NOT call any more tools."
-                        )
-                    ]
-                }
-            guidance = decision.get("guidance", "")
-            if guidance:
-                return {"messages": [HumanMessage(content=f"Guidance: {guidance}")]}
-    except Exception as e:
-        logger.warning(f"Reflection failed: {e}, continuing")
-
+    logger.info("Reflect: all analysis tools done, prompting for generate_report")
     return {
         "messages": [
             HumanMessage(
-                content="Continue the analysis. Apply more tools or write the final report if sufficient data has been gathered."
+                content=(
+                    "All analysis tools have been called. Now call generate_report "
+                    "to compile the structured final report. Do NOT write a free-form "
+                    "markdown summary — the report tool will produce the final output."
+                )
             )
         ]
     }
 
 
 def _reflect_decision(state: ReActState) -> Literal["agent_reason", "__end__"]:
+    """Decide whether to continue the loop or END.
+
+    END conditions:
+    - `final_answer` was set (by `observe_node` after `generate_report` ran)
+    - max iterations reached (safety net)
+
+    The previous `len(msg.content) > 200` heuristic was removed: LLM thinking
+    text easily exceeds 200 chars, causing premature END that bypassed the
+    analysis-tools progression in `reflect_node`.
+    """
     if state.get("final_answer") is not None:
         return END
     if state.get("iteration", 0) >= state.get("max_iterations", 15):
         return END
-
-    # Check if the last AI message contains a substantial final answer (no tool calls)
-    messages = state.get("messages", [])
-    for msg in reversed(messages):
-        if isinstance(msg, AIMessage):
-            # If the last AI message has tool calls, we should continue
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                return "agent_reason"
-            # If the AI gave a substantial text response (>200 chars), treat as final
-            if msg.content and len(msg.content) > 200:
-                return END
-            break
-
     return "agent_reason"
 
 
