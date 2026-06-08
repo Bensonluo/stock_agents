@@ -168,13 +168,22 @@ async def tool_execute_node(state: ReActState) -> dict[str, Any]:
         #   (b) `{"AAPL": {...}, "MSFT": {...}}` — multi-symbol tools
         #       (fetch_stock_data_tool, calculate_position_size) — merge into
         #       bucket directly so each symbol is addressable.
+        #   Error responses like {"error": "..."} are stored under "_error"
+        #   to avoid polluting symbol-keyed lookups downstream.
         if isinstance(result, dict):
             bucket = accumulated_tool_results.setdefault(tool_name, {})
-            sym = result.get("symbol") if isinstance(result.get("symbol"), str) else None
-            if sym:
-                bucket[sym] = result
+            if result.get("error") and not result.get("symbol"):
+                bucket["_error"] = result
             else:
-                bucket.update(result)
+                sym = result.get("symbol") if isinstance(result.get("symbol"), str) else None
+                if sym:
+                    bucket[sym] = result
+                else:
+                    # Only merge entries whose values are dicts (actual data),
+                    # skip top-level keys like "error", "symbols", etc.
+                    for k, v in result.items():
+                        if isinstance(v, dict):
+                            bucket[k] = v
 
     return {
         "messages": tool_result_messages,
