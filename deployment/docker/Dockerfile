@@ -4,6 +4,10 @@
 # Stage 1: Builder
 FROM python:3.11-slim AS builder
 
+# Switch apt to Aliyun mirror (CN network: default deb.debian.org is <10KB/s)
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null
+
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
@@ -16,6 +20,10 @@ WORKDIR /build
 # Copy Poetry files
 COPY pyproject.toml poetry.lock* ./
 
+# Configure pip to use Aliyun mirror (CN network: default pypi.org times out on package enumeration)
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.aliyun.com
+
 # Install Poetry
 RUN pip install poetry==1.8.0
 
@@ -23,10 +31,16 @@ RUN pip install poetry==1.8.0
 RUN poetry config virtualenvs.create false
 
 # Install dependencies
+# Regenerate lock first if pyproject.toml changed (e.g. when source was added for CN mirror)
+RUN poetry lock --no-update
 RUN poetry install --no-interaction --no-root --only main
 
 # Stage 2: Production
 FROM python:3.11-slim AS production
+
+# Switch apt to Aliyun mirror (CN network: default deb.debian.org is <10KB/s)
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null
 
 # Install runtime dependencies (curl for healthcheck, sqlite3 for debugging)
 RUN apt-get update && apt-get install -y \

@@ -6,6 +6,13 @@ authors = ["Your Name <your.email@example.com>"]
 readme = "README.md"
 packages = [{include = "app"}]
 
+# China network: use Aliyun PyPI mirror as primary source
+# (default pypi.org times out on package enumeration from CN IPs)
+[[tool.poetry.source]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
+priority = "primary"
+
 [tool.poetry.dependencies]
 python = "^3.11"
 # FastAPI and web framework
