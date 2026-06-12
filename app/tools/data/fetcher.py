@@ -1,6 +1,6 @@
 """Multi-source stock data fetcher with automatic fallback.
 
-Provider chain: yfinance -> akshare -> direct Yahoo Finance API via requests
+Provider chain: yfinance -> finnhub -> akshare -> direct Yahoo Finance API -> stooq
 """
 
 import asyncio
@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 import requests
 
+from app.config import get_settings
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -343,6 +344,255 @@ async def _yahoo_api_fetch(symbol: str) -> dict[str, Any] | None:
     return None
 
 
+# ── Provider 2b: Finnhub (60 req/min free, US stocks) ───────────
+
+
+_FINNHUB_BASE = "https://finnhub.io/api/v1"
+_ALPHAVANTAGE_BASE = "https://www.alphavantage.co/query"
+
+
+def _finnhub_get(path: str, params: dict[str, Any]) -> dict[str, Any] | list | None:
+    """Synchronous Finnhub GET. Returns parsed JSON or None on error."""
+    api_key = get_settings().finnhub_api_key
+    if not api_key:
+        return None
+    qp = {**params, "token": api_key}
+    try:
+        r = requests.get(f"{_FINNHUB_BASE}{path}", params=qp, timeout=15)
+        if r.status_code == 429:
+            logger.warning(f"[finnhub] rate limited on {path}")
+            return None
+        r.raise_for_status()
+        data = r.json()
+        # Finnhub returns {} for some endpoints on free tier — treat as miss
+        if isinstance(data, dict) and not data:
+            return None
+        return data
+    except Exception as e:
+        logger.warning(f"[finnhub] {path} failed: {e}")
+        return None
+
+
+async def _finnhub_fetch(symbol: str) -> dict[str, Any] | None:
+    """Fetch via Finnhub. 4 calls per symbol; well within 60 req/min free tier.
+
+    Note: Finnhub /stock/candle (historical OHLC) is PAID ONLY on the free tier.
+    Snapshot, profile, basic metrics, and news are free. We return an empty
+    historical_data block; the technical agent can still derive day-level info
+    from the quote's o/h/l/pc fields.
+    """
+    if not get_settings().finnhub_api_key:
+        return None
+
+    def _snapshot():
+        quote = _finnhub_get("/quote", {"symbol": symbol}) or {}
+        profile = _finnhub_get("/stock/profile2", {"symbol": symbol}) or {}
+        metric = (_finnhub_get("/stock/metric", {"symbol": symbol, "metric": "all"}) or {}).get("metric", {})
+        return quote, profile, metric
+
+    def _news():
+        today = datetime.now()
+        week_ago = today - timedelta(days=7)
+        return _finnhub_get("/company-news", {
+            "symbol": symbol,
+            "from": week_ago.strftime("%Y-%m-%d"),
+            "to": today.strftime("%Y-%m-%d"),
+        }) or []
+
+    (snapshot, news) = await asyncio.gather(
+        asyncio.to_thread(_snapshot),
+        asyncio.to_thread(_news),
+    )
+
+    if not isinstance(snapshot, tuple) or len(snapshot) != 3:
+        return None
+    quote, profile, metric = snapshot
+
+    current = quote.get("c") if isinstance(quote, dict) else None
+    if not current:
+        logger.info(f"[finnhub] no current price for {symbol}")
+        return None
+
+    # marketCapitalization is in millions of currency units
+    market_cap = None
+    if profile.get("marketCapitalization"):
+        market_cap = profile["marketCapitalization"] * 1_000_000
+
+    market_data = {
+        "symbol": symbol,
+        "current_price": current,
+        "previous_close": quote.get("pc"),
+        "change": quote.get("d"),
+        "change_percent": quote.get("dp"),
+        "day_high": quote.get("h"),
+        "day_low": quote.get("l"),
+        "day_open": quote.get("o"),
+        "volume": None,  # /quote doesn't return volume; would need /stock/candle (paid)
+        "market_cap": market_cap,
+        "52_week_high": metric.get("52WeekHigh"),
+        "52_week_low": metric.get("52WeekLow"),
+        "company_name": profile.get("name"),
+        "sector": profile.get("finnhubIndustry"),
+        "currency": profile.get("currency"),
+        "exchange": profile.get("exchange"),
+        "historical_data": {},  # /stock/candle is paid only on free tier
+    }
+
+    financial_data = {
+        "metrics": {
+            "beta": metric.get("beta"),
+            "pe_ratio": metric.get("peBasicExtraTTM"),
+            "roe": metric.get("roeTTM"),
+            "roa": metric.get("roaTTM"),
+            "dividend_yield": metric.get("dividendYieldIndicatedAnnual"),
+            "10d_avg_volume": metric.get("10DayAverageTradingVolume"),
+            "52_week_high": metric.get("52WeekHigh"),
+            "52_week_low": metric.get("52WeekLow"),
+        }
+    }
+
+    news_data = []
+    if isinstance(news, list):
+        for item in news[:10]:
+            news_data.append({
+                "title": item.get("headline"),
+                "summary": item.get("summary"),
+                "source": item.get("source"),
+                "datetime": item.get("datetime"),
+                "url": item.get("url"),
+            })
+
+    logger.info(f"[finnhub] OK for {symbol}")
+    return {"market_data": market_data, "financial_data": financial_data, "news_data": news_data}
+
+
+async def _finnhub_historical(symbol: str, period: str) -> dict[str, Any] | None:
+    """Historical OHLC via Finnhub /stock/candle.
+
+    NOTE: /stock/candle is PAID ONLY on the free tier. This function exists for
+    when the user upgrades or supplies an alternative. Returns None for free tier.
+    """
+    if not get_settings().finnhub_api_key:
+        return None
+    period_map = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
+    days = period_map.get(period, 90)
+    end_ts = int(time.time())
+    start_ts = end_ts - days * 24 * 3600
+
+    def _get():
+        return _finnhub_get("/stock/candle", {
+            "symbol": symbol, "resolution": "D",
+            "from": start_ts, "to": end_ts,
+        })
+
+    data = await asyncio.to_thread(_get)
+    if not isinstance(data, dict) or data.get("s") != "ok" or not data.get("t"):
+        return None
+    return {
+        "symbol": symbol, "period": period,
+        "dates": [datetime.fromtimestamp(t).strftime("%Y-%m-%d") for t in data["t"]],
+        "open": data.get("o", []),
+        "high": data.get("h", []),
+        "low": data.get("l", []),
+        "close": data.get("c", []),
+        "volume": data.get("v", []),
+    }
+
+
+# ── Provider 2c: Alpha Vantage (25 req/day free, historical OHLC) ────
+
+
+def _alphavantage_get(params: dict[str, Any]) -> dict[str, Any] | None:
+    """Synchronous Alpha Vantage GET. Returns parsed JSON or None on error.
+
+    Free tier: 25 req/day, 1 req/sec burst, 5 req/min sustained.
+    Rate-limited responses carry a "Note" or "Information" field — treat as miss.
+    """
+    api_key = get_settings().alpha_vantage_key
+    if not api_key:
+        return None
+    qp = {**params, "apikey": api_key}
+    try:
+        r = requests.get(_ALPHAVANTAGE_BASE, params=qp, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        if not isinstance(data, dict):
+            return None
+        if any(k in data for k in ("Note", "Information", "Error Message", "error")):
+            logger.warning(f"[alphavantage] {data.get('Note') or data.get('Information') or data.get('Error Message') or data.get('error')}")
+            return None
+        return data
+    except Exception as e:
+        logger.warning(f"[alphavantage] request failed: {e}")
+        return None
+
+
+async def _alphavantage_historical(symbol: str, period: str) -> dict[str, Any] | None:
+    """Historical OHLC via Alpha Vantage TIME_SERIES_DAILY.
+
+    Verified format (alphavantage.co docs + Stack Overflow):
+      {
+        "Meta Data": {...},
+        "Time Series (Daily)": {
+          "YYYY-MM-DD": {"1. open", "2. high", "3. low", "4. close", "5. volume"},
+          ...
+        }
+      }
+
+    Free tier constraint (discovered at runtime 2026-06-12):
+      - outputsize=full is PREMIUM only
+      - outputsize=compact returns last 100 days only
+    So we always use compact; for periods > 100 days the user gets < N days.
+    """
+    if not get_settings().alpha_vantage_key:
+        return None
+
+    def _get():
+        return _alphavantage_get({
+            "function": "TIME_SERIES_DAILY",
+            "symbol": symbol,
+            "outputsize": "compact",  # 100 days; full is premium-only
+        })
+
+    data = await asyncio.to_thread(_get)
+    if not data:
+        return None
+
+    series = data.get("Time Series (Daily)")
+    if not isinstance(series, dict) or not series:
+        return None
+
+    period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}.get(period, 90)
+    cutoff = (datetime.now() - timedelta(days=period_days)).strftime("%Y-%m-%d")
+    rows = [(d, v) for d, v in series.items() if d >= cutoff]
+    rows.sort(key=lambda x: x[0])
+
+    if not rows:
+        return None
+
+    dates, opens, highs, lows, closes, volumes = [], [], [], [], [], []
+    for d, v in rows:
+        try:
+            dates.append(d)
+            opens.append(float(v["1. open"]))
+            highs.append(float(v["2. high"]))
+            lows.append(float(v["3. low"]))
+            closes.append(float(v["4. close"]))
+            volumes.append(int(v["5. volume"]))
+        except (KeyError, ValueError):
+            continue
+
+    if not dates:
+        return None
+
+    logger.info(f"[alphavantage] OK for {symbol} ({len(dates)} days)")
+    return {
+        "symbol": symbol, "period": period,
+        "dates": dates, "open": opens, "high": highs,
+        "low": lows, "close": closes, "volume": volumes,
+    }
+
+
 # ── Provider 3b: Stooq (free CSV) ────────────────────────────────
 
 
@@ -410,6 +660,7 @@ async def fetch_stock_data(symbol: str) -> dict[str, Any] | None:
 
     providers = [
         ("yfinance", _yfinance_fetch),
+        ("finnhub", _finnhub_fetch),
         ("akshare", _akshare_fetch),
         ("yahoo-api", _yahoo_api_fetch),
     ]
@@ -459,6 +710,26 @@ async def fetch_historical(symbol: str, period: str = "3mo") -> dict[str, Any]:
             return result
     except Exception as e:
         logger.warning(f"[yfinance-hist] failed for {symbol}: {e}")
+
+    # finnhub (snapshot only on free tier — /stock/candle is paid)
+    if get_settings().finnhub_api_key:
+        try:
+            result = await _finnhub_historical(symbol, period)
+            if result and result.get("dates"):
+                _cache_set(cache_key, result, ttl=60)
+                return result
+        except Exception as e:
+            logger.warning(f"[finnhub-hist] failed for {symbol}: {e}")
+
+    # alpha vantage (free tier: 25 req/day, 1/sec — 1 call per analysis)
+    if get_settings().alpha_vantage_key:
+        try:
+            result = await _alphavantage_historical(symbol, period)
+            if result and result.get("dates"):
+                _cache_set(cache_key, result, ttl=60)
+                return result
+        except Exception as e:
+            logger.warning(f"[alphavantage-hist] failed for {symbol}: {e}")
 
     # akshare
     try:

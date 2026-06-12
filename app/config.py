@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     zhipuai_api_key: Optional[str] = None
     tushare_token: Optional[str] = None
     alpha_vantage_key: Optional[str] = None
+    finnhub_api_key: Optional[str] = None
 
     # JWT
     jwt_secret: str = "change-this-secret-in-production"
@@ -72,6 +73,7 @@ class Settings(BaseSettings):
     # Data Sources
     akshare_enabled: bool = True
     yfinance_enabled: bool = True
+    finnhub_enabled: bool = True
     cache_ttl: int = 300  # 5 minutes
 
     # Agent Settings (ReAct)
