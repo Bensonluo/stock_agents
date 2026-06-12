@@ -14,6 +14,7 @@ def register_all_tools() -> None:
         analyze_fundamental,
         analyze_sentiment,
         assess_risk,
+        get_stock_overview,
     )
     from app.tools.decision.portfolio import calculate_position_size
     from app.tools.report.generate import generate_report
@@ -24,5 +25,6 @@ def register_all_tools() -> None:
     register_tool(analyze_fundamental)
     register_tool(analyze_sentiment)
     register_tool(assess_risk)
+    register_tool(get_stock_overview)
     register_tool(calculate_position_size)
     register_tool(generate_report)

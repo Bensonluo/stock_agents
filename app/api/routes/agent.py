@@ -1,5 +1,7 @@
 """API routes for the ReAct agent."""
 
+import ast
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -10,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.react_agent.react_agent import ReActAgent
 from app.storage.database import AnalysisRecord, get_database
+from app.tools.data.fetcher import fetch_stock_data
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -107,11 +110,77 @@ async def get_progress(thread_id: str):
     raise HTTPException(status_code=404, detail="Analysis not found")
 
 
+async def _enrich_overview(answer: Any, symbols: list[str]) -> Any:
+    """Server-side: patch the LLM's `answer` so overview.market_summary has
+    real company_name / current_price / sector. The LLM often leaves these
+    fields as None even though get_stock_overview returns the data, so we
+    fetch the data ourselves and overwrite.
+
+    The LLM emits a Python dict literal (single-quote, unquoted keys) rather
+    than JSON, so we parse with ast.literal_eval and re-serialise the same way.
+    """
+    if not isinstance(answer, str) or not answer.strip():
+        return answer
+    try:
+        parsed = ast.literal_eval(answer)
+    except Exception:
+        return answer  # not a Python literal; leave as-is
+    if not isinstance(parsed, dict):
+        return answer
+
+    sections = parsed.setdefault("sections", {}) or {}
+    overview = sections.setdefault("overview", {}) or {}
+    ms = overview.setdefault("market_summary", {}) or {}
+
+    async def _fill(sym: str) -> None:
+        try:
+            data = await fetch_stock_data(sym)
+        except Exception:
+            return
+        if not data:
+            return
+        m = data.get("market_data", {}) or {}
+        existing = ms.get(sym, {}) or {}
+        if not existing.get("company_name"):
+            existing["company_name"] = m.get("company_name")
+        if existing.get("current_price") in (None, 0):
+            existing["current_price"] = m.get("current_price")
+        if not existing.get("sector"):
+            existing["sector"] = m.get("sector")
+        if existing.get("change") in (None,):
+            existing["change"] = m.get("change")
+        if existing.get("change_percent") in (None,):
+            existing["change_percent"] = m.get("change_percent")
+        if not existing.get("market_cap"):
+            existing["market_cap"] = m.get("market_cap")
+        ms[sym] = existing
+
+    await asyncio.gather(*[_fill(s) for s in symbols if s])
+
+    overview["market_summary"] = ms
+    sections["overview"] = overview
+    parsed["sections"] = sections
+
+    # Re-serialise in the same style the LLM used (Python dict literal)
+    return repr(parsed)
+
+
 @router.get("/result/{thread_id}", response_model=ResultResponse)
 async def get_result(thread_id: str):
     """Get the result of an analysis. Falls back to database if not in memory."""
     result = _results.get(thread_id)
     if result:
+        answer = result.get("answer", "")
+        symbols = (result.get("metadata") or {}).get("symbols") if isinstance(result.get("metadata"), dict) else None
+        if not symbols and isinstance(answer, str):
+            try:
+                parsed = ast.literal_eval(answer)
+                symbols = (parsed.get("metadata") or {}).get("symbols", []) if isinstance(parsed, dict) else []
+            except Exception:
+                symbols = []
+        if symbols:
+            answer = await _enrich_overview(answer, symbols)
+            result = {**result, "answer": answer}
         return ResultResponse(**result)
 
     # Fallback: load from database (survives server restart)
@@ -120,8 +189,18 @@ async def get_result(thread_id: str):
         record = db.get_record(thread_id)
         if record and record.result:
             stored = json.loads(record.result)
+            answer = stored.get("answer", "")
+            symbols = (stored.get("metadata") or {}).get("symbols", []) if isinstance(stored.get("metadata"), dict) else []
+            if not symbols and isinstance(answer, str):
+                try:
+                    parsed = ast.literal_eval(answer)
+                    symbols = (parsed.get("metadata") or {}).get("symbols", []) if isinstance(parsed, dict) else []
+                except Exception:
+                    symbols = []
+            if symbols:
+                answer = await _enrich_overview(answer, symbols)
             return ResultResponse(
-                answer=stored.get("answer", ""),
+                answer=answer,
                 report=stored.get("report"),
                 iterations=stored.get("iterations", 0),
                 tools_used=stored.get("tools_used", []),

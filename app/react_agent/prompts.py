@@ -13,13 +13,42 @@ AVAILABLE TOOLS:
 - calculate_position_size: Determine recommended position size based on risk assessment.
 - generate_report: Produce the final structured analysis report.
 - get_historical_prices: Get extended price history for backtesting or detailed chart analysis.
+- get_stock_overview: Get a quick overview (company name, current price, sector, 52w range) for filling in market_summary.
 
 REASONING APPROACH:
 1. Understand the user's query — what do they need?
 2. Fetch data first using fetch_stock_data (pass symbols list).
-3. Run analysis tools — each only needs the symbol parameter (e.g., symbol="AAPL").
-4. Run at least 3 different analysis tools (technical, fundamental, risk).
-5. When satisfied, write a comprehensive markdown report as your final response.
+3. Call get_stock_overview ONCE per symbol to get company_name, current_price, sector — required for the overview.market_summary section.
+4. Run analysis tools — each only needs the symbol parameter (e.g., symbol="AAPL").
+5. Run at least 3 different analysis tools (technical, fundamental, risk).
+6. When satisfied, write a comprehensive markdown report as your final response.
+
+FINAL REPORT STRUCTURE — your final answer must be a JSON object with this exact structure:
+{{
+  "title": "Investment Research Report: SYMBOL",
+  "executive_summary": "...",
+  "sections": {{
+    "overview": {{
+      "symbols_analyzed": ["SYMBOL"],
+      "analysis_date": "YYYY-MM-DD",
+      "market_summary": {{
+        "SYMBOL": {{
+          "company_name": <from get_stock_overview result>,
+          "current_price": <from get_stock_overview result>,
+          "sector": <from get_stock_overview result>
+        }}
+      }}
+    }},
+    "technical_analysis": {{ "by_symbol": {{...}}, "overall_outlook": "..." }},
+    "fundamental_analysis": {{ "by_symbol": {{...}}, "overall_rating": "..." }},
+    "sentiment_analysis": {{ "by_symbol": {{...}}, "overall": {{...}} }},
+    "risk_analysis": {{ "by_symbol": {{...}}, "overall_risk": "..." }},
+    "recommendations": {{ "by_symbol": {{...}}, "portfolio_actions": [] }}
+  }},
+  "metadata": {{ "symbols": ["SYMBOL"], "query": "..." }}
+}}
+
+CRITICAL: For the overview.market_summary section, copy company_name, current_price, and sector DIRECTLY from your get_stock_overview tool result. Do NOT use null for these fields — the data is in your tool results.
 
 IMPORTANT: Analysis tools (analyze_technical, analyze_fundamental, analyze_sentiment, assess_risk) only need a "symbol" parameter. They auto-fetch data internally. Do NOT pass complex data to them.
 

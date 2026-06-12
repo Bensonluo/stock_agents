@@ -31,19 +31,44 @@ from app.tools.analysis.technical import (
     _generate_signals,
     _to_dataframe,
 )
-from app.tools.data.fetcher import fetch_stock_data
+from app.tools.data.fetcher import fetch_stock_data, fetch_historical
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
-    """Fetch stock data and split into components."""
+    """Fetch stock data and split into components.
+
+    Tries both fetch_stock_data (snapshot) and fetch_historical (OHLC series).
+    If the snapshot's historical_data is empty, supplements it from fetch_historical.
+    """
     data = await fetch_stock_data(symbol)
     if not data:
         return None
+
+    market = data.get("market_data", {}) or {}
+    hist_block = market.get("historical_data") or {}
+
+    # If snapshot didn't include historical (e.g. Finnhub free tier / yfinance 429),
+    # pull the OHLC series from fetch_historical and merge it in.
+    if not hist_block.get("dates"):
+        try:
+            hist = await fetch_historical(symbol, period="3mo")
+            if isinstance(hist, dict) and hist.get("dates") and "error" not in hist:
+                market["historical_data"] = {
+                    "dates": hist["dates"],
+                    "open": hist.get("open", []),
+                    "high": hist.get("high", []),
+                    "low": hist.get("low", []),
+                    "close": hist.get("close", []),
+                    "volume": hist.get("volume", []),
+                }
+        except Exception as e:
+            logger.warning(f"[auto_tools] historical fetch fallback failed for {symbol}: {e}")
+
     return {
-        "market_data": {symbol: data.get("market_data", {})},
+        "market_data": {symbol: market},
         "financial_data": {symbol: data.get("financial_data", {})},
         "news_data": data.get("news_data", []),
     }
@@ -248,4 +273,34 @@ async def assess_risk(symbol: str) -> dict[str, Any]:
             "stop_loss_percentage": float(volatility * 2 * 100),
         },
         "warnings": _warnings(risk_level, volatility, max_dd),
+    }
+
+
+class GetStockOverviewInput(BaseModel):
+    symbol: str = Field(description="Stock symbol (e.g., 'AAPL', '600000')")
+
+
+@tool(args_schema=GetStockOverviewInput)
+async def get_stock_overview(symbol: str) -> dict[str, Any]:
+    """Get a quick stock overview: company name, current price, change,
+    sector, market cap, 52-week range. Use this to fill in the
+    market_summary section of a report.
+    """
+    data = await fetch_stock_data(symbol)
+    if not data:
+        return {"error": f"Could not fetch data for {symbol}"}
+    m = data.get("market_data", {})
+    return {
+        "symbol": symbol,
+        "company_name": m.get("company_name"),
+        "current_price": m.get("current_price"),
+        "change": m.get("change"),
+        "change_percent": m.get("change_percent"),
+        "volume": m.get("volume"),
+        "market_cap": m.get("market_cap"),
+        "sector": m.get("sector"),
+        "currency": m.get("currency"),
+        "exchange": m.get("exchange"),
+        "52_week_high": m.get("52_week_high"),
+        "52_week_low": m.get("52_week_low"),
     }
