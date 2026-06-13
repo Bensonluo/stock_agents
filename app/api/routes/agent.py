@@ -161,8 +161,80 @@ async def _enrich_overview(answer: Any, symbols: list[str]) -> Any:
     sections["overview"] = overview
     parsed["sections"] = sections
 
+    # Re-build executive_summary from the now-complete market_summary.
+    # The LLM's original summary was generated with empty data and shows
+    # "current_price: N/A". We have everything we need here, so recompute.
+    if isinstance(parsed.get("metadata"), dict):
+        query = parsed["metadata"].get("query", "")
+    else:
+        query = ""
+    parsed["executive_summary"] = _build_executive_summary(parsed, query, symbols)
+
     # Re-serialise in the same style the LLM used (Python dict literal)
     return repr(parsed)
+
+
+def _detect_lang(text: str) -> str:
+    if not text:
+        return "en"
+    for ch in text:
+        if "一" <= ch <= "鿿" or "㐀" <= ch <= "䶿":
+            return "zh"
+    return "en"
+
+
+_RECOMMEND_LABELS_ZH = {"buy": "买入", "add": "加仓", "hold": "持有", "reduce": "减仓", "sell": "卖出"}
+_RISK_LABELS_ZH = {"very_low": "极低", "low": "低", "medium": "中", "high": "高", "very_high": "极高"}
+
+
+def _build_executive_summary(parsed: dict, query: str, symbols: list[str]) -> str:
+    """Server-side rebuild of executive_summary that reads from the
+    now-complete sections. Returns the same shape as
+    tools/report/generate._executive_summary but uses the enriched data.
+    """
+    if not symbols:
+        return "分析完成。" if _detect_lang(query) == "zh" else "Analysis complete."
+
+    lang = _detect_lang(query)
+    sections = parsed.get("sections", {}) or {}
+    market_summary = (sections.get("overview", {}) or {}).get("market_summary", {}) or {}
+    risk_section = sections.get("risk_analysis", {}) or {}
+    overall_risk = risk_section.get("overall_risk", "medium")
+    rec_section = sections.get("recommendations", {}) or {}
+    by_symbol = (rec_section.get("by_symbol", {}) or {})
+
+    parts: list[str] = []
+    for s in symbols:
+        rec = by_symbol.get(s, {}) or {}
+        action = rec.get("action", "hold")
+        confidence = float(rec.get("confidence", 0.5) or 0.5)
+        composite = rec.get("composite_score")
+        m = market_summary.get(s, {}) or {}
+        price = m.get("current_price")
+        company = m.get("company_name") or s
+
+        price_str = f"${price:.2f}" if isinstance(price, (int, float)) else "N/A"
+        if lang == "zh":
+            label = _RECOMMEND_LABELS_ZH.get(action, action)
+            score_part = f", 综合评分 {composite:.0f}/100" if composite is not None else ""
+            parts.append(
+                f"{company}({s}) 当前价 {price_str} — 建议: {label} "
+                f"(置信度 {confidence:.0%}{score_part})。"
+            )
+        else:
+            score_part = f", composite {composite:.0f}/100" if composite is not None else ""
+            parts.append(
+                f"{company} ({s}) @ {price_str} — Recommendation: {action.upper()} "
+                f"(confidence {confidence:.0%}{score_part})."
+            )
+
+    if lang == "zh":
+        risk_label = _RISK_LABELS_ZH.get(overall_risk, overall_risk)
+        parts.append(f"整体风险水平: {risk_label}。")
+    else:
+        parts.append(f"Overall risk: {overall_risk}.")
+
+    return " ".join(parts)
 
 
 @router.get("/result/{thread_id}", response_model=ResultResponse)
