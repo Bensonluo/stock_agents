@@ -284,7 +284,8 @@ def _executive_summary(data: dict, sections: dict) -> str:
     overall_risk = risk_section.get("overall_risk", "medium")
     rec_section = sections.get("recommendations", {}) or {}
     by_symbol = rec_section.get("by_symbol", {}) or {}
-    market = data.get("market_data", {}) or {}
+    market_summary = (sections.get("overview", {}) or {}).get("market_summary", {}) or {}
+    market = data.get("market_data", {}) or {}  # fallback only
 
     if not symbols:
         return "分析完成。" if lang == "zh" else "Analysis complete."
@@ -295,7 +296,10 @@ def _executive_summary(data: dict, sections: dict) -> str:
         action = rec.get("action", "hold")
         confidence = rec.get("confidence", 0.5)
         composite = rec.get("composite_score")
-        m = market.get(s, {}) or {}
+        # Prefer sections.overview.market_summary[s] (built by the LLM tool
+        # call path), fall back to data["market_data"][s] (what the LLM
+        # assembles from raw tool results).
+        m = market_summary.get(s) or market.get(s, {}) or {}
         price = m.get("current_price")
         company = m.get("company_name") or s
 
