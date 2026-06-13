@@ -122,38 +122,199 @@ def _risk_section(data: dict) -> dict:
     }
 
 
-def _recommendations_section(data: dict) -> dict:
-    decisions = data.get("decision", {})
-    if isinstance(decisions, dict) and "decisions" in decisions:
-        decisions = decisions["decisions"]
+def _risk_to_score(risk_level: str) -> int:
+    """Map risk level (low..very_high) to 0..100 (lower = safer)."""
     return {
-        "by_symbol": {
-            s: {"action": d.get("action", "hold"), "confidence": d.get("confidence", 0)}
-            for s, d in decisions.items()
-        },
-        "portfolio_actions": [
-            {"symbol": s, "action": d["action"]}
-            for s, d in decisions.items()
-            if "buy" in d.get("action", "")
-        ],
+        "very_low": 10, "low": 30, "medium": 50, "high": 75, "very_high": 95,
+    }.get(str(risk_level).lower(), 50)
+
+
+def _derive_recommendation(
+    symbol: str,
+    fundamental: dict,
+    technical: dict,
+    sentiment: dict,
+    risk: dict,
+) -> dict:
+    """Rule-based action synthesis that ALWAYS agrees with the analysis.
+
+    Combines fundamental score (0-100), technical sentiment (-100..100),
+    sentiment score (-100..100), and risk level into a single action.
+    The LLM cannot override this — guarantees the report is internally
+    consistent (e.g. fundamental=strong_sell ⇒ action=sell, not "add").
+    """
+    fund_score_raw = fundamental.get("overall_score", 50)
+    if isinstance(fund_score_raw, dict):
+        fund_score = float(fund_score_raw.get("score", 50) or 50)
+    else:
+        fund_score = float(fund_score_raw or 50)
+    fund_rec = str(fundamental.get("recommendation", "hold")).lower()
+    tech_trend = str(technical.get("trend", "neutral")).lower()
+    tech_score = float(technical.get("sentiment_score", 0) or 0)
+    sent_score = float(sentiment.get("score", 0) or 0)
+    risk_level = str(risk.get("risk_level", "medium")).lower()
+    risk_penalty = _risk_to_score(risk_level)
+
+    # Normalize technical & sentiment to 0-100, then weighted-blend.
+    tech_norm = max(0.0, min(100.0, (tech_score + 100) / 2))
+    sent_norm = max(0.0, min(100.0, (sent_score + 100) / 2))
+    risk_norm = 100 - risk_penalty  # higher = safer
+
+    combined = (
+        fund_score * 0.45
+        + tech_norm * 0.30
+        + sent_norm * 0.15
+        + risk_norm * 0.10
+    )
+
+    if combined >= 70:
+        action = "buy"
+        confidence = round(min(0.9, combined / 100), 2)
+    elif combined >= 55:
+        action = "add"
+        confidence = round(0.55 + (combined - 55) / 100, 2)
+    elif combined >= 42:
+        action = "hold"
+        confidence = 0.5
+    elif combined >= 28:
+        action = "reduce"
+        confidence = round(0.55 + (42 - combined) / 100, 2)
+    else:
+        action = "sell"
+        confidence = round(min(0.9, (100 - combined) / 100), 2)
+
+    # Build human-readable reasoning in the same language as the query will be
+    # handled by _executive_summary; here we keep it English (canonical).
+    reasoning = (
+        f"Composite score {combined:.0f}/100 "
+        f"(fundamental {fund_score:.0f}/{fund_rec}, "
+        f"technical {tech_trend}/{tech_score:+.0f}, "
+        f"sentiment {sent_score:+.0f}, risk {risk_level})"
+    )
+
+    return {
+        "action": action,
+        "confidence": confidence,
+        "composite_score": round(combined, 1),
+        "reasoning": reasoning,
     }
 
 
+def _recommendations_section(data: dict) -> dict:
+    """Derive per-symbol recommendation from the analysis sections, not from
+    a separate `decision` field the LLM may forget to fill. Fall back to the
+    LLM's `decision` only if absolutely no analysis data is available.
+    """
+    symbols = data.get("symbols", []) or []
+    fundamental = data.get("fundamental_analysis", {}) or {}
+    technical = data.get("technical_analysis", {}) or {}
+    sentiment = data.get("sentiment_analysis", {}) or {}
+    risk = data.get("risk_assessment", {}) or {}
+
+    by_symbol: dict[str, dict] = {}
+    for s in symbols:
+        f = (fundamental.get(s) or {})
+        t = (technical.get(s) or {})
+        sent_block = (sentiment.get("sentiment_by_symbol", {}) or {}).get(s) or (sentiment.get(s) or {})
+        r = (risk.get(s) or {})
+
+        if not any([f, t, sent_block, r]):
+            by_symbol[s] = {
+                "action": "hold",
+                "confidence": 0.3,
+                "composite_score": 50.0,
+                "reasoning": "Insufficient analysis data to derive a recommendation",
+            }
+            continue
+
+        by_symbol[s] = _derive_recommendation(s, f, t, sent_block, r)
+
+    portfolio_actions = [
+        {"symbol": s, "action": v["action"], "confidence": v["confidence"]}
+        for s, v in by_symbol.items()
+        if v["action"] in ("buy", "add")
+    ]
+    sells = [
+        {"symbol": s, "action": v["action"], "confidence": v["confidence"]}
+        for s, v in by_symbol.items()
+        if v["action"] in ("sell", "reduce")
+    ]
+    return {
+        "by_symbol": by_symbol,
+        "portfolio_actions": portfolio_actions,
+        "sell_actions": sells,
+    }
+
+
+# Translations of recommendation labels.
+_RECOMMEND_LABELS = {
+    "en": {
+        "buy": "BUY", "add": "ADD", "hold": "HOLD", "reduce": "REDUCE", "sell": "SELL",
+        "verdict": "Recommendation", "composite": "composite score", "based_on": "based on",
+        "fund": "fundamental", "tech": "technical", "sent": "sentiment", "risk": "risk",
+    },
+    "zh": {
+        "buy": "买入", "add": "加仓", "hold": "持有", "reduce": "减仓", "sell": "卖出",
+        "verdict": "投资建议", "composite": "综合评分", "based_on": "基于",
+        "fund": "基本面", "tech": "技术面", "sent": "情绪", "risk": "风险",
+    },
+}
+
+
+def _detect_lang(text: str) -> str:
+    """Return 'zh' if the text contains CJK characters, else 'en'."""
+    if not text:
+        return "en"
+    for ch in text:
+        if "一" <= ch <= "鿿" or "㐀" <= ch <= "䶿":
+            return "zh"
+    return "en"
+
+
 def _executive_summary(data: dict, sections: dict) -> str:
-    symbols = data.get("symbols", [])
-    decisions = data.get("decision", {})
-    if isinstance(decisions, dict) and "decisions" in decisions:
-        decisions = decisions["decisions"]
+    """Build a concise, actionable summary. Language matches the query.
+    Format: '<SYMBOL> <price>: <action> — <reasoning>'. Risk level appended.
+    """
+    symbols = data.get("symbols", []) or []
+    query = data.get("query", "")
+    lang = _detect_lang(query)
+    L = _RECOMMEND_LABELS[lang]
 
-    parts = []
-    if len(symbols) == 1:
-        parts.append(f"This report analyzes {symbols[0]} across technical, fundamental, sentiment, and risk dimensions.")
+    risk_section = sections.get("risk_analysis", {}) or {}
+    overall_risk = risk_section.get("overall_risk", "medium")
+    rec_section = sections.get("recommendations", {}) or {}
+    by_symbol = rec_section.get("by_symbol", {}) or {}
+    market = data.get("market_data", {}) or {}
+
+    if not symbols:
+        return "分析完成。" if lang == "zh" else "Analysis complete."
+
+    parts: list[str] = []
+    for s in symbols:
+        rec = by_symbol.get(s, {}) or {}
+        action = rec.get("action", "hold")
+        confidence = rec.get("confidence", 0.5)
+        composite = rec.get("composite_score")
+        m = market.get(s, {}) or {}
+        price = m.get("current_price")
+        company = m.get("company_name") or s
+
+        price_str = f"${price:.2f}" if isinstance(price, (int, float)) else "N/A"
+        if lang == "zh":
+            parts.append(
+                f"{company}({s}) 当前价 {price_str} — 建议: {L[action]} "
+                f"(置信度 {confidence:.0%}{', ' + L['composite'] + ' ' + f'{composite:.0f}/100' if composite is not None else ''})。"
+            )
+        else:
+            parts.append(
+                f"{company} ({s}) @ {price_str} — {L['verdict']}: {L[action]} "
+                f"(confidence {confidence:.0%}{', ' + L['composite'] + ' ' + f'{composite:.0f}/100' if composite is not None else ''})."
+            )
+
+    if lang == "zh":
+        risk_label = {"very_low": "极低", "low": "低", "medium": "中", "high": "高", "very_high": "极高"}.get(overall_risk, overall_risk)
+        parts.append(f"整体{L['risk']}水平: {risk_label}。")
     else:
-        parts.append(f"This report analyzes {len(symbols)} stocks.")
-
-    risk = sections.get("risk_analysis", {})
-    parts.append(f"Overall risk level: {risk.get('overall_risk', 'medium')}.")
-    tech = sections.get("technical_analysis", {})
-    parts.append(f"Technical outlook: {tech.get('overall_outlook', 'neutral')}.")
+        parts.append(f"Overall {L['risk']}: {overall_risk}.")
 
     return " ".join(parts)
