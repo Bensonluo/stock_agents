@@ -196,9 +196,9 @@ Uses Zhipu AI (GLM models) as primary LLM via OpenAI-compatible API. Falls back 
 
 | Model | Use Case |
 |-------|----------|
-| `glm-4.7` | Primary analysis (default) |
-| `glm-4.5-air` | Fast / batch operations |
-| `glm-4.5` | Standard tasks |
+| `glm-5.2` | Primary analysis (default) |
+| `glm-5.2` | Fast / batch operations |
+| `glm-5.2` | Standard tasks |
 
 ## Project Structure
 
@@ -249,7 +249,7 @@ Key environment variables (see `.env.example` for full list):
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ZHIPUAI_API_KEY` | Zhipu AI API key (primary LLM) | - |
-| `PRIMARY_LLM_MODEL` | LLM model for analysis | `glm-4.7` |
+| `PRIMARY_LLM_MODEL` | LLM model for analysis | `glm-5.2` |
 | `DATABASE_URL` | PostgreSQL connection string | `postgresql://...` |
 | `REDIS_URL` | Redis connection string | `redis://localhost:6379` |
 | `FRONTEND_URL` | Frontend URL for CORS | `http://localhost:3000` |
