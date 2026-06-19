@@ -1,82 +1,176 @@
+<div align="center">
+
 # Stock Analysis Multi-Agent System
 
-A production-grade multi-agent stock analysis system supporting both US/international and Chinese A-share markets, powered by LangGraph orchestration with a Next.js frontend.
+**A production-grade multi-agent system for stock analysis — dual architecture (LangGraph pipeline + ReAct agent), supporting both US/international and Chinese A-share markets.**
 
-## Features
+[![Live Demo](https://img.shields.io/badge/LIVE-DEMO-brightgreen?style=for-the-badge&logo=vercel)](http://101.43.97.91/stock)
+[![GitHub stars](https://img.shields.io/github/stars/Bensonluo/stock_agents?style=for-the-badge)](https://github.com/Bensonluo/stock_agents/stargazers)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
-- **Multi-Agent Architecture**: 7 specialized agents in a sequential pipeline
-  - Data Collection (yfinance + AkShare for Chinese A-shares)
-  - Technical Analysis
-  - Fundamental Analysis
-  - Sentiment Analysis
-  - Risk Assessment
-  - Decision Making
-  - Report Generation
+[![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-StateGraph-FF6B6B)](https://github.com/langchain-ai/langgraph)
+[![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js&logoColor=white)](https://nextjs.org/)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 
-- **ReAct Agent**: An interactive ReAct agent with auto-fetching analysis tools for on-demand stock queries
-- **LangGraph Orchestration**: State-based workflow with conditional retry edges and error handling
-- **Enterprise Monitoring**: Real-time metrics, WebSocket event broadcasting, circuit breakers
-- **Chinese A-Share Support**: Automatic AkShare data fetching when 6-digit stock codes are used
-- **Next.js Frontend**: Dashboard UI for stock analysis and monitoring
-- **REST API**: FastAPI-based HTTP API with async/sync analysis endpoints
-- **Backtesting**: Strategy backtesting with Backtrader
-- **Production Deployment**: Nginx reverse proxy, systemd service, deployment scripts included
+<!-- 🎬 录制说明:录一次完整分析 AAPL 的流程,展示前端 dashboard 实时更新 -->
+<img src="docs/assets/demo.gif" alt="Stock Analysis Demo" width="80%">
 
-## Quick Start
+*🎬 Replace this with a 30s GIF of the analysis flow — see [Recording Guide](#-demo-recording-guide) below*
 
-### Prerequisites
+</div>
 
-- Python 3.11+
-- Node.js 18+ (for frontend)
-- Poetry (for Python dependency management)
-- PostgreSQL
-- Redis (optional, for caching)
+---
 
-### Backend Setup
+## 📌 Table of Contents
 
-1. Clone the repository:
+- [Why This Project](#-why-this-project)
+- [Key Highlights](#-key-highlights)
+- [Dual Architecture](#-dual-architecture)
+- [Quick Start](#-quick-start)
+- [API Examples](#-api-examples)
+- [System Architecture](#-system-architecture)
+- [中文说明](#-中文说明)
+
+---
+
+## 💡 Why This Project
+
+There are plenty of "LLM stock analysis" demos, but most have the same problems:
+
+- ❌ US-only — they ignore the billion-user Chinese A-share market
+- ❌ One agent does everything — slow, unreliable, no specialization
+- ❌ No resilience — one API timeout kills the whole pipeline
+- ❌ No real-time feedback — you wait 2 minutes staring at a spinner
+
+This project solves all of them:
+
+> 🚀 **Two complementary architectures**: a deterministic 7-agent LangGraph pipeline for structured reports, plus an autonomous ReAct agent for ad-hoc queries. Built-in circuit breakers, retries, WebSocket streaming, and Chinese A-share support via AkShare.
+
+It's a **reference implementation** for production-grade multi-agent systems — the kind of architecture you'd build for a real fintech product.
+
+---
+
+## ✨ Key Highlights
+
+<div align="center">
+
+| 🤖 Agents | 🌍 Markets | 🛡️ Resilience |
+|:---:|:---:|:---:|
+| **7** specialized agents | US & international | Circuit breaker |
+| Sequential + ReAct dual arch | Chinese A-shares | Retry with backoff |
+| Each with monitoring | Auto-detect by code | Timeout enforcement |
+
+| 📡 Real-time | 📊 Analysis | 🧪 Backtesting |
+|:---:|:---:|:---:|
+| WebSocket streaming | Technical (RSI/MACD/BB) | SMA crossover |
+| Live agent metrics | Fundamental (ROE/P/E/P/B) | RSI / MACD strategy |
+| Circuit breaker status | Sentiment scoring | Buy & Hold baseline |
+
+| 📈 Stats | | |
+|:---:|:---:|:---:|
+| **7** specialized agents | **2** architectures | **2** markets |
+| **4** backtest strategies | **2** LLM providers | **WebSocket** real-time |
+
+</div>
+
+### 🧠 What makes it different
+
+1. **Dual architecture, not one** — sequential pipeline for reliable reports + ReAct for autonomous exploration
+2. **Native A-share support** — 6-digit codes auto-trigger AkShare data source
+3. **Enterprise-grade resilience** — every agent wrapped with circuit breaker, timeout, retry
+4. **Real-time observability** — WebSocket streams agent execution events live to the dashboard
+5. **Multi-factor decision** — technical 30% + fundamental 40% + sentiment 15% + risk 15%
+
+---
+
+## 🔄 Dual Architecture
+
+### Architecture 1: Sequential Pipeline (LangGraph)
+
+For structured, deterministic reports — every agent runs in order:
+
+```
+data_collection
+    ↓
+technical_analysis   ← RSI, MACD, Bollinger Bands, K-line patterns
+    ↓
+fundamental_analysis ← ROE, P/E, P/B, debt ratio, profitability
+    ↓
+sentiment_analysis   ← News keyword scoring
+    ↓
+risk_assessment      ← VaR, max drawdown, position sizing
+    ↓
+decision_making      ← Multi-factor weighted score
+    ↓
+report_generation    ← Structured investment report
+```
+
+### Architecture 2: ReAct Autonomous Agent
+
+For ad-hoc queries — the agent decides what to do:
+
+```
+Reason:   "User wants AAPL analysis. Need price + fundamentals + news."
+Act:      [selects tools: get_price, get_fundamentals, get_news]
+Observe:  [tool results]
+Reflect:  "Have enough data. Generate report."
+```
+
+Built-in safety: max iterations, repetition detection, cost tracking, context truncation.
+
+### When to use which?
+
+| Use case | Architecture |
+|----------|-------------|
+| Daily market report (deterministic) | Sequential Pipeline |
+| "Compare AAPL and MSFT" (ad-hoc) | ReAct Agent |
+| Real-time alerting | Sequential + WebSocket |
+| Interactive exploration | ReAct Agent |
+
+---
+
+## 🚀 Quick Start
+
+### Option 1: Docker (recommended)
+
 ```bash
-git clone <repository-url>
+git clone https://github.com/Bensonluo/stock_agents.git
 cd stock_agents
-```
 
-2. Install Python dependencies:
-```bash
-poetry install
-```
-
-3. Set up environment variables:
-```bash
 cp .env.example .env
-# Edit .env with your configuration
+# Edit .env: set ZHIPUAI_API_KEY (or OPENAI_API_KEY)
+
+docker-compose up -d
 ```
 
-4. Run the backend server:
+- 📊 Frontend: http://localhost:3000
+- 🔌 API: http://localhost:8000/docs
+
+### Option 2: Try the Live Demo
+
+**[Try it online →](http://101.43.97.91/stock)** — analyze real stocks in your browser.
+
+### Option 3: Local development
+
 ```bash
+# Backend
+poetry install
+cp .env.example .env
 poetry run uvicorn app.main:app --reload
-```
 
-The API will be available at `http://localhost:8000`
-
-### Frontend Setup
-
-```bash
+# Frontend (separate terminal)
 cd frontend
 npm install
 npm run dev
 ```
 
-The frontend will be available at `http://localhost:3000`
+---
 
-### Docker Deployment
+## 📡 API Examples
 
-```bash
-docker-compose up -d
-```
-
-## API Usage
-
-### Analyze Stocks
+### Analyze stocks
 
 ```bash
 # Async analysis (returns workflow ID immediately)
@@ -87,7 +181,7 @@ curl -X POST "http://localhost:8000/api/analysis/analyze" \
     "symbols": ["AAPL", "MSFT"]
   }'
 
-# Chinese A-shares (use 6-digit codes)
+# 🇨🇳 Chinese A-shares (use 6-digit codes — AkShare auto-triggers)
 curl -X POST "http://localhost:8000/api/analysis/analyze" \
   -H "Content-Type: application/json" \
   -d '{
@@ -98,19 +192,10 @@ curl -X POST "http://localhost:8000/api/analysis/analyze" \
 # Sync analysis (waits for completion)
 curl -X POST "http://localhost:8000/api/analysis/analyze/sync" \
   -H "Content-Type: application/json" \
-  -d '{
-    "query": "Analyze AAPL",
-    "symbols": ["AAPL"]
-  }'
+  -d '{"query": "Analyze AAPL", "symbols": ["AAPL"]}'
 ```
 
-### Query Analysis History
-
-```bash
-curl "http://localhost:8000/api/history/"
-```
-
-### Run Backtest
+### Backtest a strategy
 
 ```bash
 curl -X POST "http://localhost:8000/api/backtest/run" \
@@ -123,26 +208,19 @@ curl -X POST "http://localhost:8000/api/backtest/run" \
   }'
 ```
 
-### Monitoring Endpoints
+### Real-time monitoring
 
-- `GET /api/monitoring/health` - System health overview
-- `GET /api/monitoring/metrics` - Agent execution metrics
-- `GET /api/monitoring/alerts` - Alert history
-- `GET /api/monitoring/circuit-breakers` - Circuit breaker status
-- `WS  /api/ws/monitoring` - Real-time WebSocket event stream
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/monitoring/health` | System health overview |
+| `GET /api/monitoring/metrics` | Agent execution metrics |
+| `GET /api/monitoring/alerts` | Alert history |
+| `GET /api/monitoring/circuit-breakers` | Circuit breaker status |
+| `WS  /api/ws/monitoring` | Real-time event stream |
 
-## Architecture
+---
 
-### Agent Pipeline
-
-```
-data_collection -> technical_analysis -> sentiment_analysis -> fundamental_analysis -> risk_assessment -> decision_making -> report_generation
-```
-
-- **BaseAgent subclasses** (data, technical, fundamental): include circuit breaker, timeout, and monitoring via `agent.run()`
-- **StatelessAgent subclasses** (sentiment, risk, decision, report): called via `agent.process()` with protections at the orchestrator node level
-
-### System Overview
+## 🏗️ System Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -172,7 +250,6 @@ data_collection -> technical_analysis -> sentiment_analysis -> fundamental_analy
    │  Data  │ │Analysis│ │ Risk │ │ Decision │
    │ Agent  │ │ Agents │ │Agent │ │  + Report│
    └────┬───┘ └───┬────┘ └──┬───┘ └────┬─────┘
-        │          │         │          │
         └──────────┴─────────┴──────────┘
                        │
     ┌──────────────────▼──────────────────┐
@@ -187,114 +264,144 @@ data_collection -> technical_analysis -> sentiment_analysis -> fundamental_analy
 
 | Source | Scope | Trigger |
 |--------|-------|---------|
-| **yfinance** | US & international stocks | Always active (configurable via `YFINANCE_ENABLED`) |
-| **AkShare** | Chinese A-shares | Auto-triggered for 6-digit stock codes (configurable via `AKSHARE_ENABLED`) |
+| **yfinance** | US & international stocks | Always active |
+| **AkShare** | Chinese A-shares | Auto-triggered for 6-digit codes |
 
-### LLM Integration
-
-Uses Zhipu AI (GLM models) as primary LLM via OpenAI-compatible API. Falls back to OpenAI if `ZHIPUAI_API_KEY` is not set.
-
-| Model | Use Case |
-|-------|----------|
-| `glm-5.2` | Primary analysis (default) |
-| `glm-5.2` | Fast / batch operations |
-| `glm-5.2` | Standard tasks |
-
-## Project Structure
-
-```
-stock_agents/
-├── app/                           # Backend application
-│   ├── agents/                    # Agent implementations
-│   │   ├── base.py                # BaseAgent with circuit breaker
-│   │   ├── data_agent.py          # yfinance data collection
-│   │   ├── analysis_agent.py      # Technical + fundamental analysis
-│   │   ├── sentiment_agent.py     # Sentiment analysis
-│   │   ├── risk_agent.py          # Risk assessment
-│   │   ├── decision_agent.py      # Decision making
-│   │   └── report_agent.py        # Report generation
-│   ├── react_agent/               # ReAct agent with tool use
-│   ├── api/                       # FastAPI routes
-│   │   └── routes/                # analysis, backtest, history, monitoring, websocket
-│   ├── orchestration/             # LangGraph workflow orchestration
-│   ├── monitoring/                # Metrics, WebSocket broadcast
-│   ├── resilience/                # Circuit breaker, retry, timeout
-│   ├── storage/                   # PostgreSQL database layer
-│   ├── tools/                     # Agent tool registry
-│   ├── models/                    # Data models
-│   └── utils/                     # Logging, validators, helpers
-├── frontend/                      # Next.js frontend dashboard
-│   └── src/
-│       ├── app/                   # Pages
-│       ├── components/            # UI components
-│       ├── hooks/                 # React hooks
-│       └── lib/                   # Utilities
-├── deploy/                        # Production deployment scripts
-│   ├── deploy.sh                  # Automated deployment
-│   ├── install-nginx.sh           # Nginx setup
-│   └── nginx-full-config.conf     # Nginx configuration
-├── tests/                         # Test suite
-│   ├── unit/                      # Unit tests
-│   ├── integration/               # Integration tests
-│   └── e2e/                       # End-to-end tests
-├── pyproject.toml                 # Poetry config
-├── docker-compose.yml             # Docker orchestration
-└── test_system.py                 # Quick validation script
-```
-
-## Configuration
-
-Key environment variables (see `.env.example` for full list):
+### Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ZHIPUAI_API_KEY` | Zhipu AI API key (primary LLM) | - |
+| `ZHIPUAI_API_KEY` | Zhipu AI API key (primary LLM) | — |
+| `OPENAI_API_KEY` | OpenAI API key (fallback) | — |
 | `PRIMARY_LLM_MODEL` | LLM model for analysis | `glm-5.2` |
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://...` |
-| `REDIS_URL` | Redis connection string | `redis://localhost:6379` |
-| `FRONTEND_URL` | Frontend URL for CORS | `http://localhost:3000` |
-| `LOG_LEVEL` | Logging level | `INFO` |
+| `DATABASE_URL` | PostgreSQL connection | `postgresql://...` |
 | `MAX_RETRIES` | Max retry attempts per agent | `3` |
 | `TIMEOUT_PER_AGENT` | Timeout per agent (seconds) | `300` |
 
-## Development
+See `.env.example` for the full list.
 
-### Running Tests
+---
 
-```bash
-poetry run pytest
+## 📁 Project Structure
 
-# With coverage
-poetry run pytest --cov=app tests/
-
-# Quick validation (no pytest required)
-poetry run python test_system.py
+```
+stock_agents/
+├── app/
+│   ├── agents/              # 🎯 7 specialized agents
+│   │   ├── base.py          #   BaseAgent with circuit breaker
+│   │   ├── data_agent.py    #   yfinance + AkShare collection
+│   │   ├── analysis_agent.py#   Technical + fundamental
+│   │   ├── sentiment_agent.py
+│   │   ├── risk_agent.py
+│   │   ├── decision_agent.py
+│   │   └── report_agent.py
+│   ├── react_agent/         # ReAct autonomous agent
+│   ├── orchestration/       # LangGraph workflow
+│   ├── api/routes/          # analysis, backtest, history, monitoring, ws
+│   ├── monitoring/          # Metrics, WebSocket broadcast
+│   ├── resilience/          # Circuit breaker, retry, timeout
+│   ├── storage/             # PostgreSQL layer
+│   └── tools/               # Agent tool registry
+├── frontend/                # Next.js dashboard
+├── deploy/                  # Production deployment scripts
+├── tests/                   # Unit + integration + e2e
+└── docker-compose.yml
 ```
 
-### Code Quality
+---
+
+## 🗺️ Roadmap
+
+- [x] 7-agent sequential pipeline (LangGraph)
+- [x] ReAct autonomous agent
+- [x] Chinese A-share support (AkShare)
+- [x] WebSocket real-time monitoring
+- [x] Circuit breaker + retry + timeout
+- [x] Strategy backtesting (4 strategies)
+- [ ] Portfolio optimization agent
+- [ ] Options analysis
+- [ ] Multi-language reports (EN/ZH auto-switch)
+
+---
+
+## ⚠️ Disclaimer
+
+This project is for **educational and research purposes only**. Not financial advice. Always do your own research before making investment decisions.
+
+---
+
+## 🤝 Contributing
+
+PRs welcome — especially:
+- 🌍 New data sources (European markets, crypto, etc.)
+- 🤖 New agent types (portfolio optimizer, options analyst)
+- 📊 New technical indicators
+- 🐛 Bug fixes with a failing test
+
+---
+
+## 📜 License
+
+[MIT](LICENSE) — free for personal and commercial use.
+
+If this project helped you learn multi-agent systems, please ⭐ star the repo.
+
+---
+
+## 📬 Contact
+
+- 💼 **Portfolio**: [benluo.art](https://benluo.art)
+- 🐙 **GitHub**: [@Bensonluo](https://github.com/Bensonluo)
+- 💬 **Issues**: [GitHub Issues](https://github.com/Bensonluo/stock_agents/issues)
+
+---
+
+## 🇨🇳 中文说明
+
+**股票分析多智能体系统** — 双架构(顺序流水线 + ReAct 自主 Agent),支持美股和中国 A 股。
+
+### 核心亮点
+
+- **双架构**:LangGraph 顺序流水线(7 个专业 Agent)+ ReAct 自主 Agent
+- **7 个专业 Agent**:数据采集、技术分析、基本面分析、舆情分析、风险评估、决策制定、报告生成
+- **A 股支持**:6 位股票代码自动触发 AkShare 数据源
+- **企业级容错**:每个 Agent 都有熔断器、超时、重试
+- **WebSocket 实时监控**:Agent 执行事件实时推送到前端
+- **策略回测**:SMA 交叉、RSI、MACD、Buy & Hold 四种策略
+- **多因子决策**:技术面 30% + 基本面 40% + 舆情 15% + 风控 15%
+
+### 快速开始
 
 ```bash
-# Format code
-poetry run black app/
-
-# Lint code
-poetry run ruff check app/
+git clone https://github.com/Bensonluo/stock_agents.git
+cd stock_agents
+cp .env.example .env  # 填入 ZHIPUAI_API_KEY
+docker-compose up -d
+# 前端:http://localhost:3000  API:http://localhost:8000/docs
 ```
 
-## Production Deployment
+> ⚠️ **免责声明**:本项目仅供学习和研究,不构成任何投资建议。
 
-See `deploy/` directory for automated deployment scripts:
+---
 
-```bash
-# Deploy to server
-./deploy/deploy.sh
+<details>
+<summary>🎬 Demo Recording Guide (for maintainers)</summary>
 
-# Install and configure Nginx
-./deploy/install-nginx.sh
-```
+### How to record the hero GIF
 
-Includes Nginx reverse proxy config with API and frontend routing.
+1. **Tool**: [Kap](https://getkap.co/) (Mac) or [licecap](https://www.cockos.com/licecap/)
+2. **Content** (~30s):
+   - 0-5s: Open dashboard, enter "AAPL" in the search box
+   - 5-15s: Click Analyze, show WebSocket events streaming in real-time
+   - 15-25s: Show the final report with technical/fundamental/sentiment sections
+   - 25-30s: Switch to A-share example (e.g., "600000") to showcase dual-market support
+3. **Save to**: `docs/assets/demo.gif` (keep under 5MB)
 
-## License
+</details>
 
-MIT
+<!--
+RECORDING_TODO:
+1. Record demo.gif → docs/assets/demo.gif
+2. Replace placeholder img tag in hero section
+3. Consider moving Live Demo to benluo.art subdomain for HTTPS
+-->
