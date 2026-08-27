@@ -840,4 +840,37 @@ async def fetch_historical(
     except Exception as e:
         logger.warning(f"[yahoo-api-hist] failed for {symbol}: {e}")
 
+    # Stooq free CSV (last resort; accessible from CN where Yahoo blocks)
+    try:
+        stooq_symbol = yahoo_symbol.lower().replace(".", "-")
+        days = _period_to_days(period)
+        d1 = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
+        d2 = datetime.now().strftime("%Y%m%d")
+
+        def _stooq_hist():
+            from io import StringIO
+
+            r = requests.get(
+                f"https://stooq.com/q/d/l/?s={stooq_symbol}&d1={d1}&d2={d2}&i=d",
+                timeout=15,
+            )
+            r.raise_for_status()
+            return pd.read_csv(StringIO(r.text))
+
+        df = await asyncio.to_thread(_stooq_hist)
+        if df is not None and not df.empty and "Close" in df.columns:
+            result = {
+                "symbol": symbol, "period": period,
+                "dates": [str(d) for d in df["Date"].tolist()],
+                "open": df["Open"].tolist() if "Open" in df else [],
+                "high": df["High"].tolist() if "High" in df else [],
+                "low": df["Low"].tolist() if "Low" in df else [],
+                "close": df["Close"].tolist(),
+                "volume": df["Volume"].tolist() if "Volume" in df else [],
+            }
+            _cache_set(cache_key, result, ttl=60)
+            return result
+    except Exception as e:
+        logger.warning(f"[stooq-hist] failed for {symbol}: {e}")
+
     return {"error": f"All providers failed for {symbol}", "symbol": symbol}

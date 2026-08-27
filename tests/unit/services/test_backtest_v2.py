@@ -189,3 +189,48 @@ class TestProviderChainFallback:
 
         with pytest.raises(ValueError, match="No data available"):
             await service._fetch_data("AAPL", "2024-01-01", "2025-01-01")
+
+
+class TestStooqLastResort:
+    @pytest.mark.asyncio
+    async def test_chain_ends_at_stooq_csv(self, monkeypatch) -> None:
+        """yfinance limited + others down: stooq CSV must rescue the backtest."""
+        from io import StringIO
+
+        import app.tools.data.fetcher as fetcher
+
+        days = 300
+        closes = [100.0 * (1.001**i) for i in range(days)]
+        dates = pd.bdate_range("2024-01-01", periods=days).strftime("%Y-%m-%d")
+
+        class FakeResponse:
+            text = "\n".join(
+                ["Date,Open,High,Low,Close,Volume"]
+                + [
+                    f"{d},{c},{c},{c},{c},1000000"
+                    for d, c in zip(dates, closes)
+                ]
+            )
+
+            def raise_for_status(self):
+                return None
+
+        monkeypatch.setattr(fetcher.requests, "get", lambda *a, **kw: FakeResponse())
+
+        def broken_ticker(symbol: str):
+            raise RuntimeError("Too Many Requests")
+
+        monkeypatch.setattr("app.services.backtest_service.yf.Ticker", broken_ticker)
+
+        # akshare/yahoo-api also fail naturally for a bogus env; force them off
+        async def failing(*args, **kwargs):
+            raise RuntimeError("down")
+
+        monkeypatch.setattr(fetcher, "_akshare_hist_ok", lambda: False, raising=False)
+
+        service = BacktestService()
+        result = await service.run_backtest(
+            symbol="AAPL", strategy="buy_and_hold",
+            start_date="2024-03-01", end_date="2025-06-01",
+        )
+        assert result["final_value"] > 0
