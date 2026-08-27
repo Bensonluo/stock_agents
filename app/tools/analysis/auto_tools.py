@@ -9,6 +9,7 @@ from typing import Any
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from app.analysis.technical import weekly_sma_summary
 from app.tools.analysis.fundamental import (
     _analyze_financial_health,
     _analyze_growth,
@@ -74,6 +75,15 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
     }
 
 
+def _weekly_sma(symbol: str, hist: dict[str, Any]) -> dict[str, Any]:
+    """Weekly SMA trend features; evidence list is dropped to save LLM tokens."""
+    try:
+        return weekly_sma_summary(hist, symbol=symbol, include_evidence=False)
+    except Exception as e:
+        logger.warning(f"[auto_tools] weekly SMA summary failed for {symbol}: {e}")
+        return {"status": "error", "reason": str(e)}
+
+
 class AnalyzeTechnicalSimpleInput(BaseModel):
     symbol: str = Field(description="Stock symbol to analyze (e.g., 'AAPL', '600000')")
 
@@ -110,6 +120,7 @@ async def analyze_technical(symbol: str) -> dict[str, Any]:
             "support": support,
             "resistance": resistance,
             "sentiment": sentiment,
+            "weekly_sma": _weekly_sma(symbol, hist),
         }
     except Exception as e:
         logger.error(f"Technical analysis failed for {symbol}: {e}")

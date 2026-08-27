@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from app.agents.base import StatelessAgent
+from app.analysis.technical import compact_weekly_view
 from app.orchestration.state import AgentState
 from app.utils.logging import get_logger
 
@@ -179,6 +180,7 @@ class ReportGenerationAgent(StatelessAgent):
                 "support": analysis.get("support", {}),
                 "resistance": analysis.get("resistance", {}),
                 "sentiment_score": score,
+                "weekly_trend": compact_weekly_view(analysis.get("weekly_sma")),
             }
 
             if score > 20:

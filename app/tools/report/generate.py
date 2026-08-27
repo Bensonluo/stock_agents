@@ -6,6 +6,8 @@ from typing import Any
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from app.analysis.technical import compact_weekly_view
+
 
 class GenerateReportInput(BaseModel):
     data: dict = Field(description="All analysis data to compile into a report")
@@ -75,6 +77,7 @@ def _technical_section(data: dict) -> dict:
                 "trend": a.get("signals", {}).get("trend", "neutral"),
                 "rsi": a.get("signals", {}).get("rsi", "neutral"),
                 "sentiment_score": a.get("sentiment", {}).get("score", 0),
+                "weekly_trend": compact_weekly_view(a.get("weekly_sma")),
             }
             for s, a in technical.items()
         },

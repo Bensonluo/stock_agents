@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from app.agents.base import BaseAgent
+from app.analysis.technical import weekly_sma_summary
 from app.orchestration.state import AgentState
 from app.utils.logging import get_logger
 
@@ -101,8 +102,17 @@ class TechnicalAnalysisAgent(BaseAgent):
             "resistance": resistance,
             "patterns": patterns,
             "sentiment": sentiment,
+            "weekly_sma": self._weekly_sma_pack(symbol, hist_data),
             "timestamp": datetime.now().isoformat(),
         }
+
+    def _weekly_sma_pack(self, symbol: str, hist_data: Dict) -> Dict[str, Any]:
+        """Weekly SMA evidence pack; failure must not sink the whole analysis."""
+        try:
+            return weekly_sma_summary(hist_data, symbol=symbol, source="market_data_history")
+        except Exception as e:
+            logger.warning(f"Weekly SMA pack failed for {symbol}: {e}")
+            return {"status": "error", "reason": str(e)}
 
     def _historical_data_to_dataframe(self, hist_data: Dict) -> pd.DataFrame:
         """Convert historical data dict to DataFrame.

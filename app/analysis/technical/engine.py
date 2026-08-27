@@ -203,6 +203,73 @@ def weekly_sma_pack(
     }
 
 
+def weekly_sma_summary(
+    daily_history: Mapping[str, Any],
+    *,
+    symbol: str,
+    as_of: datetime | None = None,
+    currency: str = "USD",
+    source: str = "unknown",
+    include_evidence: bool = True,
+) -> dict[str, Any]:
+    """JSON-serializable weekly SMA pack for agent and tool outputs.
+
+    Same computation as :func:`weekly_sma_pack`, but evidence and data quality
+    are pre-serialized so the result can flow through orchestrator state, API
+    responses and LLM tool output without pydantic objects leaking. Pass
+    ``include_evidence=False`` for contexts where token budget matters (ReAct
+    tool output) — the per-line numbers stay, only the evidence list drops.
+    """
+    pack = weekly_sma_pack(
+        daily_history,
+        symbol=symbol,
+        as_of=as_of,
+        currency=currency,
+        source=source,
+    )
+    summary = {key: value for key, value in pack.items() if key not in ("data_quality", "evidence")}
+    summary["data_quality"] = pack["data_quality"].model_dump(mode="json")
+    if include_evidence:
+        summary["evidence"] = [item.model_dump(mode="json") for item in pack["evidence"]]
+    return summary
+
+
+def compact_weekly_view(pack: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Compact consumption view of a weekly SMA pack for reports and LLM prompts.
+
+    Reports only need the trend verdict, alignment persistence and how far
+    price sits from each line — not the full evidence trail.
+    """
+    if not isinstance(pack, Mapping) or pack.get("status") in (None, "error", "unavailable"):
+        return {"status": "unavailable"}
+    status = str(pack.get("status"))
+    if status == "insufficient_data":
+        return {"status": status, "reason": pack.get("reason")}
+
+    alignment = pack.get("alignment") or {}
+    view: dict[str, Any] = {
+        "status": status,
+        "as_of": pack.get("as_of"),
+        "alignment": {
+            "state": alignment.get("state"),
+            "weeks_in_state": alignment.get("weeks_in_state"),
+        },
+        "sma_distance_pct": {
+            str(window): detail.get("distance_pct")
+            for window, detail in (pack.get("sma") or {}).items()
+            if detail.get("warm_up_met")
+        },
+    }
+    recent_crosses = {
+        pair: {"direction": cross.get("direction"), "weeks_since": cross.get("weeks_since")}
+        for pair, cross in (pack.get("crosses") or {}).items()
+        if cross.get("status") == "observed"
+    }
+    if recent_crosses:
+        view["recent_crosses"] = recent_crosses
+    return view
+
+
 def _insufficient_pack(symbol: str, as_of: datetime | None, *, reason: str) -> dict[str, Any]:
     cutoff = as_of or datetime.now(UTC)
     return {
