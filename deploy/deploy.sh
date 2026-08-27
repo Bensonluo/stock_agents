@@ -62,7 +62,7 @@ echo -e "${GREEN}✓ 服务器目录准备完成${NC}"
 
 # 4. 上传文件到服务器
 echo -e "${YELLOW}[4/6] 上传文件到服务器...${NC}"
-# 排除不需要的文件
+# 排除不需要的文件(注意:.venv/.omc/.worktrees 等本地环境绝不进服务器)
 rsync -avz -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no" --delete \
     --exclude 'node_modules' \
     --exclude '.git' \
@@ -70,8 +70,18 @@ rsync -avz -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no" --delete \
     --exclude '*.pyc' \
     --exclude '.pytest_cache' \
     --exclude '.ruff_cache' \
+    --exclude '.venv' \
+    --exclude '.omc' \
+    --exclude '.claude' \
+    --exclude '.sisyphus' \
+    --exclude '.worktrees' \
+    --exclude '.coverage' \
+    --exclude 'htmlcov' \
+    --exclude 'tests' \
+    --exclude 'docs' \
     --exclude 'frontend/node_modules' \
     --exclude 'frontend/.next' \
+    --exclude 'frontend/.omc' \
     --exclude 'data/*.db' \
     --exclude 'logs/*' \
     --exclude '.idea' \

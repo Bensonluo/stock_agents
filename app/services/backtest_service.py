@@ -254,6 +254,11 @@ class BacktestService:
     async def _fetch_data(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         """Fetch historical data for backtesting.
 
+        Primary path is the direct yfinance snapshot; when it fails (CN servers
+        are frequently rate-limited by Yahoo), fall back to the shared
+        multi-source chain (yfinance -> finnhub -> akshare -> yahoo-api ->
+        stooq) and slice it to the requested window.
+
         Args:
             symbol: Stock symbol
             start_date: Start date
@@ -275,11 +280,40 @@ class BacktestService:
                 if col not in df.columns:
                     raise ValueError(f"Missing required column: {col}")
 
-            return df
+            if not df.empty:
+                return df
+            logger.warning(f"[backtest] yfinance returned no rows for {symbol}; trying provider chain")
 
         except Exception as e:
-            logger.error(f"Error fetching data for {symbol}: {e}")
-            raise
+            logger.warning(f"[backtest] yfinance failed for {symbol}: {e}; trying provider chain")
+
+        return await self._fetch_data_via_chain(symbol, start_date, end_date)
+
+    async def _fetch_data_via_chain(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+        """Shared provider chain fallback, sliced to the requested window."""
+        from app.tools.data.fetcher import fetch_historical
+
+        hist = await fetch_historical(symbol)
+        if not isinstance(hist, dict) or not hist.get("dates"):
+            raise ValueError(f"No data available for {symbol}")
+
+        closes = hist.get("close") or []
+        index = pd.to_datetime(hist["dates"])
+        frame = pd.DataFrame(
+            {
+                "Open": hist.get("open") or closes,
+                "High": hist.get("high") or closes,
+                "Low": hist.get("low") or closes,
+                "Close": closes,
+                "Volume": hist.get("volume") or [0.0] * len(closes),
+            },
+            index=index,
+        ).sort_index()
+        window = frame.loc[(frame.index >= start_date) & (frame.index <= end_date)]
+        if window.empty:
+            raise ValueError(f"No data available for {symbol} in {start_date}..{end_date}")
+        logger.info(f"[backtest] provider chain supplied {len(window)} bars for {symbol}")
+        return window
 
     def _get_strategy_params(self, strategy_name: str, strategy_params: dict | None = None) -> dict:
         """Validate and select only parameters supported by a strategy.

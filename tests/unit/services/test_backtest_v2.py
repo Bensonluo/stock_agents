@@ -137,3 +137,55 @@ class TestCalibrateService:
         assert report["strategy"] == "sma_crossover"
         assert "20" in report["by_horizon"]
         assert report["manifest"]["data_sha256"]
+
+
+class TestProviderChainFallback:
+    @pytest.mark.asyncio
+    async def test_yfinance_failure_falls_back_to_shared_chain(self, monkeypatch) -> None:
+        import numpy as np
+
+        service = BacktestService()
+
+        class RateLimited(Exception):
+            pass
+
+        def broken_ticker(symbol: str):
+            raise RateLimited("Too Many Requests")
+
+        monkeypatch.setattr("app.services.backtest_service.yf.Ticker", broken_ticker)
+
+        async def fake_chain(symbol: str, period: str = "3y") -> dict:
+            days = 300
+            closes = [100.0 * (1.001**i) for i in range(days)]
+            return {
+                "dates": [d.isoformat() for d in pd.bdate_range("2024-01-01", periods=days)],
+                "open": closes, "high": closes, "low": closes,
+                "close": closes, "volume": [1e6] * days,
+            }
+
+        monkeypatch.setattr("app.tools.data.fetcher.fetch_historical", fake_chain)
+
+        result = await service.run_backtest(
+            symbol="AAPL", strategy="buy_and_hold",
+            start_date="2024-06-01", end_date="2025-06-01",
+        )
+
+        assert result["final_value"] > 0
+        assert result["total_trades"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_chain_exhausted_raises_value_error(self, monkeypatch) -> None:
+        service = BacktestService()
+
+        async def empty_chain(symbol: str, period: str = "3y") -> dict:
+            return {"dates": [], "close": []}
+
+        monkeypatch.setattr("app.tools.data.fetcher.fetch_historical", empty_chain)
+
+        def broken_ticker(symbol: str):
+            raise RuntimeError("rate limited")
+
+        monkeypatch.setattr("app.services.backtest_service.yf.Ticker", broken_ticker)
+
+        with pytest.raises(ValueError, match="No data available"):
+            await service._fetch_data("AAPL", "2024-01-01", "2025-01-01")
