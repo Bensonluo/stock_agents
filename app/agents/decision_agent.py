@@ -1,10 +1,11 @@
 """Decision making agent for investment recommendations."""
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
 from app.agents.base import StatelessAgent
 from app.orchestration.state import AgentState
+from app.services.report_service import derive_recommendation
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -22,7 +23,7 @@ class DecisionMakingAgent(StatelessAgent):
     - Suggests entry/exit points
     """
 
-    async def process(self, state: AgentState) -> Dict[str, Any]:
+    async def process(self, state: AgentState) -> dict[str, Any]:
         """Process investment decision making.
 
         Args:
@@ -89,11 +90,11 @@ class DecisionMakingAgent(StatelessAgent):
     async def _make_decision(
         self,
         symbol: str,
-        technical: Dict,
-        fundamental: Dict,
-        sentiment: Dict,
-        risk: Dict,
-    ) -> Dict[str, Any]:
+        technical: dict,
+        fundamental: dict,
+        sentiment: dict,
+        risk: dict,
+    ) -> dict[str, Any]:
         """Make investment decision for a single symbol.
 
         Args:
@@ -106,37 +107,23 @@ class DecisionMakingAgent(StatelessAgent):
         Returns:
             Decision dictionary
         """
-        # Collect scores
+        # Component scores for display only.
         scores = {
             "technical": self._extract_technical_score(technical),
             "fundamental": self._extract_fundamental_score(fundamental),
             "sentiment": self._extract_sentiment_score(sentiment),
         }
 
-        # Apply weights
-        weights = {
-            "technical": 0.30,
-            "fundamental": 0.40,
-            "sentiment": 0.15,
-            "risk_adjustment": 0.15,
-        }
-
-        # Calculate weighted score
-        base_score = (
-            scores["technical"] * weights["technical"] +
-            scores["fundamental"] * weights["fundamental"] +
-            scores["sentiment"] * weights["sentiment"]
-        )
-
-        # Apply risk adjustment
-        risk_penalty = self._calculate_risk_penalty(risk)
-        final_score = base_score * (1 - risk_penalty)
-
-        # Determine action
-        action = self._score_to_action(final_score)
-
-        # Calculate confidence
-        confidence = self._calculate_confidence(scores, final_score)
+        # Single action formula shared with the ReAct report path
+        # (ReportService.derive_recommendation): fund 45% + tech 30% +
+        # sentiment 15% + risk 10%, action bands and confidence included.
+        # The old private weights (0.30/0.40/0.15 + multiplicative risk
+        # penalty) are retired — two formulas meant two different
+        # recommendations for the same data.
+        recommendation = derive_recommendation(symbol, fundamental, technical, sentiment, risk)
+        action = recommendation["action"]
+        confidence = recommendation["confidence"]
+        final_score = recommendation["composite_score"]
 
         # Get position size
         position_size = self._calculate_position_size(
@@ -150,8 +137,8 @@ class DecisionMakingAgent(StatelessAgent):
             risk,
         )
 
-        # Generate rationale
-        rationale = self._generate_rationale(scores, action, risk)
+        # Canonical composite reasoning from the shared formula.
+        rationale = recommendation["reasoning"]
 
         return {
             "symbol": symbol,
@@ -165,7 +152,7 @@ class DecisionMakingAgent(StatelessAgent):
             "warnings": self._generate_decision_warnings(action, risk, confidence),
         }
 
-    def _extract_technical_score(self, technical: Dict) -> float:
+    def _extract_technical_score(self, technical: dict) -> float:
         """Extract technical analysis score (-100 to 100).
 
         Args:
@@ -180,7 +167,7 @@ class DecisionMakingAgent(StatelessAgent):
         sentiment = technical.get("sentiment", {})
         return sentiment.get("score", 0.0)
 
-    def _extract_fundamental_score(self, fundamental: Dict) -> float:
+    def _extract_fundamental_score(self, fundamental: dict) -> float:
         """Extract fundamental analysis score (0 to 100).
 
         Args:
@@ -198,7 +185,7 @@ class DecisionMakingAgent(StatelessAgent):
         # Convert 0-100 to -50 to 50 scale
         return (score - 50) * 2
 
-    def _extract_sentiment_score(self, sentiment: Dict) -> float:
+    def _extract_sentiment_score(self, sentiment: dict) -> float:
         """Extract sentiment score (-100 to 100).
 
         Args:
@@ -212,89 +199,9 @@ class DecisionMakingAgent(StatelessAgent):
 
         return sentiment.get("score", 0.0)
 
-    def _calculate_risk_penalty(self, risk: Dict) -> float:
-        """Calculate risk penalty (0 to 1, where 1 = no adjustment).
-
-        Args:
-            risk: Risk assessment results
-
-        Returns:
-            Risk penalty multiplier (lower = more penalty)
-        """
-        if not risk:
-            return 0.0
-
-        risk_level = risk.get("risk_level", "medium")
-
-        penalties = {
-            "very_low": 0.0,
-            "low": 0.0,
-            "medium": 0.0,
-            "high": 0.1,
-            "very_high": 0.25,
-        }
-
-        return penalties.get(risk_level, 0.15)
-
-    def _score_to_action(self, score: float) -> str:
-        """Convert score to action.
-
-        Args:
-            score: Final decision score
-
-        Returns:
-            Action string
-        """
-        if score >= 50:
-            return "strong_buy"
-        elif score >= 25:
-            return "buy"
-        elif score >= 10:
-            return "moderate_buy"
-        elif score <= -50:
-            return "strong_sell"
-        elif score <= -25:
-            return "sell"
-        elif score <= -10:
-            return "moderate_sell"
-        else:
-            return "hold"
-
-    def _calculate_confidence(self, scores: Dict, final_score: float) -> float:
-        """Calculate confidence in decision.
-
-        Args:
-            scores: Component scores
-            final_score: Final decision score
-
-        Returns:
-            Confidence score (0-100)
-        """
-        # Confidence based on agreement of signals
-        tech_sign = 1 if scores["technical"] > 0 else -1 if scores["technical"] < 0 else 0
-        fund_sign = 1 if scores["fundamental"] > 0 else -1 if scores["fundamental"] < 0 else 0
-        sent_sign = 1 if scores["sentiment"] > 0 else -1 if scores["sentiment"] < 0 else 0
-
-        # Count agreement
-        agreement = 0
-        if tech_sign == fund_sign:
-            agreement += 1
-        if fund_sign == sent_sign:
-            agreement += 1
-        if tech_sign == sent_sign:
-            agreement += 1
-
-        # Base confidence on agreement and magnitude
-        base_confidence = (agreement / 3) * 70
-
-        # Add magnitude bonus
-        magnitude_bonus = min(30, abs(final_score) / 100 * 30)
-
-        return min(100, base_confidence + magnitude_bonus)
-
     def _calculate_position_size(
-        self, score: float, risk_rec: Dict
-    ) -> Dict[str, float]:
+        self, score: float, risk_rec: dict
+    ) -> dict[str, float]:
         """Calculate recommended position size.
 
         Args:
@@ -325,8 +232,8 @@ class DecisionMakingAgent(StatelessAgent):
         }
 
     def _calculate_price_targets(
-        self, technical: Dict, risk: Dict
-    ) -> Dict[str, Any]:
+        self, technical: dict, risk: dict
+    ) -> dict[str, Any]:
         """Calculate entry, stop loss, and take profit targets.
 
         Args:
@@ -372,66 +279,9 @@ class DecisionMakingAgent(StatelessAgent):
 
         return targets
 
-    def _generate_rationale(self, scores: Dict, action: str, risk: Dict) -> str:
-        """Generate decision rationale.
-
-        Args:
-            scores: Component scores
-            action: Recommended action
-            risk: Risk assessment
-
-        Returns:
-            Rationale string
-        """
-        parts = []
-
-        # Technical
-        tech = scores["technical"]
-        if tech > 30:
-            parts.append("Technical indicators show strong bullish momentum")
-        elif tech > 10:
-            parts.append("Technical analysis is moderately positive")
-        elif tech < -30:
-            parts.append("Technical indicators show bearish momentum")
-        elif tech < -10:
-            parts.append("Technical analysis is moderately negative")
-        else:
-            parts.append("Technical indicators are neutral")
-
-        # Fundamental
-        fund = scores["fundamental"]
-        if fund > 30:
-            parts.append("Fundamentals are strong with good valuation")
-        elif fund > 10:
-            parts.append("Fundamentals are reasonably attractive")
-        elif fund < -30:
-            parts.append("Fundamentals appear weak or overvalued")
-        elif fund < -10:
-            parts.append("Fundamentals show some concerns")
-        else:
-            parts.append("Fundamentals are fair")
-
-        # Sentiment
-        sent = scores["sentiment"]
-        if sent > 20:
-            parts.append("Market sentiment is positive")
-        elif sent < -20:
-            parts.append("Market sentiment is negative")
-        else:
-            parts.append("Market sentiment is neutral")
-
-        # Risk
-        risk_level = risk.get("risk_level", "medium")
-        if risk_level == "high":
-            parts.append("Elevated risk suggests smaller position size")
-        elif risk_level == "very_high":
-            parts.append("High risk - consider reducing exposure")
-
-        return ". ".join(parts) + "."
-
     def _generate_decision_warnings(
-        self, action: str, risk: Dict, confidence: float
-    ) -> List[str]:
+        self, action: str, risk: dict, confidence: float
+    ) -> list[str]:
         """Generate decision-specific warnings.
 
         Args:
@@ -460,7 +310,7 @@ class DecisionMakingAgent(StatelessAgent):
 
         return warnings
 
-    def _create_portfolio_summary(self, decisions: Dict) -> Dict[str, Any]:
+    def _create_portfolio_summary(self, decisions: dict) -> dict[str, Any]:
         """Create portfolio-level summary.
 
         Args:
@@ -482,7 +332,7 @@ class DecisionMakingAgent(StatelessAgent):
             "avg_confidence": sum(d["confidence"] for d in decisions.values()) / len(decisions),
         }
 
-    async def _llm_decision_synthesis(self, decisions: Dict) -> Dict[str, str]:
+    async def _llm_decision_synthesis(self, decisions: dict) -> dict[str, str]:
         """Use LLM to synthesize decisions.
 
         Args:

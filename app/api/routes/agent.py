@@ -4,7 +4,7 @@ import ast
 import asyncio
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -249,7 +249,7 @@ def _save_to_db(thread_id: str, query: str, symbols: list[str], result: dict, st
     """Persist analysis result to database for history."""
     try:
         db = get_database()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         result_data = {
             "answer": result.get("answer", ""),
@@ -289,7 +289,7 @@ async def _run_analysis(thread_id: str, query: str, symbols: list[str], max_iter
         "tools_used": [],
         "tool_call_history": [],
         "current_step": "starting",
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": datetime.now(UTC).isoformat(),
         "completed_at": None,
     }
 
@@ -319,7 +319,7 @@ async def _run_analysis(thread_id: str, query: str, symbols: list[str], max_iter
         _results[thread_id] = result
         _progress_states[thread_id]["status"] = "completed"
         _progress_states[thread_id]["current_step"] = "completed"
-        _progress_states[thread_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        _progress_states[thread_id]["completed_at"] = datetime.now(UTC).isoformat()
         _save_to_db(thread_id, query, symbols, result, "completed")
         logger.info(f"ReAct analysis complete for {thread_id}: {result['iterations']} iterations")
     except Exception as e:
@@ -334,5 +334,5 @@ async def _run_analysis(thread_id: str, query: str, symbols: list[str], max_iter
         _results[thread_id] = result
         _progress_states[thread_id]["status"] = "failed"
         _progress_states[thread_id]["current_step"] = "failed"
-        _progress_states[thread_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        _progress_states[thread_id]["completed_at"] = datetime.now(UTC).isoformat()
         _save_to_db(thread_id, query, symbols, result, "failed")
