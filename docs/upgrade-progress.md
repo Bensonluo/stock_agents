@@ -39,8 +39,8 @@
 | Evidence Auditor | ✅ 2026-08-27 | `app/research/auditor.py`:行情 as_of 超 7 天=blocked;基本面红旗与多头动能/情绪共存的 critical 冲突=blocked;缺失数据=warnings。审计员不参与方向投票 |
 | Risk Committee | ✅ 2026-08-27 | `app/research/committee.py`:approve/limit/veto/watch;critical 红旗或审计 blocked → veto;very_high → veto;high 或 beta 隐含 -30% 冲击 → 限仓 5%+强制止损;数据不足 → watch;"低风险不构成买入理由"显式写入审批条件 |
 | 综合接入 | ✅ 2026-08-27 | `ResearchSynthesisAgent` 为流水线新节点(risk → synthesis → decision,state 键 `research_synthesis`);ReAct 在报告组装前对工具结果综合;ReportService 存在 synthesis 时输出该段 |
-| 证据约束 prompt 与结构化输出 | ⬜ | LLM 角色(Technical/Fundamental/Valuation/Event Analyst、PM)待接;当前综合为确定性规则 |
-| 前端五周线/估值情景/财务趋势/催化剂/证据抽屉/多标的 | ⬜ | ReportV2 字段已在(weekly_trend、valuation_scenarios、quality、research_synthesis),前端消费待做 |
+| 证据约束 prompt 与结构化输出 | 🚧 2026-08-27 | `app/research/narrator.py`:LLM 仅叙述确定性综合——prompt 禁止引入新数字、PM 点评必须服从委员会裁决;未知标的输出丢弃;20s 超时/异常/不可解析一律静默降级为确定性结果。专业 Analyst/PM 完整 LLM 角色仍待接 |
+| 前端消费 V2 字段 | 🚧 2026-08-27 | result 页已渲染:周线排列+持续周数+金叉/死叉、Bear/Base/Bull 估值区间(标注为区间非目标价)+质量红旗(按严重度着色)、研究综合卡(审计判定/多空叙述/最强反方/失效条件/委员会裁决+条件+仓位上限)。多标的独立页签、催化剂时间线、证据抽屉待做 |
 
 ## Phase 3-4 — 未开始
 
