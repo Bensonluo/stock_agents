@@ -238,6 +238,7 @@ class ReportService:
                 "committee_verdict": committee.get("verdict"),
                 "committee_conditions": committee.get("conditions", []),
                 "position_cap_pct": committee.get("position_cap_pct"),
+                "narrative": entry.get("narrative"),
             }
         return {
             "audit_verdict": (synthesis.get("audit") or {}).get("verdict"),

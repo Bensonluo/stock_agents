@@ -11,7 +11,7 @@ from typing import Any
 
 from app.agents.base import StatelessAgent
 from app.orchestration.state import AgentState
-from app.research import synthesize
+from app.research import narrate_synthesis, synthesize
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -32,6 +32,8 @@ class ResearchSynthesisAgent(StatelessAgent):
         }
 
         synthesis = synthesize(data)
+        if self.llm is not None:
+            synthesis = await narrate_synthesis(synthesis, llm=self.llm)
         blocked = synthesis["audit"]["verdict"] == "blocked"
         logger.info(
             "Research synthesis complete: audit=%s, symbols=%d%s",

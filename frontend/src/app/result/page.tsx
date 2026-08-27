@@ -698,6 +698,7 @@ function ReactReport({ answer }: { answer: string }) {
   const sentiment = sections.sentiment_analysis || {}
   const risk = sections.risk_analysis || {}
   const recommendations = sections.recommendations || {}
+  const synthesis = sections.research_synthesis || null
 
   const actionZh = (a: string): string => {
     const m: Record<string, string> = {
@@ -869,14 +870,40 @@ function ReactReport({ answer }: { answer: string }) {
                 <span className="text-slate-500">整体展望</span>
                 <span className={cn('font-semibold', trendColor(technical.overall_outlook))}>{trendZh(technical.overall_outlook)}</span>
               </div>
-              {Object.entries(technical.by_symbol).map(([sym, t]: [string, any]) => (
-                <div key={sym} className="p-3 bg-slate-50 rounded-lg space-y-1 text-sm">
-                  <p className="font-medium mb-1">{sym}</p>
-                  <div className="flex justify-between"><span className="text-slate-500">趋势</span><span className={trendColor(t.trend)}>{trendZh(t.trend)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">RSI</span><span className={trendColor(t.rsi)}>{trendZh(t.rsi)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">情绪分</span><span className={cn('font-medium', (t.sentiment_score || 0) >= 0 ? 'text-green-600' : 'text-red-600')}>{formatNumber(t.sentiment_score, 0)}</span></div>
-                </div>
-              ))}
+              {Object.entries(technical.by_symbol).map(([sym, t]: [string, any]) => {
+                const weekly = t.weekly_trend || {}
+                const alignment = weekly.alignment?.state
+                const crosses = Object.entries(weekly.recent_crosses || {})
+                return (
+                  <div key={sym} className="p-3 bg-slate-50 rounded-lg space-y-1 text-sm">
+                    <p className="font-medium mb-1">{sym}</p>
+                    <div className="flex justify-between"><span className="text-slate-500">趋势</span><span className={trendColor(t.trend)}>{trendZh(t.trend)}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">RSI</span><span className={trendColor(t.rsi)}>{trendZh(t.rsi)}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">情绪分</span><span className={cn('font-medium', (t.sentiment_score || 0) >= 0 ? 'text-green-600' : 'text-red-600')}>{formatNumber(t.sentiment_score, 0)}</span></div>
+                    {alignment && !['insufficient_data', 'unknown'].includes(alignment) && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">周线排列</span>
+                        <span className={trendColor(alignment)}>
+                          {alignment === 'bullish' ? '多头' : alignment === 'bearish' ? '空头' : '缠绕'}
+                          {weekly.alignment.weeks_in_state ? ` · ${weekly.alignment.weeks_in_state} 周` : ''}
+                        </span>
+                      </div>
+                    )}
+                    {weekly.status === 'insufficient_data' && (
+                      <div className="flex justify-between"><span className="text-slate-500">周线排列</span><span className="text-slate-400">数据不足</span></div>
+                    )}
+                    {crosses.map(([pair, cross]: [string, any]) => cross?.direction && (
+                      <div key={pair} className="flex justify-between">
+                        <span className="text-slate-500">交叉 {pair.replace('_', '/')}</span>
+                        <span className={cross.direction === 'golden' ? 'text-green-600' : 'text-red-600'}>
+                          {cross.direction === 'golden' ? '金叉' : '死叉'}
+                          {cross.weeks_since != null ? ` · ${cross.weeks_since} 周前` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
             </div>
           </SectionCard>
         )}
@@ -890,6 +917,8 @@ function ReactReport({ answer }: { answer: string }) {
               </div>
               {Object.entries(fundamental.by_symbol).map(([sym, f]: [string, any]) => {
                 const score = scoreOf(f.overall_score)
+                const scenarios = f.valuation_scenarios?.scenarios || {}
+                const flags: any[] = f.quality?.red_flags || []
                 return (
                   <div key={sym} className="p-3 bg-slate-50 rounded-lg space-y-2 text-sm">
                     <p className="font-medium">{sym}</p>
@@ -900,6 +929,41 @@ function ReactReport({ answer }: { answer: string }) {
                       </div>
                     )}
                     <div className="flex justify-between"><span className="text-slate-500">建议</span><span className="font-medium">{actionZh(f.recommendation)}</span></div>
+                    {f.valuation_scenarios?.status === 'available' && (
+                      <div>
+                        <p className="text-xs text-slate-500 mb-1">估值情景（假设区间，非目标价）</p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(['bear', 'base', 'bull'] as const).map(sc => {
+                            const block = scenarios[sc] || {}
+                            const first = Object.values(block)[0] as any
+                            return (
+                              <div key={sc} className="p-2 bg-white rounded border border-slate-200 text-center">
+                                <p className="text-xs text-slate-400">
+                                  {sc === 'bear' ? '悲观' : sc === 'base' ? '基准' : '乐观'}
+                                </p>
+                                <p className={cn('text-sm font-semibold', sc === 'bear' ? 'text-red-600' : sc === 'bull' ? 'text-green-600' : 'text-slate-700')}>
+                                  {first?.value != null ? formatCurrency(first.value) : '-'}
+                                </p>
+                                {first?.upside_pct != null && (
+                                  <p className={cn('text-xs', first.upside_pct >= 0 ? 'text-green-600' : 'text-red-600')}>
+                                    {first.upside_pct >= 0 ? '+' : ''}{formatNumber(first.upside_pct, 1)}%
+                                  </p>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {flags.length > 0 && (
+                      <div className="space-y-1">
+                        {flags.map((flag, i) => (
+                          <p key={i} className={cn('text-xs leading-relaxed', flag.severity === 'critical' ? 'text-red-600 font-medium' : 'text-amber-600')}>
+                            ⚠ {flag.detail || flag.code}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -959,6 +1023,94 @@ function ReactReport({ answer }: { answer: string }) {
           </SectionCard>
         )}
       </div>
+
+      {/* 研究综合：多空质询 · 证据审计 · 风险委员会 */}
+      {synthesis?.by_symbol && Object.keys(synthesis.by_symbol).length > 0 && (
+        <SectionCard icon={Brain} title="研究综合（多空质询 · 证据审计 · 风险委员会）">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-slate-500">证据审计判定</span>
+              {(() => {
+                const v = synthesis.audit_verdict || 'pass'
+                const style = v === 'blocked'
+                  ? { bg: 'bg-red-100', color: 'text-red-700', label: '已阻断' }
+                  : v === 'warnings'
+                    ? { bg: 'bg-amber-100', color: 'text-amber-700', label: '有警告' }
+                    : { bg: 'bg-green-100', color: 'text-green-700', label: '通过' }
+                return <span className={cn('px-2 py-0.5 rounded text-xs font-semibold', style.bg, style.color)}>{style.label}</span>
+              })()}
+            </div>
+            {synthesis.audit_stale?.length > 0 && (
+              <p className="text-xs text-red-600">⚠ 数据陈旧：{synthesis.audit_stale.map((s: any) => s.symbol).join('、')}</p>
+            )}
+            {synthesis.audit_conflicts?.length > 0 && (
+              <p className="text-xs text-amber-600">⚠ 证据冲突：{synthesis.audit_conflicts.map((c: any) => c.detail).join('；')}</p>
+            )}
+            {Object.entries(synthesis.by_symbol).map(([sym, entry]: [string, any]) => {
+              const verdict = entry.committee_verdict || 'watch'
+              const vStyle = verdict === 'approve'
+                ? { bg: 'bg-green-100', color: 'text-green-700', label: '委员会批准' }
+                : verdict === 'limit'
+                  ? { bg: 'bg-amber-100', color: 'text-amber-700', label: '委员会限制' }
+                  : verdict === 'veto'
+                    ? { bg: 'bg-red-100', color: 'text-red-700', label: '委员会否决' }
+                    : { bg: 'bg-slate-100', color: 'text-slate-600', label: '仅观察' }
+              return (
+                <div key={sym} className="p-3 bg-slate-50 rounded-lg space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <p className="font-medium">{sym}</p>
+                    <span className={cn('px-2 py-0.5 rounded text-xs font-semibold', vStyle.bg, vStyle.color)}>{vStyle.label}</span>
+                  </div>
+                  {entry.thesis && (
+                    <div>
+                      <p className="text-xs text-green-700 font-medium">多头论点</p>
+                      <p className="text-xs text-slate-600 leading-relaxed">{entry.thesis}</p>
+                    </div>
+                  )}
+                  {entry.narrative?.bull_narrative && (
+                    <div>
+                      <p className="text-xs text-green-700 font-medium">多方叙述</p>
+                      <p className="text-xs text-slate-600 leading-relaxed">{entry.narrative.bull_narrative}</p>
+                    </div>
+                  )}
+                  {entry.narrative?.bear_narrative && (
+                    <div>
+                      <p className="text-xs text-red-700 font-medium">空方叙述</p>
+                      <p className="text-xs text-slate-600 leading-relaxed">{entry.narrative.bear_narrative}</p>
+                    </div>
+                  )}
+                  {entry.narrative?.pm_comment && (
+                    <div>
+                      <p className="text-xs text-slate-500 font-medium">组合经理点评</p>
+                      <p className="text-xs text-slate-600 leading-relaxed">{entry.narrative.pm_comment}</p>
+                    </div>
+                  )}
+                  {entry.strongest_counter && (
+                    <div>
+                      <p className="text-xs text-red-700 font-medium">最强反方</p>
+                      <p className="text-xs text-slate-600 leading-relaxed">{entry.strongest_counter}</p>
+                    </div>
+                  )}
+                  {entry.invalidation && (
+                    <div>
+                      <p className="text-xs text-slate-500 font-medium">失效条件</p>
+                      <p className="text-xs text-slate-600 leading-relaxed">{entry.invalidation}</p>
+                    </div>
+                  )}
+                  {entry.position_cap_pct != null && (
+                    <p className="text-xs text-slate-500">仓位上限：{formatNumber(entry.position_cap_pct, 0)}%</p>
+                  )}
+                  {entry.committee_conditions?.length > 0 && (
+                    <ul className="text-xs text-slate-500 list-disc pl-4 space-y-0.5">
+                      {entry.committee_conditions.map((cond: string, i: number) => <li key={i}>{cond}</li>)}
+                    </ul>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </SectionCard>
+      )}
     </div>
   )
 }

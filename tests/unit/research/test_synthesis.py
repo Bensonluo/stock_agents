@@ -218,3 +218,90 @@ class TestReportSynthesisSection:
         sections = ReportService.build_sections({"symbols": ["AAPL"]})
 
         assert "research_synthesis" not in sections
+
+
+class TestNarrator:
+    def _synthesis(self) -> dict:
+        return synthesize(
+            {
+                "symbols": ["AAPL"],
+                "market_data": {"AAPL": {"as_of": date.today().isoformat()}},
+                "technical_analysis": {"AAPL": _technical()},
+                "fundamental_analysis": {"AAPL": _fundamental()},
+                "risk_assessment": {"AAPL": {"risk_level": "medium", "metrics": {}}},
+            }
+        )
+
+    async def _narrate(self, llm) -> dict:
+        from app.research import narrate_synthesis
+
+        return await narrate_synthesis(self._synthesis(), llm=llm)
+
+    def test_missing_llm_degrades_to_deterministic(self) -> None:
+        import asyncio
+
+        result = asyncio.run(self._narrate(llm=None))
+
+        assert all("narrative" not in entry for entry in result["per_symbol"].values())
+
+    def test_valid_llm_output_attaches_narrative(self) -> None:
+        import asyncio
+        import json
+
+        class FakeLLM:
+            async def ainvoke(self, messages):
+                from langchain_core.messages import AIMessage
+
+                return AIMessage(
+                    content=json.dumps(
+                        {"symbols": {"AAPL": {"bull_narrative": "Up.", "bear_narrative": "Risk.", "pm_comment": "Ok."}}}
+                    )
+                )
+
+        result = asyncio.run(self._narrate(FakeLLM()))
+
+        narrative = result["per_symbol"]["AAPL"]["narrative"]
+        assert narrative == {"bull_narrative": "Up.", "bear_narrative": "Risk.", "pm_comment": "Ok."}
+
+    def test_unparsable_llm_output_degrades(self) -> None:
+        import asyncio
+
+        class GarbageLLM:
+            async def ainvoke(self, messages):
+                from langchain_core.messages import AIMessage
+
+                return AIMessage(content="这是一段完全没有 JSON 的散文。")
+
+        result = asyncio.run(self._narrate(GarbageLLM()))
+
+        assert all("narrative" not in entry for entry in result["per_symbol"].values())
+
+    def test_llm_exception_degrades(self) -> None:
+        import asyncio
+
+        class ExplodingLLM:
+            async def ainvoke(self, messages):
+                raise RuntimeError("LLM down")
+
+        result = asyncio.run(self._narrate(ExplodingLLM()))
+
+        assert all("narrative" not in entry for entry in result["per_symbol"].values())
+
+    def test_unknown_symbols_in_llm_output_are_dropped(self) -> None:
+        import asyncio
+        import json
+
+        class InjectingLLM:
+            async def ainvoke(self, messages):
+                from langchain_core.messages import AIMessage
+
+                return AIMessage(
+                    content=json.dumps(
+                        {"symbols": {"HACK": {"bull_narrative": "injected"}, "AAPL": {"pm_comment": "fine."}}}
+                    )
+                )
+
+        result = asyncio.run(self._narrate(InjectingLLM()))
+
+        assert "HACK" not in result["per_symbol"]
+        assert result["per_symbol"]["AAPL"]["narrative"] == {"pm_comment": "fine."}
