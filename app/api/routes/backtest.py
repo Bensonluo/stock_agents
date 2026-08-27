@@ -1,10 +1,10 @@
 """Backtesting endpoints."""
 
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from datetime import datetime
+from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field, validator
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.services.backtest_service import BacktestService
 from app.utils.logging import get_logger
@@ -19,43 +19,9 @@ router = APIRouter()
 class BacktestRequest(BaseModel):
     """Request model for backtesting."""
 
-    symbol: str = Field(..., description="Stock symbol to backtest")
-    strategy: str = Field(
-        ...,
-        description="Strategy name",
-        pattern="^(sma_crossover|rsi_strategy|buy_and_hold|macd_strategy)$",
-    )
-    start_date: str = Field(..., description="Start date (YYYY-MM-DD)", pattern=r"^\d{4}-\d{2}-\d{2}$")
-    end_date: str = Field(..., description="End date (YYYY-MM-DD)", pattern=r"^\d{4}-\d{2}-\d{2}$")
-    initial_cash: float = Field(default=10000.0, ge=1000, description="Initial cash amount")
-    commission: float = Field(default=0.001, ge=0, le=0.1, description="Commission rate")
-
-    # Strategy parameters
-    sma_short: Optional[int] = Field(default=20, ge=5, le=100)
-    sma_long: Optional[int] = Field(default=50, ge=10, le=200)
-    rsi_period: Optional[int] = Field(default=14, ge=5, le=50)
-    rsi_overbought: Optional[float] = Field(default=70, ge=50, le=100)
-    rsi_oversold: Optional[float] = Field(default=30, ge=0, le=50)
-
-    @validator("symbol")
-    def validate_symbol(cls, v):
-        """Validate stock symbol."""
-        if not validate_stock_symbol(v):
-            raise ValueError(f"Invalid stock symbol: {v}")
-        return v.upper()
-
-    @validator("end_date")
-    def end_date_after_start(cls, v, values):
-        """Validate end date is after start date."""
-        if "start_date" in values:
-            start = datetime.strptime(values["start_date"], "%Y-%m-%d")
-            end = datetime.strptime(v, "%Y-%m-%d")
-            if end <= start:
-                raise ValueError("End date must be after start date")
-        return v
-
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
             "example": {
                 "symbol": "AAPL",
                 "strategy": "sma_crossover",
@@ -66,7 +32,74 @@ class BacktestRequest(BaseModel):
                 "sma_short": 20,
                 "sma_long": 50,
             }
+        },
+    )
+
+    symbol: str = Field(..., description="Stock symbol to backtest")
+    strategy: Literal["sma_crossover", "rsi_strategy", "macd_strategy", "buy_and_hold"] = Field(
+        ..., description="Strategy name"
+    )
+    start_date: str = Field(
+        ..., description="Start date (YYYY-MM-DD)", pattern=r"^\d{4}-\d{2}-\d{2}$"
+    )
+    end_date: str = Field(..., description="End date (YYYY-MM-DD)", pattern=r"^\d{4}-\d{2}-\d{2}$")
+    initial_cash: float = Field(default=10000.0, ge=1000, description="Initial cash amount")
+    commission: float = Field(default=0.001, ge=0, le=0.1, description="Commission rate")
+
+    # Strategy parameters
+    sma_short: int = Field(default=20, ge=5, le=100)
+    sma_long: int = Field(default=50, ge=10, le=200)
+    rsi_period: int = Field(default=14, ge=5, le=50)
+    rsi_overbought: float = Field(default=70, ge=50, le=100)
+    rsi_oversold: float = Field(default=30, ge=0, le=50)
+    fast_period: int = Field(default=12, ge=2, le=100)
+    slow_period: int = Field(default=26, ge=3, le=200)
+    signal_period: int = Field(default=9, ge=2, le=100)
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, value: str) -> str:
+        """Validate stock symbol."""
+        if not validate_stock_symbol(value):
+            raise ValueError(f"Invalid stock symbol: {value}")
+        return value.upper()
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def validate_calendar_date(cls, value: str) -> str:
+        """Reject strings that match the pattern but are not calendar dates."""
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError("Date must be a valid calendar date in YYYY-MM-DD format") from exc
+        return value
+
+    @model_validator(mode="after")
+    def validate_strategy_constraints(self) -> "BacktestRequest":
+        """Validate relationships that depend on the selected strategy."""
+        start = datetime.strptime(self.start_date, "%Y-%m-%d")
+        end = datetime.strptime(self.end_date, "%Y-%m-%d")
+        if end <= start:
+            raise ValueError("End date must be after start date")
+
+        if self.strategy == "sma_crossover" and self.sma_short >= self.sma_long:
+            raise ValueError("sma_short must be less than sma_long")
+        if self.strategy == "rsi_strategy" and self.rsi_oversold >= self.rsi_overbought:
+            raise ValueError("rsi_oversold must be less than rsi_overbought")
+        if self.strategy == "macd_strategy" and self.fast_period >= self.slow_period:
+            raise ValueError("fast_period must be less than slow_period")
+        return self
+
+    @property
+    def strategy_params(self) -> dict[str, int | float]:
+        """Return only the parameters accepted by the selected strategy."""
+        parameter_names = {
+            "sma_crossover": ("sma_short", "sma_long"),
+            "rsi_strategy": ("rsi_period", "rsi_overbought", "rsi_oversold"),
+            "macd_strategy": ("fast_period", "slow_period", "signal_period"),
+            "buy_and_hold": (),
         }
+        return {name: getattr(self, name) for name in parameter_names[self.strategy]}
 
 
 class BacktestResponse(BaseModel):
@@ -74,7 +107,7 @@ class BacktestResponse(BaseModel):
 
     symbol: str
     strategy: str
-    period: Dict[str, str]
+    period: dict[str, str]
     initial_cash: float
     final_value: float
     total_return: float
@@ -117,13 +150,7 @@ async def run_backtest(request: BacktestRequest) -> BacktestResponse:
             end_date=request.end_date,
             initial_cash=request.initial_cash,
             commission=request.commission,
-            strategy_params={
-                "sma_short": request.sma_short,
-                "sma_long": request.sma_long,
-                "rsi_period": request.rsi_period,
-                "rsi_overbought": request.rsi_overbought,
-                "rsi_oversold": request.rsi_oversold,
-            },
+            strategy_params=request.strategy_params,
         )
 
         execution_time = time() - start_time

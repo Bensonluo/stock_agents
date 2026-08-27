@@ -1,10 +1,8 @@
 """Backtesting service for trading strategies."""
 
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import backtrader as bt
-import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -23,6 +21,13 @@ class BacktestService:
     - Strategy comparison
     """
 
+    STRATEGY_PARAMETERS = {
+        "sma_crossover": frozenset({"sma_short", "sma_long"}),
+        "rsi_strategy": frozenset({"rsi_period", "rsi_overbought", "rsi_oversold"}),
+        "macd_strategy": frozenset({"fast_period", "slow_period", "signal_period"}),
+        "buy_and_hold": frozenset(),
+    }
+
     async def run_backtest(
         self,
         symbol: str,
@@ -31,8 +36,8 @@ class BacktestService:
         end_date: str,
         initial_cash: float = 10000.0,
         commission: float = 0.001,
-        strategy_params: Optional[Dict] = None,
-    ) -> Dict[str, Any]:
+        strategy_params: dict | None = None,
+    ) -> dict[str, Any]:
         """Run a backtest for the given strategy.
 
         Args:
@@ -47,9 +52,7 @@ class BacktestService:
         Returns:
             Backtest results dictionary
         """
-        logger.info(
-            f"Running backtest: {symbol} {strategy} from {start_date} to {end_date}"
-        )
+        logger.info(f"Running backtest: {symbol} {strategy} from {start_date} to {end_date}")
 
         try:
             # Fetch historical data
@@ -70,10 +73,8 @@ class BacktestService:
 
             # Add strategy
             strategy_class = self._get_strategy(strategy)
-            cerebro.addstrategy(
-                strategy_class,
-                **(strategy_params or {})
-            )
+            selected_params = self._get_strategy_params(strategy, strategy_params)
+            cerebro.addstrategy(strategy_class, **selected_params)
 
             # Add analyzers
             cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name="sharpe")
@@ -136,9 +137,7 @@ class BacktestService:
             logger.error(f"Backtest failed: {e}")
             raise
 
-    async def _fetch_data(
-        self, symbol: str, start_date: str, end_date: str
-    ) -> pd.DataFrame:
+    async def _fetch_data(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         """Fetch historical data for backtesting.
 
         Args:
@@ -189,8 +188,31 @@ class BacktestService:
 
         return strategies[strategy_name]
 
+    def _get_strategy_params(self, strategy_name: str, strategy_params: dict | None = None) -> dict:
+        """Validate and select only parameters supported by a strategy.
+
+        Known parameters for other strategies are ignored so callers may safely
+        pass a shared parameter collection. Unknown names are rejected to surface
+        misspellings instead of silently running with an unintended default.
+        """
+        self._get_strategy(strategy_name)
+        provided_params = strategy_params or {}
+        known_params = set().union(*self.STRATEGY_PARAMETERS.values())
+        unknown_params = set(provided_params) - known_params
+        if unknown_params:
+            unknown = sorted(unknown_params)[0]
+            raise ValueError(f"Unknown strategy parameter: {unknown}")
+
+        accepted_params = self.STRATEGY_PARAMETERS[strategy_name]
+        return {
+            name: value
+            for name, value in provided_params.items()
+            if name in accepted_params and value is not None
+        }
+
 
 # Backtrader Strategies
+
 
 class SMACrossoverStrategy(bt.Strategy):
     """Simple Moving Average Crossover Strategy."""
@@ -213,19 +235,23 @@ class SMACrossoverStrategy(bt.Strategy):
         if not self.position:
             if self.crossover > 0:  # Short crosses above Long
                 self.buy()
-                self.trades.append({
-                    "type": "buy",
-                    "date": self.data.datetime.date(0).isoformat(),
-                    "price": self.data.close[0],
-                })
+                self.trades.append(
+                    {
+                        "type": "buy",
+                        "date": self.data.datetime.date(0).isoformat(),
+                        "price": self.data.close[0],
+                    }
+                )
         else:
             if self.crossover < 0:  # Short crosses below Long
                 self.sell()
-                self.trades.append({
-                    "type": "sell",
-                    "date": self.data.datetime.date(0).isoformat(),
-                    "price": self.data.close[0],
-                })
+                self.trades.append(
+                    {
+                        "type": "sell",
+                        "date": self.data.datetime.date(0).isoformat(),
+                        "price": self.data.close[0],
+                    }
+                )
 
 
 class RSIStrategy(bt.Strategy):
@@ -247,21 +273,25 @@ class RSIStrategy(bt.Strategy):
         if not self.position:
             if self.rsi < self.params.rsi_oversold:
                 self.buy()
-                self.trades.append({
-                    "type": "buy",
-                    "date": self.data.datetime.date(0).isoformat(),
-                    "price": self.data.close[0],
-                    "rsi": self.rsi[0],
-                })
+                self.trades.append(
+                    {
+                        "type": "buy",
+                        "date": self.data.datetime.date(0).isoformat(),
+                        "price": self.data.close[0],
+                        "rsi": self.rsi[0],
+                    }
+                )
         else:
             if self.rsi > self.params.rsi_overbought:
                 self.sell()
-                self.trades.append({
-                    "type": "sell",
-                    "date": self.data.datetime.date(0).isoformat(),
-                    "price": self.data.close[0],
-                    "rsi": self.rsi[0],
-                })
+                self.trades.append(
+                    {
+                        "type": "sell",
+                        "date": self.data.datetime.date(0).isoformat(),
+                        "price": self.data.close[0],
+                        "rsi": self.rsi[0],
+                    }
+                )
 
 
 class MACDStrategy(bt.Strategy):
@@ -288,19 +318,23 @@ class MACDStrategy(bt.Strategy):
         if not self.position:
             if self.macd.macd[0] > self.macd.signal[0]:
                 self.buy()
-                self.trades.append({
-                    "type": "buy",
-                    "date": self.data.datetime.date(0).isoformat(),
-                    "price": self.data.close[0],
-                })
+                self.trades.append(
+                    {
+                        "type": "buy",
+                        "date": self.data.datetime.date(0).isoformat(),
+                        "price": self.data.close[0],
+                    }
+                )
         else:
             if self.macd.macd[0] < self.macd.signal[0]:
                 self.sell()
-                self.trades.append({
-                    "type": "sell",
-                    "date": self.data.datetime.date(0).isoformat(),
-                    "price": self.data.close[0],
-                })
+                self.trades.append(
+                    {
+                        "type": "sell",
+                        "date": self.data.datetime.date(0).isoformat(),
+                        "price": self.data.close[0],
+                    }
+                )
 
 
 class BuyAndHoldStrategy(bt.Strategy):
@@ -314,8 +348,10 @@ class BuyAndHoldStrategy(bt.Strategy):
         """Execute trading logic on each bar."""
         if not self.position:
             self.buy()
-            self.trades.append({
-                "type": "buy",
-                "date": self.data.datetime.date(0).isoformat(),
-                "price": self.data.close[0],
-            })
+            self.trades.append(
+                {
+                    "type": "buy",
+                    "date": self.data.datetime.date(0).isoformat(),
+                    "price": self.data.close[0],
+                }
+            )
