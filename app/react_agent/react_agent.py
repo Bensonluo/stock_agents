@@ -14,6 +14,7 @@ from langgraph.graph import END, StateGraph
 from app.config import settings
 from app.react_agent.prompts import REASONING_SYSTEM_PROMPT, format_reflection_prompt
 from app.react_agent.state import ReActState, create_initial_react_state
+from app.research import synthesize
 from app.tools import get_all_tools, get_tool, register_all_tools
 from app.utils.logging import get_logger
 
@@ -259,6 +260,14 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
                 {},
             ),
         }
+
+    # Research synthesis (Bull/Bear debate + evidence audit + risk committee)
+    # over whatever analysis accumulated; the report renders its gate verdict.
+    if isinstance(data.get("risk_assessment"), dict) and data["risk_assessment"]:
+        try:
+            data["research_synthesis"] = synthesize(data)
+        except Exception as e:
+            logger.warning(f"Research synthesis failed, report continues without it: {e}")
 
     # calculate_position_size: synthesize "action" from position_size since the
     # tool doesn't return one (otherwise the report's recommendations would

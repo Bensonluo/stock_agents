@@ -7,6 +7,7 @@ from app.agents.decision_agent import DecisionMakingAgent
 from app.agents.report_agent import ReportGenerationAgent
 from app.agents.risk_agent import RiskAssessmentAgent
 from app.agents.sentiment_agent import SentimentAnalysisAgent
+from app.agents.synthesis_agent import ResearchSynthesisAgent
 
 __all__ = [
     # Base
@@ -22,6 +23,8 @@ __all__ = [
     "SentimentAnalysisAgent",
     # Risk
     "RiskAssessmentAgent",
+    # Research synthesis (debate/audit/committee)
+    "ResearchSynthesisAgent",
     # Decision
     "DecisionMakingAgent",
     # Report

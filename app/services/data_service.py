@@ -1,7 +1,7 @@
 """Data service for fetching stock market data."""
 
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any
 
 import yfinance as yf
 
@@ -23,7 +23,7 @@ class DataService:
         self.cache = {}
         self.cache_ttl = 300  # 5 minutes
 
-    async def get_quote(self, symbol: str) -> Dict[str, Any]:
+    async def get_quote(self, symbol: str) -> dict[str, Any]:
         """Get real-time quote for a symbol.
 
         Args:
@@ -80,7 +80,7 @@ class DataService:
         symbol: str,
         period: str = "1y",
         interval: str = "1d",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get historical price data.
 
         Args:
@@ -124,7 +124,7 @@ class DataService:
             logger.error(f"Error fetching historical data for {symbol}: {e}")
             raise
 
-    async def get_company_info(self, symbol: str) -> Dict[str, Any]:
+    async def get_company_info(self, symbol: str) -> dict[str, Any]:
         """Get detailed company information.
 
         Args:
@@ -202,7 +202,7 @@ class DataService:
             logger.error(f"Error fetching company info for {symbol}: {e}")
             raise
 
-    async def search_symbols(self, query: str, limit: int = 10) -> List[Dict[str, str]]:
+    async def search_symbols(self, query: str, limit: int = 10) -> list[dict[str, str]]:
         """Search for stock symbols.
 
         Args:
@@ -217,7 +217,7 @@ class DataService:
             import requests
 
             # Use Yahoo Finance search API (unofficial)
-            url = f"https://query2.finance.yahoo.com/v1/finance/search"
+            url = "https://query2.finance.yahoo.com/v1/finance/search"
             params = {
                 "q": query,
                 "quotesCount": limit,
@@ -244,7 +244,7 @@ class DataService:
             logger.error(f"Error searching symbols: {e}")
             return []
 
-    def _get_from_cache(self, key: str) -> Optional[Any]:
+    def _get_from_cache(self, key: str) -> Any | None:
         """Get value from cache if not expired.
 
         Args:
@@ -262,7 +262,7 @@ class DataService:
                 del self.cache[key]
         return None
 
-    def _add_to_cache(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
+    def _add_to_cache(self, key: str, value: Any, ttl: int | None = None) -> None:
         """Add value to cache.
 
         Args:

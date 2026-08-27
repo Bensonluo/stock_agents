@@ -16,6 +16,7 @@ from app.agents import (
     DecisionMakingAgent,
     FundamentalAnalysisAgent,
     ReportGenerationAgent,
+    ResearchSynthesisAgent,
     RiskAssessmentAgent,
     SentimentAnalysisAgent,
     TechnicalAnalysisAgent,
@@ -128,6 +129,10 @@ class MultiAgentOrchestrator:
             name="risk_assessment",
             llm=llm,
         )
+        self.synthesis_agent = ResearchSynthesisAgent(
+            name="research_synthesis",
+            llm=llm,
+        )
         self.decision_agent = DecisionMakingAgent(
             name="decision_making",
             llm=llm,
@@ -159,6 +164,7 @@ class MultiAgentOrchestrator:
         graph.add_node("fundamental_analysis_agent", self._fundamental_analysis_node)
         graph.add_node("sentiment_analysis_agent", self._sentiment_analysis_node)
         graph.add_node("risk_assessment_agent", self._risk_assessment_node)
+        graph.add_node("research_synthesis_agent", self._research_synthesis_node)
         graph.add_node("decision_making_agent", self._decision_making_node)
         graph.add_node("report_generation_agent", self._report_generation_node)
         graph.add_node("error_handler", self._error_handler_node)
@@ -212,8 +218,18 @@ class MultiAgentOrchestrator:
             "risk_assessment_agent",
             self._should_retry_or_continue_risk,
             {
-                "decision": "decision_making_agent",  # Finally decision with all data
+                "synthesis": "research_synthesis_agent",  # Debate/audit/committee before deciding
                 "retry": "risk_assessment_agent",
+                "error": "error_handler",
+            }
+        )
+
+        graph.add_conditional_edges(
+            "research_synthesis_agent",
+            self._should_retry_or_continue_synthesis,
+            {
+                "decision": "decision_making_agent",  # Decision with audited research
+                "retry": "research_synthesis_agent",
                 "error": "error_handler",
             }
         )
@@ -609,6 +625,12 @@ class MultiAgentOrchestrator:
             mode="process", state_key="risk_assessment",
         )
 
+    async def _research_synthesis_node(self, state: AgentState) -> AgentState:
+        return await self._run_agent_node(
+            state, agent_name="research_synthesis", agent=self.synthesis_agent,
+            mode="process", state_key="research_synthesis",
+        )
+
     async def _decision_making_node(self, state: AgentState) -> AgentState:
         return await self._run_agent_node(
             state, agent_name="decision_making", agent=self.decision_agent,
@@ -706,11 +728,17 @@ class MultiAgentOrchestrator:
             state: Current agent state
 
         Returns:
-            Next node name ("decision", "retry", or "error")
+            Next node name ("synthesis", "retry", or "error")
         """
         if not get_agent_errors(state, "risk_assessment"):
-            return "decision"  # All analysis done, go to decision
+            return "synthesis"  # All analysis done, run debate/audit/committee
         return self._retry_or_error("risk_assessment", state)
+
+    def _should_retry_or_continue_synthesis(self, state: AgentState) -> str:
+        """Decision function for the research synthesis node."""
+        if not get_agent_errors(state, "research_synthesis"):
+            return "decision"
+        return self._retry_or_error("research_synthesis", state)
 
     def _should_retry_or_continue_decision(self, state: AgentState) -> str:
         """Decision function for decision making node.

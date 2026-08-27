@@ -34,6 +34,7 @@ class AgentState(TypedDict):
 
     # ========== Risk and Decision ==========
     risk_assessment: dict  # Risk assessment
+    research_synthesis: dict  # Bull/Bear debate + evidence audit + risk committee
     decision: dict  # Decision results
 
     # ========== Report ==========
@@ -92,6 +93,7 @@ def create_initial_state(
         sentiment_analysis={},
         # Risk and decision (empty initially)
         risk_assessment={},
+        research_synthesis={},
         decision={},
         # Report (empty initially)
         report={},
