@@ -91,6 +91,23 @@ class TestEvidenceAuditor:
         assert "technical_analysis" in subjects
         assert "risk_assessment" in subjects
 
+    def test_total_data_failure_without_market_key_is_flagged(self) -> None:
+        """Live-run shape: when EVERY provider fails the ReAct path omits
+        market_data entirely — the audit must still cover the symbol."""
+        data = {
+            "symbols": ["AAPL"],
+            "technical_analysis": {"_error": {"error": "Could not fetch data for AAPL"}},
+            "fundamental_analysis": {"_error": {"error": "Could not fetch data for AAPL"}},
+            "risk_assessment": {"_error": {"error": "Could not fetch data for AAPL"}},
+        }
+
+        audit = audit_packets(data)
+
+        assert audit["verdict"] == "warnings"
+        subjects = {finding["subject"] for finding in audit["insufficient"]}
+        assert "market_data" in subjects
+        assert "technical_analysis" in subjects
+
     def test_stale_market_data_blocks(self) -> None:
         data = {"market_data": {"AAPL": {"as_of": (date.today() - timedelta(days=30)).isoformat()}}}
 

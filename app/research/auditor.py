@@ -60,7 +60,23 @@ def audit_packets(
         risk = risk.get("risk_by_symbol") or {}  # pipeline shape
     sentiment = _sentiment_flat(data)
 
-    for symbol in market:
+    # Audit every symbol the run claims to cover — NOT just the ones that
+    # happen to appear in market_data. When the whole data layer fails the
+    # ReAct path omits market_data entirely, and keying off it alone would
+    # audit a hollow report as clean.
+    audited_symbols = set(data.get("symbols") or []) or set(market)
+    for block in (technical, fundamental, risk, sentiment):
+        audited_symbols.update(k for k in block if k != "_error")
+
+    for symbol in sorted(audited_symbols):
+        if symbol not in market:
+            insufficient.append(
+                {
+                    "symbol": symbol,
+                    "subject": "market_data",
+                    "detail": "missing market data block (fetch failed or symbol not covered).",
+                }
+            )
         _insufficient_findings(
             symbol, technical.get(symbol), fundamental.get(symbol), risk.get(symbol), insufficient
         )
