@@ -170,8 +170,10 @@ async def _enrich_overview(answer: Any, symbols: list[str]) -> Any:
         query = ""
     parsed["executive_summary"] = _build_executive_summary(parsed, query, symbols)
 
-    # Re-serialise in the same style the LLM used (Python dict literal)
-    return repr(parsed)
+    # Serialise as JSON so the frontend can JSON.parse and render it as a
+    # structured report (the LLM emits a Python dict literal; ast.literal_eval
+    # accepts both JSON and Python-literal, so this round-trips safely).
+    return json.dumps(parsed, ensure_ascii=False, default=str)
 
 
 def _detect_lang(text: str) -> str:

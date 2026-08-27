@@ -149,8 +149,11 @@ def _derive_recommendation(
     else:
         fund_score = float(fund_score_raw or 50)
     fund_rec = str(fundamental.get("recommendation", "hold")).lower()
-    tech_trend = str(technical.get("trend", "neutral")).lower()
-    tech_score = float(technical.get("sentiment_score", 0) or 0)
+    # The per-symbol technical block is {"signals": {"trend","rsi"}, "sentiment": {"score"}, ...}
+    # (same shape _technical_section reads). Reading top-level "trend"/"sentiment_score"
+    # would miss the data and silently default to neutral/0.
+    tech_trend = str(technical.get("signals", {}).get("trend", "neutral")).lower()
+    tech_score = float(technical.get("sentiment", {}).get("score", 0) or 0)
     sent_score = float(sentiment.get("score", 0) or 0)
     risk_level = str(risk.get("risk_level", "medium")).lower()
     risk_penalty = _risk_to_score(risk_level)

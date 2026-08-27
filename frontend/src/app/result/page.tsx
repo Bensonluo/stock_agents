@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, Suspense, type ReactNode } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -165,11 +165,7 @@ function ReactResultPage({ threadId }: { threadId: string }) {
           <div className="lg:col-span-3">
             <Card>
               <CardContent className="p-6 md:p-8">
-                <div className="react-markdown">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {result.answer}
-                  </ReactMarkdown>
-                </div>
+                <ReactReport answer={result.answer} />
               </CardContent>
             </Card>
           </div>
@@ -671,6 +667,298 @@ function ResultPage() {
           </div>
         </div>
       </main>
+    </div>
+  )
+}
+
+// ReAct 结构化报告组件 —— 把 answer(JSON)渲染成人类可读的投资报告
+function ReactReport({ answer }: { answer: string }) {
+  // answer 是后端返回的 JSON 字符串;解析失败则回退到 Markdown(兼容纯文本/旧数据)
+  let report: any = null
+  if (typeof answer === 'string' && answer.trim()) {
+    try {
+      report = JSON.parse(answer)
+    } catch {
+      report = null
+    }
+  }
+
+  if (!report || typeof report !== 'object') {
+    return (
+      <div className="prose prose-slate max-w-none">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer || '暂无报告内容'}</ReactMarkdown>
+      </div>
+    )
+  }
+
+  const sections = report.sections || {}
+  const overview = sections.overview || {}
+  const technical = sections.technical_analysis || {}
+  const fundamental = sections.fundamental_analysis || {}
+  const sentiment = sections.sentiment_analysis || {}
+  const risk = sections.risk_analysis || {}
+  const recommendations = sections.recommendations || {}
+
+  const actionZh = (a: string): string => {
+    const m: Record<string, string> = {
+      buy: '买入', add: '加仓', hold: '持有', reduce: '减仓', sell: '卖出',
+      strong_buy: '强烈买入', strong_sell: '强烈卖出',
+    }
+    return m[String(a || '').toLowerCase()] || a || '持有'
+  }
+  const actionStyle = (a: string) => {
+    const s = String(a || '').toLowerCase()
+    if (['buy', 'add', 'strong_buy'].includes(s))
+      return { ring: 'ring-green-200', color: 'text-green-700', bg: 'bg-green-100' }
+    if (['sell', 'reduce', 'strong_sell'].includes(s))
+      return { ring: 'ring-red-200', color: 'text-red-700', bg: 'bg-red-100' }
+    return { ring: 'ring-amber-200', color: 'text-amber-700', bg: 'bg-amber-100' }
+  }
+  const trendZh = (t: string): string => {
+    const s = String(t || '').toLowerCase()
+    if (s.includes('bull') || s.includes('buy')) return '看涨'
+    if (s.includes('bear') || s.includes('sell')) return '看跌'
+    return '中性'
+  }
+  const trendColor = (t: string): string => {
+    const s = String(t || '').toLowerCase()
+    if (s.includes('bull') || s.includes('buy')) return 'text-green-600'
+    if (s.includes('bear') || s.includes('sell')) return 'text-red-600'
+    return 'text-amber-600'
+  }
+  const riskZh = (r: string): string => {
+    const m: Record<string, string> = { very_low: '极低', low: '低', medium: '中', high: '高', very_high: '极高' }
+    return m[String(r || '').toLowerCase()] || r || '中'
+  }
+  const riskStyle = (r: string) => {
+    const s = String(r || '').toLowerCase()
+    if (['very_low', 'low'].includes(s)) return { color: 'text-green-700', bg: 'bg-green-100' }
+    if (['high', 'very_high'].includes(s)) return { color: 'text-red-700', bg: 'bg-red-100' }
+    return { color: 'text-amber-700', bg: 'bg-amber-100' }
+  }
+  const sentimentZh = (s: string): string => {
+    const v = String(s || '').toLowerCase()
+    if (v.includes('very_positive')) return '非常积极'
+    if (v.includes('positive')) return '积极'
+    if (v.includes('very_negative')) return '非常消极'
+    if (v.includes('negative')) return '消极'
+    return '中性'
+  }
+  const scoreOf = (v: any): number | null => {
+    if (typeof v === 'number') return v
+    if (v && typeof v === 'object' && typeof v.score === 'number') return v.score
+    return null
+  }
+
+  const SectionCard = ({ icon: Icon, title, children }: { icon: any; title: string; children: ReactNode }) => (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Icon className="h-4 w-4 text-slate-500" />
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
+  )
+
+  const recEntries = recommendations.by_symbol ? Object.entries(recommendations.by_symbol) : []
+  const overviewEntries = overview.market_summary ? Object.entries(overview.market_summary) : []
+  const hasTech = technical.by_symbol && Object.keys(technical.by_symbol).length > 0
+  const hasFund = fundamental.by_symbol && Object.keys(fundamental.by_symbol).length > 0
+  const hasSent = sentiment.by_symbol && Object.keys(sentiment.by_symbol).length > 0
+  const hasRisk = risk.by_symbol && Object.keys(risk.by_symbol).length > 0
+
+  return (
+    <div className="space-y-6">
+      {/* 标题 + 执行摘要 */}
+      {report.title && (
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900 mb-3">{report.title}</h2>
+          {report.executive_summary && (
+            <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg">
+              <p className="text-sm text-slate-800 leading-relaxed">{report.executive_summary}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 投资建议卡片(最突出) */}
+      {recEntries.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {recEntries.map(([sym, rec]: [string, any]) => {
+            const st = actionStyle(rec.action)
+            const composite = scoreOf(rec.composite_score)
+            const conf = typeof rec.confidence === 'number' ? rec.confidence : 0.5
+            return (
+              <Card key={sym} className={cn('ring-1', st.ring)}>
+                <CardContent className="p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className="text-xs text-slate-500">投资建议 · {sym}</p>
+                      <p className="text-2xl font-bold mt-0.5">{actionZh(rec.action)}</p>
+                    </div>
+                    <div className={cn('px-4 py-2 rounded-full', st.bg)}>
+                      <span className={cn('text-sm font-semibold', st.color)}>{(conf * 100).toFixed(0)}% 置信</span>
+                    </div>
+                  </div>
+                  {composite !== null && (
+                    <div className="mb-2">
+                      <div className="flex justify-between text-xs text-slate-500 mb-1">
+                        <span>综合评分</span>
+                        <span className="font-medium text-slate-700">{composite.toFixed(0)} / 100</span>
+                      </div>
+                      <Progress value={composite} className="h-2" />
+                    </div>
+                  )}
+                  {rec.reasoning && (
+                    <p className="text-xs text-slate-500 mt-2 leading-relaxed">{rec.reasoning}</p>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      )}
+
+      {/* 市场概览 */}
+      {overviewEntries.length > 0 && (
+        <SectionCard icon={Database} title="市场概览">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {overviewEntries.map(([sym, info]: [string, any]) => (
+              <div key={sym} className="p-3 bg-slate-50 rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium">{info.company_name || sym}</span>
+                  <Badge variant="outline">{sym}</Badge>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-slate-500">当前价</p>
+                    <p className="font-semibold">{formatCurrency(info.current_price)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">涨跌幅</p>
+                    <p className={cn('font-semibold', (info.change_percent || 0) >= 0 ? 'text-green-600' : 'text-red-600')}>
+                      {(info.change_percent || 0) >= 0 ? '+' : ''}{formatNumber(info.change_percent)}%
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">行业</p>
+                    <p className="font-medium">{info.sector || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">市值</p>
+                    <p className="font-medium">{info.market_cap ? '$' + formatNumber(info.market_cap / 1e9, 2) + 'B' : '-'}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {overview.analysis_date && (
+            <p className="text-xs text-slate-400 mt-3">分析日期：{overview.analysis_date}</p>
+          )}
+        </SectionCard>
+      )}
+
+      {/* 技术分析 + 基本面(双栏) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {hasTech && (
+          <SectionCard icon={BarChart3} title="技术分析">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-slate-500">整体展望</span>
+                <span className={cn('font-semibold', trendColor(technical.overall_outlook))}>{trendZh(technical.overall_outlook)}</span>
+              </div>
+              {Object.entries(technical.by_symbol).map(([sym, t]: [string, any]) => (
+                <div key={sym} className="p-3 bg-slate-50 rounded-lg space-y-1 text-sm">
+                  <p className="font-medium mb-1">{sym}</p>
+                  <div className="flex justify-between"><span className="text-slate-500">趋势</span><span className={trendColor(t.trend)}>{trendZh(t.trend)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">RSI</span><span className={trendColor(t.rsi)}>{trendZh(t.rsi)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">情绪分</span><span className={cn('font-medium', (t.sentiment_score || 0) >= 0 ? 'text-green-600' : 'text-red-600')}>{formatNumber(t.sentiment_score, 0)}</span></div>
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+        )}
+
+        {hasFund && (
+          <SectionCard icon={PieChart} title="基本面分析">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-slate-500">整体评级</span>
+                <span className="font-semibold">{trendZh(fundamental.overall_rating)}</span>
+              </div>
+              {Object.entries(fundamental.by_symbol).map(([sym, f]: [string, any]) => {
+                const score = scoreOf(f.overall_score)
+                return (
+                  <div key={sym} className="p-3 bg-slate-50 rounded-lg space-y-2 text-sm">
+                    <p className="font-medium">{sym}</p>
+                    {score !== null && (
+                      <div>
+                        <div className="flex justify-between mb-1"><span className="text-slate-500">综合评分</span><span className="font-medium">{formatNumber(score, 0)} / 100</span></div>
+                        <Progress value={score} className="h-2" />
+                      </div>
+                    )}
+                    <div className="flex justify-between"><span className="text-slate-500">建议</span><span className="font-medium">{actionZh(f.recommendation)}</span></div>
+                  </div>
+                )
+              })}
+            </div>
+          </SectionCard>
+        )}
+      </div>
+
+      {/* 情绪 + 风险(双栏) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {hasSent && (
+          <SectionCard icon={Newspaper} title="情绪分析">
+            <div className="space-y-3">
+              {sentiment.overall && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-500">整体情绪</span>
+                  <span className="font-semibold">{sentimentZh(sentiment.overall.sentiment)}（{formatNumber(sentiment.overall.score, 0)}）</span>
+                </div>
+              )}
+              {Object.entries(sentiment.by_symbol).map(([sym, s]: [string, any]) => (
+                <div key={sym} className="p-3 bg-slate-50 rounded-lg space-y-1 text-sm">
+                  <p className="font-medium mb-1">{sym}</p>
+                  <div className="flex justify-between"><span className="text-slate-500">情绪</span><span className="font-medium">{sentimentZh(s.sentiment)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">得分</span><span className={cn('font-medium', (s.score || 0) >= 0 ? 'text-green-600' : 'text-red-600')}>{formatNumber(s.score, 0)}</span></div>
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+        )}
+
+        {hasRisk && (
+          <SectionCard icon={Shield} title="风险评估">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-slate-500">整体风险</span>
+                {(() => { const rs = riskStyle(risk.overall_risk); return <span className={cn('px-2 py-0.5 rounded text-xs font-semibold', rs.bg, rs.color)}>{riskZh(risk.overall_risk)}</span> })()}
+              </div>
+              {Object.entries(risk.by_symbol).map(([sym, r]: [string, any]) => {
+                const rs = riskStyle(r.risk_level)
+                const rscore = scoreOf(r.risk_score)
+                return (
+                  <div key={sym} className="p-3 bg-slate-50 rounded-lg space-y-2 text-sm">
+                    <div className="flex items-center justify-between">
+                      <p className="font-medium">{sym}</p>
+                      <span className={cn('px-2 py-0.5 rounded text-xs font-semibold', rs.bg, rs.color)}>{riskZh(r.risk_level)}</span>
+                    </div>
+                    {rscore !== null && (
+                      <div>
+                        <div className="flex justify-between mb-1"><span className="text-slate-500">风险分</span><span className="font-medium">{formatNumber(rscore, 0)} / 100</span></div>
+                        <Progress value={rscore} className="h-2" />
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </SectionCard>
+        )}
+      </div>
     </div>
   )
 }
