@@ -42,9 +42,21 @@
 | 证据约束 prompt 与结构化输出 | 🚧 2026-08-27 | `app/research/narrator.py`:LLM 仅叙述确定性综合——prompt 禁止引入新数字、PM 点评必须服从委员会裁决;未知标的输出丢弃;20s 超时/异常/不可解析一律静默降级为确定性结果。专业 Analyst/PM 完整 LLM 角色仍待接 |
 | 前端消费 V2 字段 | 🚧 2026-08-27 | result 页已渲染:周线排列+持续周数+金叉/死叉、Bear/Base/Bull 估值区间(标注为区间非目标价)+质量红旗(按严重度着色)、研究综合卡(审计判定/多空叙述/最强反方/失效条件/委员会裁决+条件+仓位上限)。多标的独立页签、催化剂时间线、证据抽屉待做 |
 
-## Phase 3-4 — 未开始
+## Phase 3:回测与研究闭环 — 🚧 进行中
 
-见计划 §9(成本化回测、walk-forward、实验 manifest;文档 RAG、预期数据、Qlib/LEAN 级研究)。
+| 计划项 | 状态 | 说明 |
+|---|---|---|
+| 成本化确定性引擎 | ✅ 2026-08-27 | `app/backtest/`:CostModel(佣金/最低费用/卖方印花税/过户费/双向滑点,中美预设);引擎强制 t 收盘出信号、t+1 开盘成交,warm-up NaN=不持仓,期末强制平仓补全回合统计 |
+| 完整指标 | ✅ 2026-08-27 | CAGR/Sharpe/Sortino/Calmar/最大回撤/CVaR95/波动率/基准超额/胜率/盈亏比/换手/成本占比;不可计算的返回 None 不造假 |
+| walk-forward 与参数邻域 | ✅ 2026-08-27 | 滚动 train/test:参数仅在 train 段选出、test 段评分;报告全部窗口(含亏损)、参数稳定性、configs_tested |
+| 实验 manifest | ✅ 2026-08-27 | 价格帧 sha256、参数、成本模型、git commit、configs_tested、时间戳 |
+| API | ✅ 2026-08-27 | `POST /api/backtest/v2/run`、`/v2/walkforward`(旧 /run 契约不变);service 层 run_backtest_v2/run_walk_forward |
+| as_of/vintage 数据防泄漏 | ⬜ | 财务数据按 filing date 截断未做 |
+| 历史校准与失败结果展示 | ⬜ 部分 | walk-forward 已展示失败窗口;信号命中率/置信度校准待做 |
+
+## Phase 4 — 未开始
+
+见计划 §9(文档 RAG、预期数据、期权隐含、Qlib/LEAN 级研究、沙盒内自动因子)。
 
 ## 环境备忘
 
