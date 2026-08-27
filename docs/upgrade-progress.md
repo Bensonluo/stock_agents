@@ -30,7 +30,7 @@
 | 接入两条路径 | ✅ 2026-08-27 | pipeline:`FundamentalAnalysisAgent` 每标的附 `quality`+`valuation_scenarios`;ReAct:`analyze_fundamental` 附质量摘要、新增 `analyze_valuation` 工具(已注册、结果路由 valuation_analysis);报告层(agent+tool)基本面段输出 `valuation_scenarios`/`quality` 摘要 |
 | `as_of` 贯穿 | 🚧 | data_agent market_data 已盖 as_of(最后交易日);引擎输出均带 as_of;回测与 provider 级 vintage 未接(Phase 3) |
 
-## Phase 2:Agent 与报告升级 — 🚧 进行中
+## Phase 2:Agent 与报告升级 — ✅ 核心完成(2026-08-27;催化剂时间线随 Phase 4 事件数据补)
 
 | 计划项 | 状态 | 说明 |
 |---|---|---|
@@ -39,8 +39,8 @@
 | Evidence Auditor | ✅ 2026-08-27 | `app/research/auditor.py`:行情 as_of 超 7 天=blocked;基本面红旗与多头动能/情绪共存的 critical 冲突=blocked;缺失数据=warnings。审计员不参与方向投票 |
 | Risk Committee | ✅ 2026-08-27 | `app/research/committee.py`:approve/limit/veto/watch;critical 红旗或审计 blocked → veto;very_high → veto;high 或 beta 隐含 -30% 冲击 → 限仓 5%+强制止损;数据不足 → watch;"低风险不构成买入理由"显式写入审批条件 |
 | 综合接入 | ✅ 2026-08-27 | `ResearchSynthesisAgent` 为流水线新节点(risk → synthesis → decision,state 键 `research_synthesis`);ReAct 在报告组装前对工具结果综合;ReportService 存在 synthesis 时输出该段 |
-| 证据约束 prompt 与结构化输出 | 🚧 2026-08-27 | `app/research/narrator.py`:LLM 仅叙述确定性综合——prompt 禁止引入新数字、PM 点评必须服从委员会裁决;未知标的输出丢弃;20s 超时/异常/不可解析一律静默降级为确定性结果。专业 Analyst/PM 完整 LLM 角色仍待接 |
-| 前端消费 V2 字段 | 🚧 2026-08-27 | result 页已渲染:周线排列+持续周数+金叉/死叉、Bear/Base/Bull 估值区间(标注为区间非目标价)+质量红旗(按严重度着色)、研究综合卡(审计判定/多空叙述/最强反方/失效条件/委员会裁决+条件+仓位上限)。多标的独立页签、催化剂时间线、证据抽屉待做 |
+| 证据约束 prompt 与结构化输出 | ✅ 2026-08-27 | `app/research/narrator.py`(叙述)+ `app/research/analysts.py`(四专业 Analyst + PM):引用必须在允许集合内否则该角色输出被丢弃;PM 必须原样复述委员会裁决否则结论被丢弃(不得越过门控);超时/异常/不可解析静默降级。结构化校验由代码而非 prompt 保证 |
+| 前端消费 V2 字段 | ✅ 2026-08-27 | result 页已渲染:周线排列+金叉/死叉、估值情景区间+质量红旗、研究综合卡(审计/多空/叙述/委员会)、PM 结论(论点/期限/条件/失效/复述裁决)、四 Analyst 视图(带引用)、多标的切换页签、证据抽屉(指标/数值/单位/as_of/来源/公式,按标的折叠)。催化剂时间线依赖 Phase 4 事件数据,随 Phase 4 做 |
 
 ## Phase 3:回测与研究闭环 — 🚧 进行中
 
