@@ -79,27 +79,6 @@ def latest_visible_value(
     return visible[-1][1] if visible else None
 
 
-def assert_no_lookahead(
-    statement_block: dict[str, Any],
-    as_of: str | date,
-    *,
-    lag_days: int = DEFAULT_REPORTING_LAG_DAYS,
-) -> None:
-    """Guard used in tests: every visible period must satisfy its lag."""
-    cutoff = _as_date(as_of)
-    for period_end, _ in visible_values_at(statement_block, cutoff, next_row(statement_block), lag_days=lag_days):
-        if visible_from(period_end, lag_days) > cutoff:
-            raise AssertionError(f"look-ahead: {period_end} used at {cutoff}")
-
-
-def next_row(statement_block: dict[str, Any]) -> str:
-    """First data row name; blocks always carry at least one row in practice."""
-    rows = statement_block.get("data") or {}
-    if not rows:
-        raise ValueError("statement block has no data rows")
-    return next(iter(rows))
-
-
 def _as_date(value: str | date) -> date:
     if isinstance(value, date):
         return value

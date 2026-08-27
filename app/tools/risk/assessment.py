@@ -22,8 +22,6 @@ from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-MIN_BETA_OBSERVATIONS = 20
-
 # Backwards-compatible aliases for callers importing the historical private names.
 _aligned_returns = aligned_returns
 _calculate_beta = calculate_beta
@@ -149,8 +147,6 @@ def _calculate_score(vol: float | None, dd: float | None, var: float | None, bet
     risk for high values; a historical low-beta penalty (+5 in an old agent
     copy) was dropped: it contradicted the higher-is-riskier semantics.
     """
-    import numpy as np
-
     required = (vol, dd, var)
     if any(value is None or not np.isfinite(value) for value in required):
         return None

@@ -43,7 +43,7 @@ class BacktestResult:
 
     strategy: str
     params: dict[str, Any]
-    equity: pd.Series = field(default=None)  # type: ignore[assignment]
+    equity: pd.Series | None = None
     benchmark_equity: pd.Series | None = None
     trades: list[dict[str, Any]] = field(default_factory=list)
     total_cost: float = 0.0

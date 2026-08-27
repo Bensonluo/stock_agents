@@ -8,7 +8,6 @@ confidence must be grounded in this table, not in model self-assessment.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -20,11 +19,6 @@ from app.backtest.engine import (
 
 DEFAULT_HORIZONS = (20, 60)
 Z_95 = 1.96
-
-
-@dataclass(frozen=True)
-class CalibrationError(Exception):
-    """Raised for invalid calibration inputs."""
 
 
 def calibrate_signals(
