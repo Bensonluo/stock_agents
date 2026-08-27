@@ -30,9 +30,21 @@
 | 接入两条路径 | ✅ 2026-08-27 | pipeline:`FundamentalAnalysisAgent` 每标的附 `quality`+`valuation_scenarios`;ReAct:`analyze_fundamental` 附质量摘要、新增 `analyze_valuation` 工具(已注册、结果路由 valuation_analysis);报告层(agent+tool)基本面段输出 `valuation_scenarios`/`quality` 摘要 |
 | `as_of` 贯穿 | 🚧 | data_agent market_data 已盖 as_of(最后交易日);引擎输出均带 as_of;回测与 provider 级 vintage 未接(Phase 3) |
 
-## Phase 2-4 — 未开始
+## Phase 2:Agent 与报告升级 — 🚧 进行中
 
-见计划 §9。
+| 计划项 | 状态 | 说明 |
+|---|---|---|
+| ReportService 合并 | ✅ 2026-08-27 | `app/services/report_service.py` 承载唯一分节构建;先归一化 pipeline-state 与 ReAct 两种输入形状,再输出最丰富并集(技术含 weekly_trend、基本面含 valuation_scenarios/quality、风险含 beta/压力、推荐 decisions 或推导、i18n 执行摘要)。`report_agent` 与 `tools/report/generate.py` 均为薄委托;agent 保留 LLM 叙述钩子 |
+| Bull/Bear 辩论 | ✅ 2026-08-27 | `app/research/debate.py`:确定性抽取双侧论据,每条带 evidence_ref 指向来源块;thesis/最强反方/失效条件(红旗 critical 优先) |
+| Evidence Auditor | ✅ 2026-08-27 | `app/research/auditor.py`:行情 as_of 超 7 天=blocked;基本面红旗与多头动能/情绪共存的 critical 冲突=blocked;缺失数据=warnings。审计员不参与方向投票 |
+| Risk Committee | ✅ 2026-08-27 | `app/research/committee.py`:approve/limit/veto/watch;critical 红旗或审计 blocked → veto;very_high → veto;high 或 beta 隐含 -30% 冲击 → 限仓 5%+强制止损;数据不足 → watch;"低风险不构成买入理由"显式写入审批条件 |
+| 综合接入 | ✅ 2026-08-27 | `ResearchSynthesisAgent` 为流水线新节点(risk → synthesis → decision,state 键 `research_synthesis`);ReAct 在报告组装前对工具结果综合;ReportService 存在 synthesis 时输出该段 |
+| 证据约束 prompt 与结构化输出 | ⬜ | LLM 角色(Technical/Fundamental/Valuation/Event Analyst、PM)待接;当前综合为确定性规则 |
+| 前端五周线/估值情景/财务趋势/催化剂/证据抽屉/多标的 | ⬜ | ReportV2 字段已在(weekly_trend、valuation_scenarios、quality、research_synthesis),前端消费待做 |
+
+## Phase 3-4 — 未开始
+
+见计划 §9(成本化回测、walk-forward、实验 manifest;文档 RAG、预期数据、Qlib/LEAN 级研究)。
 
 ## 环境备忘
 
