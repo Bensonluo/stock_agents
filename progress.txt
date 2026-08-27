@@ -1,0 +1,46 @@
+# ralph progress — stock_agents fix
+
+## Task
+Fix stock_agents end-to-end. ReAct agent must produce a meaningful final report with all 6 sections populated with real data, deployed at http://101.43.97.91/stock-api.
+
+## Iteration 1 (2026-06-12) — ALL STORIES PASS
+
+### Diagnosis (US-001)
+**Finding**: The `_enrich_overview` post-process function in `app/api/routes/agent.py` actually works correctly. The MSFT test that returned `company_name=None` was reading a STALE DB record that had been stored BEFORE the container was rebuilt (03:44) with the enrichment code. The previous fix in commit `095cff9` was already correct.
+
+Evidence (manual call from inside container on the stale DB record):
+```
+market_summary.MSFT before: {'company_name': None, 'current_price': None, 'sector': None}
+market_summary.MSFT after:  {'company_name': 'Microsoft Corp', 'current_price': 390.34, 'sector': 'Technology', 'change': -7.02, 'change_percent': -1.7667, 'market_cap': 2899615043282.8037}
+```
+
+### Fix verification (US-002)
+No new code change was needed. The fix from commit `095cff9` was already correct; the issue was simply that an old container's DB record was being read. A fresh analysis (AAPL) immediately produced all data correctly.
+
+### End-to-end test (US-003)
+Live AAPL test (thread `react-5d6431a0-6e93-4a68-a7e6-ff1b04a7c684`):
+- overview.market_summary.AAPL: name='Apple Inc', price=295.63, sector='Technology', cap=4342B
+- technical_analysis: trend=bearish, rsi=neutral, sentiment=-35
+- fundamental_analysis: overall_score=26.0, recommendation=strong_sell
+- sentiment_analysis: very_positive, score=46.67
+- risk_analysis: very_low, risk_score=0
+- recommendations: hold, confidence=0.5
+
+ALL 6 SECTIONS POPULATED. No `_error` placeholders.
+
+### Frontend health (US-004)
+Two issues in `docker-compose.yml` healthcheck:
+1. URL was `localhost:3000` — resolves to IPv6 `[::1]:3000` on Linux, but Next.js binds IPv4 `0.0.0.0`. Fix: `127.0.0.1`.
+2. Hit `/` but app has `basePath='/stock'` (visible in container route check: `/stock` → 200, `/` → 404). Fix: hit `/stock`.
+
+After fix, `stock_agent_frontend` is **healthy**. Committed as `ffee8ba`.
+
+### Commit/push (US-005)
+- `ffee8ba fix: frontend healthcheck URL — use 127.0.0.1 (IPv4) and basePath /stock`
+- Pushed: `095cff9..ffee8ba main -> main`
+
+## Final state
+- stock_agent_api: **healthy** (Up 2 hours)
+- stock_agent_frontend: **healthy** (Up 1 minute, after fix)
+- Public API: http://101.43.97.91/stock-api/api/agent/analyze — returns valid report
+- 4 commits on origin/main: a5bf523, f3c560c, 095cff9, ffee8ba
