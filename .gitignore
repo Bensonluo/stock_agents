@@ -76,3 +76,6 @@ frontend/.env*.local
 .sisyphus/drafts/stock-analysis-system.md
 .claude/settings.local.json
 .worktrees/
+/.next/cache
+/.next
+.omc/

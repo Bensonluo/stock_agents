@@ -77,3 +77,9 @@ ignore = ["E501"]
 [tool.black]
 line-length = 100
 target-version = ["py311"]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not network'"
+markers = [
+    "network: tests that call live third-party services and may be rate-limited",
+]

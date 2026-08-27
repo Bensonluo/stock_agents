@@ -3,7 +3,8 @@
 import pytest
 
 from app.api.dependencies import get_orchestrator
-from app.orchestration import MultiAgentOrchestrator
+
+pytestmark = pytest.mark.network
 
 
 class TestOrchestratorIntegration:
@@ -54,7 +55,7 @@ class TestOrchestratorIntegration:
         orchestrator = get_orchestrator()
 
         # Start a workflow
-        result = await orchestrator.execute_workflow(
+        await orchestrator.execute_workflow(
             query="Status test",
             symbols=["AAPL"],
             thread_id="test-workflow-status",

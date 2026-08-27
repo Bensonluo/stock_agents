@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # 服务器配置
-SERVER_IP=${1:-"124.220.28.49"}
+SERVER_IP=${1:-"101.43.97.91"}
 SERVER_USER="ubuntu"
 SSH_KEY="${HOME}/.ssh/ssh_tencent.pem"
 SERVER_DIR="/opt/stock_agents"
@@ -85,13 +85,13 @@ ${SSH_CMD} << 'ENDSSH'
 cd /opt/stock_agents
 
 # 停止旧容器
-sudo docker-compose down 2>/dev/null || true
+sudo docker compose down 2>/dev/null || true
 
 # 构建新镜像
-sudo docker-compose build --no-cache
+sudo docker compose build --no-cache
 
 # 启动服务
-sudo docker-compose up -d
+sudo docker compose up -d
 
 # 等待服务健康
 echo "等待服务启动..."

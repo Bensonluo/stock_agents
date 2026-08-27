@@ -1,11 +1,11 @@
 #!/bin/bash
 # Stock Agents Nginx 配置安装脚本
 # 用法: ./install-nginx.sh [服务器IP]
-# 示例: ./install-nginx.sh 124.220.28.49
+# 示例: ./install-nginx.sh 101.43.97.91
 
 set -e
 
-SERVER_IP=${1:-"124.220.28.49"}
+SERVER_IP=${1:-"101.43.97.91"}
 SERVER_USER="ubuntu"
 SSH_KEY="${HOME}/.ssh/ssh_tencent.pem"
 
