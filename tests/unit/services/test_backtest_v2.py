@@ -142,7 +142,6 @@ class TestCalibrateService:
 class TestProviderChainFallback:
     @pytest.mark.asyncio
     async def test_yfinance_failure_falls_back_to_shared_chain(self, monkeypatch) -> None:
-        import numpy as np
 
         service = BacktestService()
 
@@ -195,7 +194,6 @@ class TestStooqLastResort:
     @pytest.mark.asyncio
     async def test_chain_ends_at_stooq_csv(self, monkeypatch) -> None:
         """yfinance limited + others down: stooq CSV must rescue the backtest."""
-        from io import StringIO
 
         import app.tools.data.fetcher as fetcher
 
