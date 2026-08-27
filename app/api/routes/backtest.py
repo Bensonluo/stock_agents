@@ -266,14 +266,24 @@ class V2BacktestRequest(BaseModel):
         default=None, description="Optional benchmark for the excess-return metric (e.g. '^GSPC')"
     )
 
-    @field_validator("symbol", "benchmark_symbol")
+    @field_validator("symbol")
     @classmethod
-    def _validate_symbol(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
+    def _validate_symbol(cls, value: str) -> str:
         if not validate_stock_symbol(value):
             raise ValueError(f"Invalid stock symbol: {value}")
         return value.upper()
+
+    @field_validator("benchmark_symbol")
+    @classmethod
+    def _validate_benchmark(cls, value: str | None) -> str | None:
+        # Benchmarks are indices/ETFs (^GSPC, 000300.SS), not stock symbols —
+        # the strict stock validator rejects the caret forms.
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned or any(ch.isspace() for ch in cleaned):
+            raise ValueError(f"Invalid benchmark symbol: {value}")
+        return cleaned
 
     @model_validator(mode="after")
     def _dates_in_order(self) -> "V2BacktestRequest":
@@ -375,14 +385,22 @@ class CalibrateRequest(BaseModel):
     )
     strategy_params: dict[str, float | int] = Field(default_factory=dict)
 
-    @field_validator("symbol", "benchmark_symbol")
+    @field_validator("symbol")
     @classmethod
-    def _validate_symbol(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
+    def _validate_symbol(cls, value: str) -> str:
         if not validate_stock_symbol(value):
             raise ValueError(f"Invalid stock symbol: {value}")
         return value.upper()
+
+    @field_validator("benchmark_symbol")
+    @classmethod
+    def _validate_benchmark(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned or any(ch.isspace() for ch in cleaned):
+            raise ValueError(f"Invalid benchmark symbol: {value}")
+        return cleaned
 
     @field_validator("horizons")
     @classmethod

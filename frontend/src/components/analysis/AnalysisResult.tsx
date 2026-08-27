@@ -12,11 +12,16 @@ interface AnalysisResultProps {
 export function AnalysisResult({ result }: AnalysisResultProps) {
   if (!result) return null
 
-  const { technical_analysis, fundamental_analysis, sentiment_analysis, risk_assessment, decision, report, market_data } = result
+  const { technical_analysis, fundamental_analysis, sentiment_analysis, risk_assessment, decision, report, market_data, research_synthesis } = result
 
   // Get the first symbol
   const symbols = result?.symbols || []
   const firstSymbol = symbols[0] || Object.keys(fundamental_analysis || {})[0] || Object.keys(market_data || {})[0]
+
+  // Confidence arrives as a 0-1 fraction since the decision-formula
+  // unification; tolerate legacy 0-100 payloads.
+  const confidencePct = (value: number | undefined): number | undefined =>
+    value === undefined || value === null ? undefined : value <= 1 ? value * 100 : value
 
   const getSentimentIcon = (sentiment?: string) => {
     if (!sentiment) return null
@@ -45,6 +50,12 @@ export function AnalysisResult({ result }: AnalysisResultProps) {
   // Get fundamental data for first symbol
   const fundamentalBySymbol = fundamental_analysis && typeof fundamental_analysis === 'object' ? fundamental_analysis : {}
   const firstFundamental = firstSymbol ? fundamentalBySymbol[firstSymbol] : null
+
+  // V2 research fields (raw pipeline state shape)
+  const weekly = firstSymbol ? technical_analysis?.[firstSymbol]?.weekly_sma : null
+  const quality = firstFundamental?.quality
+  const valuationScenarios = firstFundamental?.valuation_scenarios
+  const synthesisEntry = research_synthesis?.per_symbol?.[firstSymbol]
 
   // Get risk data for first symbol
   const riskBySymbol = risk_assessment?.risk_by_symbol || {}
@@ -137,6 +148,32 @@ export function AnalysisResult({ result }: AnalysisResultProps) {
                       </div>
                     </div>
                   )}
+                  {weekly && weekly.status === 'available' && weekly.alignment && (
+                    <div>
+                      <h4 className="font-semibold mb-2">Weekly Trend (5/10/20/40/60w SMA)</h4>
+                      <div className="flex items-center gap-2 mb-2">
+                        <Badge variant={weekly.alignment.state === 'bullish' ? 'success' : weekly.alignment.state === 'bearish' ? 'destructive' : 'secondary'}>
+                          {weekly.alignment.state === 'bullish' ? 'Bullish alignment' : weekly.alignment.state === 'bearish' ? 'Bearish alignment' : 'Mixed / tangled'}
+                        </Badge>
+                        {weekly.alignment.weeks_in_state != null && (
+                          <span className="text-xs text-muted-foreground">for {weekly.alignment.weeks_in_state} weeks</span>
+                        )}
+                      </div>
+                      {Object.entries(weekly.crosses || {}).map(([pair, cross]: [string, any]) =>
+                        cross?.status === 'observed' && (cross.weeks_since ?? 99) <= 13 ? (
+                          <div key={pair} className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">Cross {pair.replace('_vs_', '/')}</span>
+                            <span className={cross.direction === 'golden' ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
+                              {cross.direction === 'golden' ? 'Golden' : 'Death'} · {cross.weeks_since}w ago
+                            </span>
+                          </div>
+                        ) : null
+                      )}
+                    </div>
+                  )}
+                  {weekly && weekly.status === 'insufficient_data' && (
+                    <p className="text-sm text-muted-foreground">Weekly trend: insufficient data (needs ~3y history).</p>
+                  )}
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground">No technical analysis data available.</p>
@@ -199,6 +236,48 @@ export function AnalysisResult({ result }: AnalysisResultProps) {
                           <span className="font-medium">{(firstFundamental.valuation.details?.pb_ratio || 0).toFixed(2)}</span>
                         </div>
                       </div>
+                    </div>
+                  )}
+                  {valuationScenarios?.status === 'available' && valuationScenarios.methods && (
+                    <div>
+                      <h4 className="font-semibold mb-2">Valuation Scenarios (range, not a target price)</h4>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(['bear', 'base', 'bull'] as const).map(scenario => {
+                          const values = Object.values(valuationScenarios.methods)
+                            .map((method: any) => method?.scenarios?.[scenario])
+                            .filter(Boolean)
+                          const first = values[0]
+                          const upside = values.length ? Math.max(...values.map((v: any) => v.upside_pct ?? -Infinity)) : undefined
+                          return (
+                            <div key={scenario} className="p-2 border rounded text-center">
+                              <p className="text-xs text-muted-foreground capitalize">{scenario}</p>
+                              <p className={`text-sm font-semibold ${scenario === 'bear' ? 'text-red-600' : scenario === 'bull' ? 'text-green-600' : ''}`}>
+                                {first?.value != null ? `$${first.value.toFixed(2)}` : 'N/A'}
+                              </p>
+                              {upside !== undefined && Number.isFinite(upside) && (
+                                <p className={`text-xs ${upside >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {upside >= 0 ? '+' : ''}{upside.toFixed(1)}%
+                                </p>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {quality?.red_flags?.length > 0 && (
+                    <div>
+                      <h4 className="font-semibold mb-2">Quality Red Flags</h4>
+                      <ul className="space-y-1">
+                        {quality.red_flags.map((flag: any, i: number) => (
+                          <li key={i} className="text-sm flex items-start gap-2">
+                            <AlertTriangle className={`h-4 w-4 mt-0.5 flex-shrink-0 ${flag.severity === 'critical' ? 'text-red-500' : 'text-yellow-500'}`} />
+                            <span className={flag.severity === 'critical' ? 'text-red-600 font-medium' : ''}>
+                              {flag.detail || flag.code}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                 </>
@@ -342,6 +421,44 @@ export function AnalysisResult({ result }: AnalysisResultProps) {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {synthesisEntry && (
+                <div className="p-3 bg-muted rounded-lg space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-semibold">Research Synthesis</h4>
+                    <Badge
+                      variant={
+                        synthesisEntry.committee?.verdict === 'approve' ? 'success'
+                          : synthesisEntry.committee?.verdict === 'veto' ? 'destructive'
+                            : synthesisEntry.committee?.verdict === 'limit' ? 'warning' : 'secondary'
+                      }
+                    >
+                      Committee: {String(synthesisEntry.committee?.verdict || 'watch').toUpperCase()}
+                    </Badge>
+                  </div>
+                  {synthesisEntry.debate?.thesis && (
+                    <p className="text-sm"><span className="text-green-600 font-medium">Bull thesis: </span>{synthesisEntry.debate.thesis}</p>
+                  )}
+                  {synthesisEntry.debate?.strongest_counter && (
+                    <p className="text-sm"><span className="text-red-600 font-medium">Strongest counter: </span>{synthesisEntry.debate.strongest_counter}</p>
+                  )}
+                  {synthesisEntry.debate?.invalidation && (
+                    <p className="text-xs text-muted-foreground">Thesis invalidation: {synthesisEntry.debate.invalidation}</p>
+                  )}
+                  {synthesisEntry.pm?.thesis && (
+                    <p className="text-sm border-t pt-2"><span className="font-medium">PM: </span>{synthesisEntry.pm.thesis}
+                      {synthesisEntry.pm.horizon ? <span className="text-xs text-muted-foreground"> (horizon: {synthesisEntry.pm.horizon})</span> : null}
+                    </p>
+                  )}
+                  {synthesisEntry.committee?.conditions?.length > 0 && (
+                    <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-0.5">
+                      {synthesisEntry.committee.conditions.map((condition: string, i: number) => <li key={i}>{condition}</li>)}
+                    </ul>
+                  )}
+                  {synthesisEntry.committee?.position_cap_pct != null && (
+                    <p className="text-xs text-muted-foreground">Position cap: {synthesisEntry.committee.position_cap_pct}%</p>
+                  )}
+                </div>
+              )}
               {firstDecision ? (
                 <>
                   <div>
@@ -366,10 +483,10 @@ export function AnalysisResult({ result }: AnalysisResultProps) {
                         <div className="w-full bg-muted rounded-full h-2">
                           <div
                             className="bg-primary h-2 rounded-full transition-all"
-                            style={{ width: `${firstDecision.confidence}%` }}
+                            style={{ width: `${confidencePct(firstDecision.confidence) ?? 0}%` }}
                           />
                         </div>
-                        <span className="text-sm font-medium">{firstDecision.confidence.toFixed(0)}%</span>
+                        <span className="text-sm font-medium">{(confidencePct(firstDecision.confidence) ?? 0).toFixed(0)}%</span>
                       </div>
                     </div>
                   )}

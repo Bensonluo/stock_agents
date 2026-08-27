@@ -49,8 +49,8 @@ class ReportGenerationAgent(StatelessAgent):
             "research_synthesis": state.get("research_synthesis", {}),
         }
 
-        # Generate report sections
-        sections = await self._generate_sections(data)
+        # Generate report sections (deterministic, synchronous delegate)
+        sections = self._generate_sections(data)
 
         # Generate executive summary
         executive_summary = await self._generate_executive_summary(data, sections)
@@ -68,7 +68,7 @@ class ReportGenerationAgent(StatelessAgent):
 
         # Compile final report
         report = {
-            "title": self._generate_title(query, symbols),
+            "title": ReportService.build_title(query, symbols),
             "generated_at": datetime.now().isoformat(),
             "executive_summary": executive_summary,
             "sections": sections,
