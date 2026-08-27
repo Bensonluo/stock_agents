@@ -673,6 +673,8 @@ function ResultPage() {
 
 // ReAct 结构化报告组件 —— 把 answer(JSON)渲染成人类可读的投资报告
 function ReactReport({ answer }: { answer: string }) {
+  const [activeSymbol, setActiveSymbol] = useState<string>('all')
+  const [openEvidence, setOpenEvidence] = useState<string | null>(null)
   // answer 是后端返回的 JSON 字符串;解析失败则回退到 Markdown(兼容纯文本/旧数据)
   let report: any = null
   if (typeof answer === 'string' && answer.trim()) {
@@ -699,6 +701,10 @@ function ReactReport({ answer }: { answer: string }) {
   const risk = sections.risk_analysis || {}
   const recommendations = sections.recommendations || {}
   const synthesis = sections.research_synthesis || null
+  const evidenceIndex = sections.evidence_index || {}
+
+  const filterEntries = (entries: [string, any][]): [string, any][] =>
+    activeSymbol === 'all' ? entries : entries.filter(([s]) => s === activeSymbol)
 
   const actionZh = (a: string): string => {
     const m: Record<string, string> = {
@@ -770,6 +776,15 @@ function ReactReport({ answer }: { answer: string }) {
   const hasSent = sentiment.by_symbol && Object.keys(sentiment.by_symbol).length > 0
   const hasRisk = risk.by_symbol && Object.keys(risk.by_symbol).length > 0
 
+  const symbolUniverse: string[] = Array.from(
+    new Set([
+      ...overviewEntries.map(([s]) => s),
+      ...Object.keys(technical.by_symbol || {}),
+      ...Object.keys(fundamental.by_symbol || {}),
+      ...(synthesis?.by_symbol ? Object.keys(synthesis.by_symbol) : []),
+    ])
+  )
+
   return (
     <div className="space-y-6">
       {/* 标题 + 执行摘要 */}
@@ -784,10 +799,30 @@ function ReactReport({ answer }: { answer: string }) {
         </div>
       )}
 
+      {/* 标的切换 */}
+      {symbolUniverse.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          {['all', ...symbolUniverse].map(sym => (
+            <button
+              key={sym}
+              onClick={() => setActiveSymbol(sym)}
+              className={cn(
+                'px-3 py-1 rounded-full text-sm font-medium border transition-colors',
+                activeSymbol === sym
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+              )}
+            >
+              {sym === 'all' ? '全部标的' : sym}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* 投资建议卡片(最突出) */}
-      {recEntries.length > 0 && (
+      {filterEntries(recEntries).length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {recEntries.map(([sym, rec]: [string, any]) => {
+          {filterEntries(recEntries).map(([sym, rec]: [string, any]) => {
             const st = actionStyle(rec.action)
             const composite = scoreOf(rec.composite_score)
             const conf = typeof rec.confidence === 'number' ? rec.confidence : 0.5
@@ -823,10 +858,10 @@ function ReactReport({ answer }: { answer: string }) {
       )}
 
       {/* 市场概览 */}
-      {overviewEntries.length > 0 && (
+      {filterEntries(overviewEntries).length > 0 && (
         <SectionCard icon={Database} title="市场概览">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {overviewEntries.map(([sym, info]: [string, any]) => (
+            {filterEntries(overviewEntries).map(([sym, info]: [string, any]) => (
               <div key={sym} className="p-3 bg-slate-50 rounded-lg">
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-medium">{info.company_name || sym}</span>
@@ -870,7 +905,7 @@ function ReactReport({ answer }: { answer: string }) {
                 <span className="text-slate-500">整体展望</span>
                 <span className={cn('font-semibold', trendColor(technical.overall_outlook))}>{trendZh(technical.overall_outlook)}</span>
               </div>
-              {Object.entries(technical.by_symbol).map(([sym, t]: [string, any]) => {
+              {filterEntries(Object.entries(technical.by_symbol)).map(([sym, t]: [string, any]) => {
                 const weekly = t.weekly_trend || {}
                 const alignment = weekly.alignment?.state
                 const crosses = Object.entries(weekly.recent_crosses || {})
@@ -915,7 +950,7 @@ function ReactReport({ answer }: { answer: string }) {
                 <span className="text-slate-500">整体评级</span>
                 <span className="font-semibold">{trendZh(fundamental.overall_rating)}</span>
               </div>
-              {Object.entries(fundamental.by_symbol).map(([sym, f]: [string, any]) => {
+              {filterEntries(Object.entries(fundamental.by_symbol)).map(([sym, f]: [string, any]) => {
                 const score = scoreOf(f.overall_score)
                 const scenarios = f.valuation_scenarios?.scenarios || {}
                 const flags: any[] = f.quality?.red_flags || []
@@ -983,7 +1018,7 @@ function ReactReport({ answer }: { answer: string }) {
                   <span className="font-semibold">{sentimentZh(sentiment.overall.sentiment)}（{formatNumber(sentiment.overall.score, 0)}）</span>
                 </div>
               )}
-              {Object.entries(sentiment.by_symbol).map(([sym, s]: [string, any]) => (
+              {filterEntries(Object.entries(sentiment.by_symbol)).map(([sym, s]: [string, any]) => (
                 <div key={sym} className="p-3 bg-slate-50 rounded-lg space-y-1 text-sm">
                   <p className="font-medium mb-1">{sym}</p>
                   <div className="flex justify-between"><span className="text-slate-500">情绪</span><span className="font-medium">{sentimentZh(s.sentiment)}</span></div>
@@ -1001,7 +1036,7 @@ function ReactReport({ answer }: { answer: string }) {
                 <span className="text-slate-500">整体风险</span>
                 {(() => { const rs = riskStyle(risk.overall_risk); return <span className={cn('px-2 py-0.5 rounded text-xs font-semibold', rs.bg, rs.color)}>{riskZh(risk.overall_risk)}</span> })()}
               </div>
-              {Object.entries(risk.by_symbol).map(([sym, r]: [string, any]) => {
+              {filterEntries(Object.entries(risk.by_symbol)).map(([sym, r]: [string, any]) => {
                 const rs = riskStyle(r.risk_level)
                 const rscore = scoreOf(r.risk_score)
                 return (
@@ -1046,7 +1081,7 @@ function ReactReport({ answer }: { answer: string }) {
             {synthesis.audit_conflicts?.length > 0 && (
               <p className="text-xs text-amber-600">⚠ 证据冲突：{synthesis.audit_conflicts.map((c: any) => c.detail).join('；')}</p>
             )}
-            {Object.entries(synthesis.by_symbol).map(([sym, entry]: [string, any]) => {
+            {filterEntries(Object.entries(synthesis.by_symbol)).map(([sym, entry]: [string, any]) => {
               const verdict = entry.committee_verdict || 'watch'
               const vStyle = verdict === 'approve'
                 ? { bg: 'bg-green-100', color: 'text-green-700', label: '委员会批准' }
@@ -1097,6 +1132,36 @@ function ReactReport({ answer }: { answer: string }) {
                       <p className="text-xs text-slate-600 leading-relaxed">{entry.invalidation}</p>
                     </div>
                   )}
+                  {entry.pm && (
+                    <div className="p-2 bg-blue-50 rounded border border-blue-100">
+                      <p className="text-xs text-blue-700 font-medium mb-1">
+                        组合经理结论 · {entry.pm.horizon || '期限未声明'}
+                        <span className="ml-2 text-slate-400">({entry.pm.committee_verdict})</span>
+                      </p>
+                      <p className="text-xs text-slate-700 leading-relaxed">{entry.pm.thesis}</p>
+                      {entry.pm.conditions?.length > 0 && (
+                        <ul className="text-xs text-slate-500 list-disc pl-4 mt-1 space-y-0.5">
+                          {entry.pm.conditions.map((cond: string, i: number) => <li key={i}>{cond}</li>)}
+                        </ul>
+                      )}
+                      {entry.pm.invalidation && (
+                        <p className="text-xs text-slate-500 mt-1">失效即认错：{entry.pm.invalidation}</p>
+                      )}
+                    </div>
+                  )}
+                  {entry.analysts && (
+                    <div className="space-y-1">
+                      {Object.entries(entry.analysts).map(([role, view]: [string, any]) => (
+                        <div key={role} className="text-xs">
+                          <span className="text-slate-400">
+                            {role === 'technical' ? '技术' : role === 'fundamental' ? '基本面' : role === 'valuation' ? '估值' : '事件'} ·
+                          </span>
+                          <span className="text-slate-600"> {view.view}</span>
+                          <span className="text-slate-400">（引用：{(view.cites || []).join('、')}）</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {entry.position_cap_pct != null && (
                     <p className="text-xs text-slate-500">仓位上限：{formatNumber(entry.position_cap_pct, 0)}%</p>
                   )}
@@ -1108,6 +1173,52 @@ function ReactReport({ answer }: { answer: string }) {
                 </div>
               )
             })}
+          </div>
+        </SectionCard>
+      )}
+      {/* 证据抽屉：每个数字可溯源 */}
+      {Object.keys(evidenceIndex).length > 0 && (
+        <SectionCard icon={Hash} title="证据抽屉（每个数字可溯源）">
+          <div className="space-y-2">
+            {filterEntries(Object.entries(evidenceIndex)).map(([sym, records]: [string, any]) => (
+              <div key={sym} className="border border-slate-200 rounded-lg">
+                <button
+                  onClick={() => setOpenEvidence(openEvidence === sym ? null : sym)}
+                  className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium hover:bg-slate-50 rounded-lg"
+                >
+                  <span>{sym} · {records.length} 条证据</span>
+                  <span className="text-xs text-slate-400">{openEvidence === sym ? '收起' : '展开'}</span>
+                </button>
+                {openEvidence === sym && (
+                  <div className="px-3 pb-3 overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-slate-400 border-b border-slate-200">
+                          <th className="py-1 pr-3">指标</th>
+                          <th className="py-1 pr-3">数值</th>
+                          <th className="py-1 pr-3">单位</th>
+                          <th className="py-1 pr-3">as_of</th>
+                          <th className="py-1 pr-3">来源</th>
+                          <th className="py-1">公式</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {records.map((rec: any, i: number) => (
+                          <tr key={rec.metric_id || i} className="border-b border-slate-100 align-top">
+                            <td className="py-1 pr-3 font-medium text-slate-700">{rec.name}</td>
+                            <td className="py-1 pr-3">{rec.value ?? '—'}</td>
+                            <td className="py-1 pr-3 text-slate-500">{rec.unit}</td>
+                            <td className="py-1 pr-3 text-slate-500">{String(rec.as_of || '').slice(0, 10)}</td>
+                            <td className="py-1 pr-3 text-slate-500">{rec.source}</td>
+                            <td className="py-1 text-slate-400">{rec.formula}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </SectionCard>
       )}

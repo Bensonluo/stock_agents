@@ -35,6 +35,9 @@ class ReportService:
         synthesis = cls._synthesis(c)
         if synthesis:
             sections["research_synthesis"] = synthesis
+        evidence_index = cls._evidence_index(c)
+        if evidence_index:
+            sections["evidence_index"] = evidence_index
         return sections
 
     @classmethod
@@ -220,6 +223,24 @@ class ReportService:
         }
 
     @classmethod
+    def _evidence_index(cls, c: dict[str, Any]) -> dict[str, Any]:
+        """Every traceable number, grouped by symbol, for the evidence drawer."""
+        index: dict[str, Any] = {}
+        for symbol, analysis in c["technical_analysis"].items():
+            records = list(analysis.get("evidence") or [])
+            records += list((analysis.get("weekly_sma") or {}).get("evidence") or [])
+            records += list(
+                ((c["fundamental_analysis"].get(symbol) or {}).get("quality") or {}).get("evidence") or []
+            )
+            records += list(
+                ((c["fundamental_analysis"].get(symbol) or {}).get("valuation_scenarios") or {}).get("evidence")
+                or []
+            )
+            if records:
+                index[symbol] = records
+        return index
+
+    @classmethod
     def _synthesis(cls, c: dict[str, Any]) -> dict[str, Any]:
         """Bull/Bear + audit + committee section; empty when not synthesized."""
         synthesis = c["research_synthesis"]
@@ -239,6 +260,8 @@ class ReportService:
                 "committee_conditions": committee.get("conditions", []),
                 "position_cap_pct": committee.get("position_cap_pct"),
                 "narrative": entry.get("narrative"),
+                "analysts": entry.get("analysts"),
+                "pm": entry.get("pm"),
             }
         return {
             "audit_verdict": (synthesis.get("audit") or {}).get("verdict"),
