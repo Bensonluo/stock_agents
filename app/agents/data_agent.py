@@ -16,8 +16,9 @@ logger = get_logger(__name__)
 # Semaphore to cap concurrent yfinance calls and avoid rate-limiting
 _yfinance_semaphore = asyncio.Semaphore(5)
 
-# Three calendar years provide ample warm-up for SMA200 and weekly trend features.
-DEFAULT_HISTORY_DAYS = 3 * 365
+# Single definition of the shared history window (also used by the ReAct
+# fetcher) — changing the warm-up horizon must not require two edits.
+from app.tools.data.fetcher import DEFAULT_HISTORY_DAYS, fetch_stock_data  # noqa: E402
 
 
 def _yfinance_debt_to_equity_ratio(value: Any) -> Optional[float]:
@@ -391,6 +392,11 @@ class DataCollectionAgent(BaseAgent):
     async def _fetch_market_data(self, symbol: str) -> Dict[str, Any]:
         """Fetch market data for a symbol.
 
+        Primary path is the direct yfinance snapshot; when it yields nothing
+        (rate limits, delisted mapping), fall back to the shared multi-source
+        provider chain (yfinance -> finnhub -> akshare -> yahoo-api) that the
+        ReAct tools use, so both paths share the same resilience.
+
         Args:
             symbol: Stock symbol
 
@@ -405,6 +411,14 @@ class DataCollectionAgent(BaseAgent):
                 result = await asyncio.to_thread(
                     _sync_fetch_market_data, yahoo_symbol, symbol, self._historical_data_to_dict
                 )
+
+            if not result or not result.get("historical_data"):
+                fallback = await fetch_stock_data(symbol)
+                market = (fallback or {}).get("market_data", {}).get(symbol) or {}
+                if market.get("historical_data"):
+                    logger.info(f"[data_agent] provider-chain fallback supplied market data for {symbol}")
+                    return {**market, "symbol": symbol}
+
             return result
 
         except Exception as e:
