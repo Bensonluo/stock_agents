@@ -233,10 +233,12 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
         if all_news:
             data["news_data"] = all_news
 
-    # analyze_technical / fundamental / assess_risk: result has "symbol" key, already indexed
+    # analyze_technical / fundamental / valuation / assess_risk: result has
+    # "symbol" key, already indexed
     for tool_name, key in (
         ("analyze_technical", "technical_analysis"),
         ("analyze_fundamental", "fundamental_analysis"),
+        ("analyze_valuation", "valuation_analysis"),
         ("assess_risk", "risk_assessment"),
     ):
         bucket = tr.get(tool_name, {})

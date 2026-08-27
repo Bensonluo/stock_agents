@@ -9,7 +9,9 @@ from typing import Any
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from app.analysis.fundamental import financial_quality
 from app.analysis.technical import weekly_sma_summary
+from app.analysis.valuation import scenario_valuation
 from app.tools.analysis.fundamental import (
     _analyze_financial_health,
     _analyze_growth,
@@ -158,6 +160,58 @@ async def analyze_fundamental(symbol: str) -> dict[str, Any]:
         "growth": growth,
         "overall_score": overall,
         "recommendation": _recommendation(overall["score"]),
+        "quality": _financial_quality_view(symbol, financial),
+    }
+
+
+class AnalyzeValuationSimpleInput(BaseModel):
+    symbol: str = Field(description="Stock symbol to analyze (e.g., 'AAPL', '600000')")
+
+
+@tool(args_schema=AnalyzeValuationSimpleInput)
+async def analyze_valuation(symbol: str) -> dict[str, Any]:
+    """Estimate a Bear/Base/Bull value RANGE with stated assumptions and a
+    sensitivity table. Returns a range, never a single target price.
+    Automatically fetches the latest financial data.
+    """
+    data = await _fetch_and_split(symbol)
+    if not data:
+        return {"error": f"Could not fetch data for {symbol}"}
+
+    financial = data["financial_data"].get(symbol, {})
+    mkt = data["market_data"].get(symbol, {})
+    metrics = financial.get("metrics", {})
+
+    result = scenario_valuation(
+        symbol=symbol,
+        current_price=mkt.get("current_price"),
+        trailing_eps=metrics.get("trailing_eps"),
+        ps_ratio=metrics.get("ps_ratio"),
+        earnings_growth=metrics.get("earnings_growth"),
+        revenue_growth=metrics.get("revenue_growth"),
+        source="financial_metrics",
+    )
+    # Evidence trail stays server-side; the LLM needs scenarios + assumptions.
+    result.pop("evidence", None)
+    return result
+
+
+def _financial_quality_view(symbol: str, financial: dict[str, Any]) -> dict[str, Any]:
+    """Compact statement-quality summary (status, trend verdicts, red flags)."""
+    try:
+        quality = financial_quality(financial, symbol=symbol, source="financial_statements")
+    except Exception as e:
+        logger.warning(f"[auto_tools] financial quality failed for {symbol}: {e}")
+        return {"status": "error", "reason": str(e)}
+    return {
+        "status": quality["status"],
+        "revenue_trend": {
+            "cagr": (quality.get("revenue_trend") or {}).get("cagr"),
+        }
+        if quality.get("revenue_trend")
+        else None,
+        "cash_quality": quality.get("cash_quality"),
+        "red_flags": quality.get("red_flags", []),
     }
 
 

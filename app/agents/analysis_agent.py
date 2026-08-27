@@ -1,13 +1,14 @@
 """Analysis agent for technical and fundamental analysis."""
 
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from app.agents.base import BaseAgent
-from app.analysis.technical import weekly_sma_summary
+from app.analysis.fundamental import financial_quality
+from app.analysis.technical import analyze_daily, to_dataframe, weekly_sma_summary
+from app.analysis.valuation import scenario_valuation
 from app.orchestration.state import AgentState
 from app.utils.logging import get_logger
 
@@ -26,7 +27,7 @@ class TechnicalAnalysisAgent(BaseAgent):
     Uses pandas-ta for comprehensive indicator calculations.
     """
 
-    async def execute(self, state: AgentState) -> Dict[str, Any]:
+    async def execute(self, state: AgentState) -> dict[str, Any]:
         """Execute the technical analysis agent.
 
         Args:
@@ -58,8 +59,8 @@ class TechnicalAnalysisAgent(BaseAgent):
         # Return only the partial state (field we modify)
         return {"technical_analysis": results}
 
-    async def _analyze_symbol(self, symbol: str, data: Dict) -> Dict[str, Any]:
-        """Perform technical analysis for a single symbol.
+    async def _analyze_symbol(self, symbol: str, data: dict) -> dict[str, Any]:
+        """Perform technical analysis for a single symbol via the daily engine.
 
         Args:
             symbol: Stock symbol
@@ -72,41 +73,23 @@ class TechnicalAnalysisAgent(BaseAgent):
         if not hist_data:
             return {}
 
-        # Convert to DataFrame
-        df = self._historical_data_to_dataframe(hist_data)
-        if df.empty or len(df) < 20:
-            logger.warning(f"Insufficient data for {symbol}")
-            return {}
+        analysis = analyze_daily(
+            hist_data,
+            symbol=symbol,
+            current_price=data.get("current_price"),
+            source="market_data_history",
+        )
+        if analysis.get("status") != "available":
+            logger.warning(f"Insufficient data for {symbol}: {analysis.get('reason')}")
+            return analysis
 
-        # Calculate indicators
-        indicators = self._calculate_indicators(df)
+        df = to_dataframe(hist_data)
+        analysis["patterns"] = self._detect_patterns(df)
+        analysis["weekly_sma"] = self._weekly_sma_pack(symbol, hist_data)
+        analysis["timestamp"] = datetime.now().isoformat()
+        return analysis
 
-        # Generate signals
-        signals = self._generate_signals(df, indicators)
-
-        # Find support and resistance
-        support, resistance = self._find_support_resistance(df)
-
-        # Detect patterns
-        patterns = self._detect_patterns(df)
-
-        # Calculate overall sentiment
-        sentiment = self._calculate_technical_sentiment(signals, indicators)
-
-        return {
-            "symbol": symbol,
-            "current_price": data.get("current_price"),
-            "indicators": indicators,
-            "signals": signals,
-            "support": support,
-            "resistance": resistance,
-            "patterns": patterns,
-            "sentiment": sentiment,
-            "weekly_sma": self._weekly_sma_pack(symbol, hist_data),
-            "timestamp": datetime.now().isoformat(),
-        }
-
-    def _weekly_sma_pack(self, symbol: str, hist_data: Dict) -> Dict[str, Any]:
+    def _weekly_sma_pack(self, symbol: str, hist_data: dict) -> dict[str, Any]:
         """Weekly SMA evidence pack; failure must not sink the whole analysis."""
         try:
             return weekly_sma_summary(hist_data, symbol=symbol, source="market_data_history")
@@ -114,278 +97,7 @@ class TechnicalAnalysisAgent(BaseAgent):
             logger.warning(f"Weekly SMA pack failed for {symbol}: {e}")
             return {"status": "error", "reason": str(e)}
 
-    def _historical_data_to_dataframe(self, hist_data: Dict) -> pd.DataFrame:
-        """Convert historical data dict to DataFrame.
-
-        Args:
-            hist_data: Historical data dictionary
-
-        Returns:
-            DataFrame with OHLCV data
-        """
-        try:
-            df = pd.DataFrame({
-                "open": hist_data.get("open", []),
-                "high": hist_data.get("high", []),
-                "low": hist_data.get("low", []),
-                "close": hist_data.get("close", []),
-                "volume": hist_data.get("volume", []),
-            }, index=pd.to_datetime(hist_data.get("dates", [])))
-
-            return df.dropna()
-        except Exception:
-            return pd.DataFrame()
-
-    def _calculate_indicators(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """Calculate technical indicators.
-
-        Args:
-            df: Price DataFrame
-
-        Returns:
-            Dictionary of indicator values
-        """
-        indicators = {}
-
-        try:
-            close = df["close"]
-
-            # Moving averages
-            indicators["sma_20"] = float(close.rolling(20).mean().iloc[-1])
-            indicators["sma_50"] = float(close.rolling(50).mean().iloc[-1])
-            indicators["sma_200"] = float(close.rolling(200).mean().iloc[-1])
-
-            # Exponential moving averages
-            indicators["ema_12"] = float(close.ewm(span=12).mean().iloc[-1])
-            indicators["ema_26"] = float(close.ewm(span=26).mean().iloc[-1])
-
-            # RSI
-            rsi = self._calculate_rsi(close)
-            indicators["rsi"] = float(rsi.iloc[-1]) if not rsi.empty else None
-
-            # MACD
-            ema_12 = close.ewm(span=12).mean()
-            ema_26 = close.ewm(span=26).mean()
-            macd_line = ema_12 - ema_26
-            signal_line = macd_line.ewm(span=9).mean()
-            histogram = macd_line - signal_line
-
-            indicators["macd"] = {
-                "macd": float(macd_line.iloc[-1]),
-                "signal": float(signal_line.iloc[-1]),
-                "histogram": float(histogram.iloc[-1]),
-            }
-
-            # Bollinger Bands
-            sma_20 = close.rolling(20).mean()
-            std_20 = close.rolling(20).std()
-            upper_band = sma_20 + (std_20 * 2)
-            lower_band = sma_20 - (std_20 * 2)
-
-            indicators["bollinger_bands"] = {
-                "upper": float(upper_band.iloc[-1]),
-                "middle": float(sma_20.iloc[-1]),
-                "lower": float(lower_band.iloc[-1]),
-                "width": float(
-                    (upper_band.iloc[-1] - lower_band.iloc[-1]) / sma_20.iloc[-1]
-                ) if sma_20.iloc[-1] > 0 else None,
-            }
-
-            # ATR (Average True Range)
-            indicators["atr"] = float(self._calculate_atr(df).iloc[-1])
-
-            # Volume indicators
-            if "volume" in df.columns:
-                indicators["volume_sma_20"] = float(
-                    df["volume"].rolling(20).mean().iloc[-1]
-                )
-                indicators["volume_ratio"] = float(
-                    df["volume"].iloc[-1] / df["volume"].rolling(20).mean().iloc[-1]
-                ) if df["volume"].rolling(20).mean().iloc[-1] > 0 else None
-
-        except Exception as e:
-            logger.error(f"Error calculating indicators: {e}")
-
-        return indicators
-
-    def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
-        """Calculate RSI indicator.
-
-        Args:
-            prices: Price series
-            period: RSI period
-
-        Returns:
-            RSI values
-        """
-        delta = prices.diff()
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-
-        avg_gain = gain.rolling(period).mean()
-        avg_loss = loss.rolling(period).mean()
-
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-
-        return rsi
-
-    def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
-        """Calculate Average True Range.
-
-        Args:
-            df: Price DataFrame with OHLC
-            period: ATR period
-
-        Returns:
-            ATR values
-        """
-        high_low = df["high"] - df["low"]
-        high_close = np.abs(df["high"] - df["close"].shift())
-        low_close = np.abs(df["low"] - df["close"].shift())
-
-        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        atr = true_range.rolling(period).mean()
-
-        return atr
-
-    def _generate_signals(
-        self, df: pd.DataFrame, indicators: Dict[str, Any]
-    ) -> Dict[str, str]:
-        """Generate trading signals based on indicators.
-
-        Args:
-            df: Price DataFrame
-            indicators: Calculated indicators
-
-        Returns:
-            Dictionary of signal categories
-        """
-        signals = {}
-        current_price = df["close"].iloc[-1]
-
-        # Trend signals
-        sma_20 = indicators.get("sma_20")
-        sma_50 = indicators.get("sma_50")
-
-        if sma_20 and sma_50:
-            if current_price > sma_20 > sma_50:
-                signals["trend"] = "strong_bullish"
-            elif current_price > sma_20:
-                signals["trend"] = "bullish"
-            elif current_price < sma_20 < sma_50:
-                signals["trend"] = "strong_bearish"
-            elif current_price < sma_20:
-                signals["trend"] = "bearish"
-            else:
-                signals["trend"] = "neutral"
-
-        # RSI signals
-        rsi = indicators.get("rsi")
-        if rsi:
-            if rsi > 70:
-                signals["rsi"] = "overbought"
-            elif rsi > 60:
-                signals["rsi"] = "bullish"
-            elif rsi < 30:
-                signals["rsi"] = "oversold"
-            elif rsi < 40:
-                signals["rsi"] = "bearish"
-            else:
-                signals["rsi"] = "neutral"
-
-        # MACD signals
-        macd = indicators.get("macd", {})
-        if macd:
-            if macd.get("histogram", 0) > 0:
-                if macd.get("macd", 0) > macd.get("signal", 0):
-                    signals["macd"] = "bullish"
-                else:
-                    signals["macd"] = "neutral"
-            else:
-                signals["macd"] = "bearish"
-
-        # Bollinger Band signals
-        bb = indicators.get("bollinger_bands", {})
-        if bb:
-            if current_price > bb.get("upper", 0):
-                signals["bollinger"] = "overbought"
-            elif current_price < bb.get("lower", 0):
-                signals["bollinger"] = "oversold"
-            else:
-                signals["bollinger"] = "neutral"
-
-        # Volume signals
-        vol_ratio = indicators.get("volume_ratio")
-        if vol_ratio:
-            if vol_ratio > 2:
-                signals["volume"] = "high"
-            elif vol_ratio > 1.5:
-                signals["volume"] = "above_average"
-            elif vol_ratio < 0.5:
-                signals["volume"] = "low"
-            else:
-                signals["volume"] = "normal"
-
-        return signals
-
-    def _find_support_resistance(
-        self, df: pd.DataFrame, window: int = 20
-    ) -> Tuple[Dict[str, float], Dict[str, float]]:
-        """Find support and resistance levels.
-
-        Args:
-            df: Price DataFrame
-            window: Lookback window
-
-        Returns:
-            Tuple of (support levels, resistance levels)
-        """
-        close = df["close"]
-        recent = close.tail(window)
-
-        # Find local minima and maxima
-        local_min = []
-        local_max = []
-
-        for i in range(2, len(recent) - 2):
-            if (
-                recent.iloc[i] < recent.iloc[i - 1]
-                and recent.iloc[i] < recent.iloc[i - 2]
-                and recent.iloc[i] < recent.iloc[i + 1]
-                and recent.iloc[i] < recent.iloc[i + 2]
-            ):
-                local_min.append(recent.iloc[i])
-
-            if (
-                recent.iloc[i] > recent.iloc[i - 1]
-                and recent.iloc[i] > recent.iloc[i - 2]
-                and recent.iloc[i] > recent.iloc[i + 1]
-                and recent.iloc[i] > recent.iloc[i + 2]
-            ):
-                local_max.append(recent.iloc[i])
-
-        # Get closest levels
-        current_price = close.iloc[-1]
-
-        support_levels = sorted([l for l in local_min if l < current_price], reverse=True)
-        resistance_levels = sorted([l for l in local_max if l > current_price])
-
-        support = {
-            "s1": float(support_levels[0]) if len(support_levels) > 0 else None,
-            "s2": float(support_levels[1]) if len(support_levels) > 1 else None,
-            "s3": float(support_levels[2]) if len(support_levels) > 2 else None,
-        }
-
-        resistance = {
-            "r1": float(resistance_levels[0]) if len(resistance_levels) > 0 else None,
-            "r2": float(resistance_levels[1]) if len(resistance_levels) > 1 else None,
-            "r3": float(resistance_levels[2]) if len(resistance_levels) > 2 else None,
-        }
-
-        return support, resistance
-
-    def _detect_patterns(self, df: pd.DataFrame) -> Dict[str, Any]:
+    def _detect_patterns(self, df: pd.DataFrame) -> dict[str, Any]:
         """Detect common candlestick patterns.
 
         Args:
@@ -441,84 +153,6 @@ class TechnicalAnalysisAgent(BaseAgent):
 
         return patterns
 
-    def _calculate_technical_sentiment(
-        self, signals: Dict[str, str], indicators: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Calculate overall technical sentiment.
-
-        Args:
-            signals: Trading signals
-            indicators: Technical indicators
-
-        Returns:
-            Sentiment analysis with score
-        """
-        score = 0  # Range: -100 (bearish) to +100 (bullish)
-
-        # Trend contribution (30%)
-        trend = signals.get("trend", "neutral")
-        if trend == "strong_bullish":
-            score += 30
-        elif trend == "bullish":
-            score += 15
-        elif trend == "bearish":
-            score -= 15
-        elif trend == "strong_bearish":
-            score -= 30
-
-        # RSI contribution (20%)
-        rsi_signal = signals.get("rsi", "neutral")
-        if rsi_signal == "oversold":
-            score += 20  # Oversold is bullish signal
-        elif rsi_signal == "bullish":
-            score += 10
-        elif rsi_signal == "bearish":
-            score -= 10
-        elif rsi_signal == "overbought":
-            score -= 20  # Overbought is bearish signal
-
-        # MACD contribution (20%)
-        macd_signal = signals.get("macd", "neutral")
-        if macd_signal == "bullish":
-            score += 20
-        elif macd_signal == "bearish":
-            score -= 20
-
-        # Bollinger Bands contribution (15%)
-        bb_signal = signals.get("bollinger", "neutral")
-        if bb_signal == "oversold":
-            score += 15
-        elif bb_signal == "overbought":
-            score -= 15
-
-        # Volume contribution (15%)
-        vol_signal = signals.get("volume", "normal")
-        if vol_signal == "high" and score > 0:
-            score += 15  # High volume confirms bullish trend
-        elif vol_signal == "high" and score < 0:
-            score -= 15  # High volume confirms bearish trend
-
-        # Determine sentiment label
-        if score >= 60:
-            sentiment = "strong_buy"
-        elif score >= 30:
-            sentiment = "buy"
-        elif score >= 10:
-            sentiment = "moderate_buy"
-        elif score <= -60:
-            sentiment = "strong_sell"
-        elif score <= -30:
-            sentiment = "sell"
-        elif score <= -10:
-            sentiment = "moderate_sell"
-        else:
-            sentiment = "hold"
-
-        return {
-            "score": score,
-            "sentiment": sentiment,
-            "strength": abs(score),
-        }
 
 
 class FundamentalAnalysisAgent(BaseAgent):
@@ -532,7 +166,7 @@ class FundamentalAnalysisAgent(BaseAgent):
     - Assesses growth potential
     """
 
-    async def execute(self, state: AgentState) -> Dict[str, Any]:
+    async def execute(self, state: AgentState) -> dict[str, Any]:
         """Execute the fundamental analysis agent.
 
         Args:
@@ -569,8 +203,8 @@ class FundamentalAnalysisAgent(BaseAgent):
         return {"fundamental_analysis": results}
 
     async def _analyze_fundamentals(
-        self, symbol: str, fin_data: Dict, mkt_data: Dict
-    ) -> Dict[str, Any]:
+        self, symbol: str, fin_data: dict, mkt_data: dict
+    ) -> dict[str, Any]:
         """Perform fundamental analysis for a single symbol.
 
         Args:
@@ -611,10 +245,39 @@ class FundamentalAnalysisAgent(BaseAgent):
             "growth": growth,
             "overall_score": overall_score,
             "recommendation": recommendation,
+            "quality": self._financial_quality(symbol, fin_data),
+            "valuation_scenarios": self._valuation_scenarios(symbol, fin_data, mkt_data),
             "timestamp": datetime.now().isoformat(),
         }
 
-    def _analyze_profitability(self, metrics: Dict) -> Dict[str, Any]:
+    def _financial_quality(self, symbol: str, fin_data: dict) -> dict[str, Any]:
+        """Statement-based quality/trend/red-flag summary from the engine."""
+        try:
+            return financial_quality(fin_data, symbol=symbol, source="financial_statements")
+        except Exception as e:
+            logger.warning(f"Financial quality engine failed for {symbol}: {e}")
+            return {"status": "error", "reason": str(e)}
+
+    def _valuation_scenarios(
+        self, symbol: str, fin_data: dict, mkt_data: dict
+    ) -> dict[str, Any]:
+        """Bear/Base/Bull valuation range from the engine."""
+        metrics = fin_data.get("metrics", {})
+        try:
+            return scenario_valuation(
+                symbol=symbol,
+                current_price=mkt_data.get("current_price"),
+                trailing_eps=metrics.get("trailing_eps"),
+                ps_ratio=metrics.get("ps_ratio"),
+                earnings_growth=metrics.get("earnings_growth"),
+                revenue_growth=metrics.get("revenue_growth"),
+                source="financial_metrics",
+            )
+        except Exception as e:
+            logger.warning(f"Valuation engine failed for {symbol}: {e}")
+            return {"status": "error", "reason": str(e)}
+
+    def _analyze_profitability(self, metrics: dict) -> dict[str, Any]:
         """Analyze profitability metrics.
 
         Args:
@@ -680,7 +343,7 @@ class FundamentalAnalysisAgent(BaseAgent):
             "status": "available" if details else "insufficient_data",
         }
 
-    def _analyze_valuation(self, metrics: Dict, mkt_data: Dict) -> Dict[str, Any]:
+    def _analyze_valuation(self, metrics: dict, mkt_data: dict) -> dict[str, Any]:
         """Analyze valuation metrics.
 
         Args:
@@ -745,7 +408,7 @@ class FundamentalAnalysisAgent(BaseAgent):
             "status": "available" if details else "insufficient_data",
         }
 
-    def _analyze_financial_health(self, metrics: Dict) -> Dict[str, Any]:
+    def _analyze_financial_health(self, metrics: dict) -> dict[str, Any]:
         """Analyze financial health metrics.
 
         Args:
@@ -800,7 +463,7 @@ class FundamentalAnalysisAgent(BaseAgent):
             "status": "available" if details else "insufficient_data",
         }
 
-    def _analyze_growth(self, fin_data: Dict) -> Dict[str, Any]:
+    def _analyze_growth(self, fin_data: dict) -> dict[str, Any]:
         """Analyze growth metrics.
 
         Args:
@@ -849,11 +512,11 @@ class FundamentalAnalysisAgent(BaseAgent):
 
     def _calculate_overall_score(
         self,
-        profitability: Dict,
-        valuation: Dict,
-        health: Dict,
-        growth: Dict,
-    ) -> Dict[str, Any]:
+        profitability: dict,
+        valuation: dict,
+        health: dict,
+        growth: dict,
+    ) -> dict[str, Any]:
         """Calculate overall fundamental score.
 
         Args:
@@ -907,7 +570,7 @@ class FundamentalAnalysisAgent(BaseAgent):
             "available_weight": round(available_weight, 2),
         }
 
-    def _generate_recommendation(self, overall_score: Dict) -> str:
+    def _generate_recommendation(self, overall_score: dict) -> str:
         """Generate investment recommendation.
 
         Args:

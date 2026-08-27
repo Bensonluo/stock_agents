@@ -23,10 +23,12 @@
 |---|---|---|
 | 唯一 TechnicalEngine(种子) | ✅ 2026-08-27 | 新增 `app/analysis/technical/engine.py`:`resample_weekly`(日→周 W-FRI 重采样)、`weekly_sma_pack`(五组周 SMA 5/10/20/40/60,每条线含现值/距离%/4周与12周斜率/连续位于上方或下方周数/warm-up;相邻均线交叉含方向、交叉以来收益、成交量确认;多头/空头/缠绕排列及持续周数)。所有数值输出附带 `MetricEvidence`,warm-up 不足显式 `insufficient_data`,无 NaN 外泄。测试 `tests/unit/analysis/test_weekly_sma.py`(15 例,含确定性/可复现性) |
 | 引擎接入 pipeline 与 ReAct | ✅ 2026-08-27 | `weekly_sma_summary` 提供 JSON 安全输出(`include_evidence=False` 供 ReAct 省 token);pipeline 的 `TechnicalAnalysisAgent` 每标的附带 `weekly_sma` 证据包,引擎异常降级不影响整体分析;两个报告层(agent + tool)经 `compact_weekly_view` 输出 `weekly_trend` 摘要(排列状态/持续周数/各线距离%/近期交叉),缺失时 `unavailable` 而非 0。集成测试 11 例 |
-| 财务趋势、现金质量、行业相对估值、三情景估值 | ⬜ | `app/analysis/fundamental/`、`app/analysis/valuation/` 待建 |
-| benchmark beta/CVaR/组合相关性/风险情景 | ⬜ 部分 | beta 已修;CVaR、组合相关性、情景压力待做 |
-| 合并重复技术/报告实现 | 🚧 | 周线特征已收敛到 engine;日线指标(RSI/MACD/Bollinger)在 analysis_agent 与 tools/analysis/technical.py 仍重复,待迁移 |
-| `as_of` 贯穿 provider/指标/回测 | 🚧 | schema 已定义,引擎输出带 as_of;provider 传递未接 |
+| 日线指标唯一引擎 | ✅ 2026-08-27 | `app/analysis/technical/daily.py` 承载规范超集(SMA20/50/200 带暖机守卫、EMA、RSI、MACD、Bollinger+宽度、ATR%、量比信号、s1-s3/r1-r3、量价确认情绪);`analysis_agent` 与 `tools/analysis/technical.py` 均改为委托(保留旧私有名别名),重复实现已删除 |
+| 风险引擎升级 | ✅ 2026-08-27 | `app/analysis/risk/engine.py`:CVaR95、Sortino、beta/年化 alpha/R²/相关性(对齐收益)、波动率自身历史分位、beta 标定市场冲击压力情景(-5%/-10%/-20%)、组合相关矩阵、HHI 集中度;`assess_risk` 工具输出全部新指标,证据化 |
+| 三情景估值引擎 | ✅ 2026-08-27 | `app/analysis/valuation/engine.py`:Bear/Base/Bull 区间(自身估值倍数锚定,非行业万能阈值)、盈利法(远期 EPS×倍数带)+ 销售法(亏损成长模板)、3×3 敏感性表、假设全部显式;亏损股自动路由销售法 |
+| 财务质量引擎 | ✅ 2026-08-27 | `app/analysis/fundamental/engine.py`:营收趋势/CAGR/同比、毛利率变化、CFO/净利、FCF;红旗检查(利润无现金流=critical、负权益=critical、营收下滑/毛利率侵蚀=warning);缺失显式 insufficient_data |
+| 接入两条路径 | ✅ 2026-08-27 | pipeline:`FundamentalAnalysisAgent` 每标的附 `quality`+`valuation_scenarios`;ReAct:`analyze_fundamental` 附质量摘要、新增 `analyze_valuation` 工具(已注册、结果路由 valuation_analysis);报告层(agent+tool)基本面段输出 `valuation_scenarios`/`quality` 摘要 |
+| `as_of` 贯穿 | 🚧 | data_agent market_data 已盖 as_of(最后交易日);引擎输出均带 as_of;回测与 provider 级 vintage 未接(Phase 3) |
 
 ## Phase 2-4 — 未开始
 

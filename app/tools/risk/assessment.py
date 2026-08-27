@@ -6,11 +6,38 @@ import numpy as np
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from app.analysis.risk import (
+    aligned_returns,
+    calculate_beta,
+    cvar_historical,
+    downside_deviation,
+    max_drawdown,
+    relative_risk_metrics,
+    sortino_ratio,
+    stress_scenarios,
+    to_returns,
+    volatility_percentile,
+)
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 MIN_BETA_OBSERVATIONS = 20
+
+# Backwards-compatible aliases for callers importing the historical private names.
+_aligned_returns = aligned_returns
+_calculate_beta = calculate_beta
+_max_drawdown = max_drawdown
+_downside_risk = downside_deviation
+
+
+def _calculate_beta_from_histories(
+    stock_history: dict, benchmark_history: dict | None
+) -> float | None:
+    if not benchmark_history:
+        return None
+    stock, benchmark = aligned_returns(stock_history, benchmark_history)
+    return calculate_beta(stock, benchmark)
 
 
 class AssessRiskInput(BaseModel):
@@ -19,51 +46,12 @@ class AssessRiskInput(BaseModel):
 
 @tool(args_schema=AssessRiskInput)
 def assess_risk(market_data: dict) -> dict[str, Any]:
-    """Calculate risk metrics (volatility, VaR, max drawdown, risk score)."""
+    """Calculate risk metrics (volatility, VaR/CVaR, beta, drawdown, stress)."""
     results = {}
 
     for symbol, data in market_data.items():
         try:
-            hist = data.get("historical_data", {})
-            closes = np.array(hist.get("close", []))
-            if len(closes) < 20:
-                results[symbol] = _minimal_risk(data, symbol)
-                continue
-
-            returns = np.diff(closes) / closes[:-1]
-            volatility = float(np.std(returns))
-            var_95 = float(np.percentile(returns, 5))
-            var_99 = float(np.percentile(returns, 1))
-            max_dd = _max_drawdown(closes)
-            downside = _downside_risk(returns)
-            benchmark_history = _get_benchmark_history(data)
-            beta = _calculate_beta_from_histories(hist, benchmark_history)
-            risk_score = _calculate_score(volatility, max_dd, var_95, beta)
-            risk_level = _score_to_level(risk_score)
-            beta_status = "available" if beta is not None else "insufficient_data"
-
-            results[symbol] = {
-                "symbol": symbol,
-                "risk_score": risk_score,
-                "risk_level": risk_level,
-                "risk_score_status": "complete" if beta is not None else "partial",
-                "metrics": {
-                    "volatility": volatility,
-                    "volatility_annualized": float(volatility * np.sqrt(252)),
-                    "var_95": var_95,
-                    "var_99": var_99,
-                    "max_drawdown": max_dd,
-                    "downside_risk": downside,
-                    "beta": beta,
-                    "beta_status": beta_status,
-                },
-                "position_recommendation": {
-                    "max_position_size": _position_size(risk_score) if beta is not None else None,
-                    "stop_loss_percentage": float(volatility * 2 * 100),
-                    "status": "available" if beta is not None else "insufficient_data",
-                },
-                "warnings": _warnings(risk_level, volatility, max_dd, beta_status),
-            }
+            results[symbol] = _assess_symbol(symbol, data)
         except Exception as e:
             logger.error(f"Risk assessment failed for {symbol}: {e}")
             results[symbol] = _minimal_risk(data, symbol)
@@ -71,15 +59,73 @@ def assess_risk(market_data: dict) -> dict[str, Any]:
     return results
 
 
-def _max_drawdown(prices: np.ndarray) -> float:
-    cummax = np.maximum.accumulate(prices)
-    drawdown = (cummax - prices) / cummax
-    return float(np.max(drawdown))
+def _assess_symbol(symbol: str, data: dict) -> dict[str, Any]:
+    hist = data.get("historical_data", {})
+    closes = np.array(hist.get("close", []))
+    if len(closes) < 20:
+        return _minimal_risk(data, symbol)
+
+    returns = to_returns(closes)
+    volatility = float(np.std(returns))
+    var_95 = float(np.percentile(returns, 5))
+    var_99 = float(np.percentile(returns, 1))
+    cvar_95 = cvar_historical(returns, level=0.95)
+    max_dd = max_drawdown(closes)
+    downside = downside_deviation(returns)
+    sortino = sortino_ratio(returns)
+    vol_percentile = volatility_percentile(returns)
+
+    benchmark_history = _get_benchmark_history(data)
+    stock_returns, benchmark_returns = _paired_returns(hist, benchmark_history)
+    beta = calculate_beta(stock_returns, benchmark_returns)
+    relative = relative_risk_metrics(stock_returns, benchmark_returns) if benchmark_returns is not None else {}
+    stress = stress_scenarios(beta)
+
+    risk_score = _calculate_score(volatility, max_dd, var_95, beta)
+    risk_level = _score_to_level(risk_score)
+    beta_status = "available" if beta is not None else "insufficient_data"
+
+    return {
+        "symbol": symbol,
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "risk_score_status": "complete" if beta is not None else "partial",
+        "metrics": {
+            "volatility": volatility,
+            "volatility_annualized": float(volatility * np.sqrt(252)),
+            "var_95": var_95,
+            "var_99": var_99,
+            "cvar_95": cvar_95,
+            "max_drawdown": max_dd,
+            "downside_risk": downside,
+            "sortino": sortino,
+            "volatility_percentile_20d": vol_percentile,
+            "beta": relative.get("beta", beta),
+            "beta_status": beta_status,
+            "alpha_annualized": relative.get("alpha_annualized"),
+            "r_squared": relative.get("r_squared"),
+            "correlation": relative.get("correlation"),
+        },
+        "stress_scenarios": stress,
+        "position_recommendation": {
+            "max_position_size": _position_size(risk_score) if beta is not None else None,
+            "stop_loss_percentage": float(volatility * 2 * 100),
+            "status": "available" if beta is not None else "insufficient_data",
+        },
+        "warnings": _warnings(risk_level, volatility, max_dd, beta_status),
+    }
 
 
-def _downside_risk(returns: np.ndarray) -> float:
-    neg = returns[returns < 0]
-    return float(np.std(neg)) if len(neg) > 0 else 0.0
+def _paired_returns(
+    stock_history: dict, benchmark_history: dict | None
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Aligned stock/benchmark returns; benchmark side is None without history."""
+    if not benchmark_history:
+        return np.array([]), None
+    stock, benchmark = aligned_returns(stock_history, benchmark_history)
+    if len(stock) == 0:
+        return np.array([]), None
+    return stock, benchmark
 
 
 def _get_benchmark_history(data: dict) -> dict | None:
@@ -93,79 +139,6 @@ def _get_benchmark_history(data: dict) -> dict | None:
         return None
     nested = benchmark.get("historical_data")
     return nested if isinstance(nested, dict) else benchmark
-
-
-def _aligned_returns(stock_history: dict, benchmark_history: dict) -> tuple[np.ndarray, np.ndarray]:
-    """Calculate returns over identical dated intervals for stock and benchmark."""
-    stock_dates = stock_history.get("dates", [])
-    stock_closes = stock_history.get("close", [])
-    benchmark_dates = benchmark_history.get("dates", [])
-    benchmark_closes = benchmark_history.get("close", [])
-
-    if len(stock_dates) != len(stock_closes) or len(benchmark_dates) != len(benchmark_closes):
-        return np.array([]), np.array([])
-
-    try:
-        stock_by_date = {
-            str(day): float(price)
-            for day, price in zip(stock_dates, stock_closes, strict=True)
-            if np.isfinite(float(price)) and float(price) > 0
-        }
-        benchmark_by_date = {
-            str(day): float(price)
-            for day, price in zip(benchmark_dates, benchmark_closes, strict=True)
-            if np.isfinite(float(price)) and float(price) > 0
-        }
-    except (TypeError, ValueError):
-        return np.array([]), np.array([])
-
-    common_dates = sorted(stock_by_date.keys() & benchmark_by_date.keys())
-    if len(common_dates) < 2:
-        return np.array([]), np.array([])
-
-    stock_prices = np.array([stock_by_date[day] for day in common_dates])
-    benchmark_prices = np.array([benchmark_by_date[day] for day in common_dates])
-    return np.diff(stock_prices) / stock_prices[:-1], np.diff(benchmark_prices) / benchmark_prices[
-        :-1
-    ]
-
-
-def _calculate_beta(
-    stock_returns: np.ndarray,
-    benchmark_returns: np.ndarray | None,
-    min_observations: int = MIN_BETA_OBSERVATIONS,
-) -> float | None:
-    """Calculate beta from paired returns, or return None when evidence is inadequate."""
-    if benchmark_returns is None:
-        return None
-
-    stock = np.asarray(stock_returns, dtype=float)
-    benchmark = np.asarray(benchmark_returns, dtype=float)
-    if stock.ndim != 1 or benchmark.ndim != 1 or len(stock) != len(benchmark):
-        return None
-
-    finite = np.isfinite(stock) & np.isfinite(benchmark)
-    stock = stock[finite]
-    benchmark = benchmark[finite]
-    if len(stock) < min_observations:
-        return None
-
-    benchmark_variance = float(np.var(benchmark, ddof=1))
-    if not np.isfinite(benchmark_variance) or benchmark_variance <= np.finfo(float).eps:
-        return None
-
-    covariance = float(np.cov(stock, benchmark, ddof=1)[0, 1])
-    beta = covariance / benchmark_variance
-    return float(beta) if np.isfinite(beta) else None
-
-
-def _calculate_beta_from_histories(
-    stock_history: dict, benchmark_history: dict | None
-) -> float | None:
-    if not benchmark_history:
-        return None
-    stock_returns, benchmark_returns = _aligned_returns(stock_history, benchmark_history)
-    return _calculate_beta(stock_returns, benchmark_returns)
 
 
 def _calculate_score(vol: float, dd: float, var: float, beta: float | None) -> float:

@@ -13,6 +13,7 @@ def register_all_tools() -> None:
         analyze_technical,
         analyze_fundamental,
         analyze_sentiment,
+        analyze_valuation,
         assess_risk,
         get_stock_overview,
     )
@@ -23,6 +24,7 @@ def register_all_tools() -> None:
     register_tool(get_historical_prices)
     register_tool(analyze_technical)
     register_tool(analyze_fundamental)
+    register_tool(analyze_valuation)
     register_tool(analyze_sentiment)
     register_tool(assess_risk)
     register_tool(get_stock_overview)

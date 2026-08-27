@@ -6,7 +6,9 @@ from typing import Any
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from app.analysis.fundamental import compact_quality_view
 from app.analysis.technical import compact_weekly_view
+from app.analysis.valuation import compact_valuation_view
 
 
 class GenerateReportInput(BaseModel):
@@ -95,6 +97,8 @@ def _fundamental_section(data: dict) -> dict:
             s: {
                 "overall_score": a.get("overall_score", {}).get("score", 50),
                 "recommendation": a.get("recommendation", "hold"),
+                "valuation_scenarios": compact_valuation_view(a.get("valuation_scenarios")),
+                "quality": compact_quality_view(a.get("quality")),
             }
             for s, a in fundamental.items()
         },

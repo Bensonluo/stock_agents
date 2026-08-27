@@ -4,7 +4,9 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from app.agents.base import StatelessAgent
+from app.analysis.fundamental import compact_quality_view
 from app.analysis.technical import compact_weekly_view
+from app.analysis.valuation import compact_valuation_view
 from app.orchestration.state import AgentState
 from app.utils.logging import get_logger
 
@@ -224,6 +226,10 @@ class ReportGenerationAgent(StatelessAgent):
                 "profitability": analysis.get("profitability", {}).get("rating", "N/A"),
                 "valuation": analysis.get("valuation", {}).get("rating", "N/A"),
                 "financial_health": analysis.get("financial_health", {}).get("rating", "N/A"),
+                "valuation_scenarios": compact_valuation_view(
+                    analysis.get("valuation_scenarios")
+                ),
+                "quality": compact_quality_view(analysis.get("quality")),
             }
 
             total_score += score

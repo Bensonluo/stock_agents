@@ -114,7 +114,7 @@ def weekly_sma_pack(
                 "required_weeks": window,
             }
             evidence.append(
-                _evidence(
+                make_evidence(
                     symbol=symbol,
                     name=name,
                     value=None,
@@ -145,7 +145,7 @@ def weekly_sma_pack(
         sma_details[str(window)] = details
 
         evidence.append(
-            _evidence(
+            make_evidence(
                 symbol=symbol,
                 name=name,
                 value=sma_value,
@@ -161,7 +161,7 @@ def weekly_sma_pack(
             slope = details[f"slope_{horizon}w_pct"]
             if slope is not None:
                 evidence.append(
-                    _evidence(
+                    make_evidence(
                         symbol=symbol,
                         name=f"{name}_slope_{horizon}w_pct",
                         value=slope,
@@ -285,7 +285,7 @@ def _insufficient_pack(symbol: str, as_of: datetime | None, *, reason: str) -> d
     }
 
 
-def _evidence(
+def make_evidence(
     *,
     symbol: str,
     name: str,
@@ -297,9 +297,10 @@ def _evidence(
     params: dict[str, Any],
     sample_count: int | None = None,
     quality: MetricQuality = MetricQuality.VERIFIED,
+    domain: str = "technical",
 ) -> MetricEvidence:
     return MetricEvidence(
-        metric_id=build_metric_id(symbol, "technical", name, cutoff.date()),
+        metric_id=build_metric_id(symbol, domain, name, cutoff.date()),
         name=name,
         value=value,
         unit=unit,

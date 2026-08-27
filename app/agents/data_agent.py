@@ -115,6 +115,11 @@ def _sync_fetch_market_data(yahoo_symbol: str, symbol: str, hist_converter) -> D
         change = current_price - previous_close
         change_percent = (change / previous_close) * 100
 
+    # as_of is the data cutoff every downstream metric must respect: the last
+    # trading bar when available, else the fetch time.
+    hist_dates = hist_data.get("dates") or []
+    as_of = hist_dates[-1] if hist_dates else datetime.now().date().isoformat()
+
     return {
         "symbol": symbol,
         "yahoo_symbol": yahoo_symbol,
@@ -131,6 +136,7 @@ def _sync_fetch_market_data(yahoo_symbol: str, symbol: str, hist_converter) -> D
         "sector": info.get("sector"),
         "industry": info.get("industry"),
         "description": info.get("longBusinessSummary"),
+        "as_of": as_of,
         "historical_data": hist_data,
         "timestamp": datetime.now().isoformat(),
     }
@@ -158,6 +164,7 @@ def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -
             "operating_margin": info.get("operatingMargins"),
             "pe_ratio": info.get("trailingPE"),
             "forward_pe": info.get("forwardPE"),
+            "trailing_eps": info.get("trailingEps"),
             "pb_ratio": info.get("priceToBook"),
             "ps_ratio": info.get("priceToSalesTrailing12Months"),
             "peg_ratio": info.get("pegRatio"),
