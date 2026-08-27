@@ -141,7 +141,20 @@ def _get_benchmark_history(data: dict) -> dict | None:
     return nested if isinstance(nested, dict) else benchmark
 
 
-def _calculate_score(vol: float, dd: float, var: float, beta: float | None) -> float:
+def _calculate_score(vol: float | None, dd: float | None, var: float | None, beta: float | None) -> float | None:
+    """Risk score 0-100 (higher = riskier); None when core metrics are missing.
+
+    Core metrics (volatility, drawdown, VaR) are required — missing ones yield
+    None instead of an invented score. Beta is optional and only ever ADDS
+    risk for high values; a historical low-beta penalty (+5 in an old agent
+    copy) was dropped: it contradicted the higher-is-riskier semantics.
+    """
+    import numpy as np
+
+    required = (vol, dd, var)
+    if any(value is None or not np.isfinite(value) for value in required):
+        return None
+
     score = 0
     if vol >= 0.03:
         score += 30
@@ -169,7 +182,9 @@ def _calculate_score(vol: float, dd: float, var: float, beta: float | None) -> f
     return min(100, score)
 
 
-def _score_to_level(score: float) -> str:
+def _score_to_level(score: float | None) -> str:
+    if score is None:
+        return "insufficient_data"
     if score >= 70:
         return "very_high"
     elif score >= 50:
@@ -182,7 +197,9 @@ def _score_to_level(score: float) -> str:
         return "very_low"
 
 
-def _position_size(score: float) -> float:
+def _position_size(score: float | None) -> float | None:
+    if score is None:
+        return None
     if score >= 70:
         return 2.0
     elif score >= 50:
@@ -206,6 +223,10 @@ def _warnings(level: str, vol: float, dd: float, beta_status: str = "available")
     if beta_status != "available":
         warnings.append("Beta unavailable: aligned benchmark history is insufficient.")
     return warnings
+
+
+# Public entry point shared by the pipeline agent and ReAct tools.
+assess_symbol = _assess_symbol
 
 
 def _minimal_risk(data: dict, symbol: str = "") -> dict:
