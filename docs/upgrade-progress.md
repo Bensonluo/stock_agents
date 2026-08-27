@@ -55,6 +55,20 @@
 | 历史校准与失败结果展示 | ✅ 2026-08-28 | `app/backtest/calibration.py`:入场信号按前瞻窗口(默认 20/60 bar)的实测命中率——样本数、Wilson 95% 下界、平均前瞻收益、分年明细(亏损年可见);`POST /api/backtest/v2/calibrate`。置信度自此以实测频率为锚。引擎数据卫生:乱序/重复索引确定性归一 |
 | 引擎数据卫生 | ✅ 2026-08-28 | run_backtest 对非递增索引排序、重复时间戳 keep-last 去重——索引乱序本身就是 look-ahead 缺陷 |
 
+## 重复实现统一(2026-08-28,计划 §5.1"共享领域服务"收口)
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 风险数学 | ✅ | `risk_agent` 只留编排+组合层;个股指标走 `assess_symbol`(引擎路径),流水线同步获得 CVaR/Sortino/alpha/R²/压力情景。共享评分升级为带 None 校验的超集;废弃 agent 独有的 `beta<=0.5→+5` 分支(与"分高=险高"语义相悖) |
+| 旧 Backtrader 路径 | ✅ | `/run` 委托 V2 引擎并映射旧响应字段;四个 Backtrader 策略类删除(-203 行)。依赖暂留 pyproject,随下次 lock 刷新移除 |
+| 基本面评分 | ✅ | `app/analysis/fundamental/scoring.py` 为规范实现;工具=LangChain 包装+别名;`FundamentalAnalysisAgent` 委托 |
+| 情绪评分 | ✅ | `app/analysis/sentiment.py` 为规范实现;工具与 agent 均委托(agent 保留 LLM 增强——那是特性不是重复) |
+| 执行摘要第三份 | ✅ | `routes/agent.py` 改调 `ReportService.detect_lang/executive_summary` |
+| 决策权重 | ✅ | `DecisionMakingAgent` 以 `ReportService.derive_recommendation`(45/30/15/10+固定动作带)为唯一公式;私有权重与 4 个超集辅助函数删除。两条路径同一数据同一建议 |
+| 数据供应商链 | 🚧 第一步 | 常量单一来源;流水线 yfinance 失败时回退共享 5 级供应商链(+3 测试)。财报/新闻深度合并留待后续 |
+
+净删约 700 行重复代码;全程 251→254 测试绿。
+
 ## Phase 4 — 未开始
 
 见计划 §9(文档 RAG、预期数据、期权隐含、Qlib/LEAN 级研究、沙盒内自动因子)。
