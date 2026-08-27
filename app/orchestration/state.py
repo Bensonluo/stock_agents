@@ -1,10 +1,9 @@
 """State management for multi-agent orchestration."""
 
 from datetime import datetime
-from typing import Annotated, Any, Dict, List, Optional, Sequence
-
-from langchain_core.messages import BaseMessage
 from operator import add
+from typing import Annotated, Any
+
 from typing_extensions import TypedDict
 
 
@@ -20,32 +19,32 @@ class AgentState(TypedDict):
 
     # ========== Input Information ==========
     query: str  # User query
-    symbols: List[str]  # Stock symbol list
-    thread_id: Optional[str]  # Thread ID for workflow tracking
+    symbols: list[str]  # Stock symbol list
+    thread_id: str | None  # Thread ID for workflow tracking
 
     # ========== Data State ==========
-    market_data: Dict[str, Any]  # Market data
-    financial_data: Dict[str, Any]  # Financial data
-    news_data: List[Dict]  # News data
+    market_data: dict[str, Any]  # Market data
+    financial_data: dict[str, Any]  # Financial data
+    news_data: list[dict]  # News data
 
     # ========== Analysis Results ==========
-    technical_analysis: Dict  # Technical analysis results
-    fundamental_analysis: Dict  # Fundamental analysis results
-    sentiment_analysis: Dict  # Sentiment analysis results
+    technical_analysis: dict  # Technical analysis results
+    fundamental_analysis: dict  # Fundamental analysis results
+    sentiment_analysis: dict  # Sentiment analysis results
 
     # ========== Risk and Decision ==========
-    risk_assessment: Dict  # Risk assessment
-    decision: Dict  # Decision results
+    risk_assessment: dict  # Risk assessment
+    decision: dict  # Decision results
 
     # ========== Report ==========
-    report: Dict  # Generated report
+    report: dict  # Generated report
 
     # ========== Execution State (Core Learning Part) ==========
-    agent_outputs: Annotated[List[Dict], add]  # Accumulated agent outputs
-    errors: Annotated[List[Dict], add]  # Accumulated error list
-    retry_count: Dict[str, int]  # Retry count per agent
-    agent_status: Dict[str, str]  # Agent status
-    execution_metadata: Dict  # Execution metadata
+    agent_outputs: Annotated[list[dict], add]  # Accumulated agent outputs
+    errors: Annotated[list[dict], add]  # Accumulated error list
+    retry_count: dict[str, int]  # Retry count per agent
+    agent_status: dict[str, str]  # Agent status
+    execution_metadata: dict  # Execution metadata
 
     # ========== Control Parameters ==========
     max_retries: int  # Max retry count
@@ -53,14 +52,14 @@ class AgentState(TypedDict):
     parallel_execution: bool  # Whether to execute in parallel
 
     # ========== Current Agent Tracking ==========
-    current_agent: Optional[str]  # Currently executing agent
+    current_agent: str | None  # Currently executing agent
     current_step: int  # Current step number
 
 
 def create_initial_state(
     query: str,
-    symbols: List[str],
-    thread_id: Optional[str] = None,
+    symbols: list[str],
+    thread_id: str | None = None,
     max_retries: int = 3,
     timeout_per_agent: int = 300,
     parallel_execution: bool = True,
@@ -173,7 +172,7 @@ def set_agent_status(state: AgentState, agent_name: str, status: str) -> AgentSt
 
 
 def add_agent_output(
-    state: AgentState, agent_name: str, result: Dict, metadata: Optional[Dict] = None
+    state: AgentState, agent_name: str, result: dict, metadata: dict | None = None
 ) -> AgentState:
     """Add an agent output to the state.
 
@@ -267,7 +266,7 @@ def should_retry(state: AgentState, agent_name: str) -> bool:
     return retry_count < max_retries
 
 
-def get_agent_errors(state: AgentState, agent_name: str) -> List[Dict]:
+def get_agent_errors(state: AgentState, agent_name: str) -> list[dict]:
     """Get all errors for a specific agent.
 
     Args:
@@ -281,7 +280,7 @@ def get_agent_errors(state: AgentState, agent_name: str) -> List[Dict]:
     return [e for e in all_errors if e.get("agent") == agent_name]
 
 
-def has_errors(state: AgentState, agent_name: Optional[str] = None) -> bool:
+def has_errors(state: AgentState, agent_name: str | None = None) -> bool:
     """Check if there are any errors in the state.
 
     Args:
@@ -296,7 +295,7 @@ def has_errors(state: AgentState, agent_name: Optional[str] = None) -> bool:
     return len(state.get("errors", [])) > 0
 
 
-def get_execution_summary(state: AgentState) -> Dict[str, Any]:
+def get_execution_summary(state: AgentState) -> dict[str, Any]:
     """Get a summary of the workflow execution.
 
     Args:
@@ -306,24 +305,20 @@ def get_execution_summary(state: AgentState) -> Dict[str, Any]:
         Dictionary containing execution summary
     """
     metadata = state.get("execution_metadata", {})
-    outputs = state.get("agent_outputs", [])
     errors = state.get("errors", [])
+    agent_status = state.get("agent_status", {})
 
-    completed_agents = set()
-    failed_agents = set()
-
-    for output in outputs:
-        completed_agents.add(output.get("agent"))
-
-    for error in errors:
-        failed_agents.add(error.get("agent"))
+    completed_agents = sorted(
+        agent for agent, status in agent_status.items() if status == "completed"
+    )
+    failed_agents = sorted(agent for agent, status in agent_status.items() if status == "failed")
 
     return {
         "workflow_id": metadata.get("workflow_id"),
         "started_at": metadata.get("started_at"),
-        "total_agents": len(state.get("agent_status", {})),
-        "completed_agents": list(completed_agents),
-        "failed_agents": list(failed_agents),
+        "total_agents": len(agent_status),
+        "completed_agents": completed_agents,
+        "failed_agents": failed_agents,
         "total_errors": len(errors),
         "current_step": state.get("current_step", 0),
     }

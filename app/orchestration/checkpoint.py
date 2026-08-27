@@ -2,13 +2,12 @@
 
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.base import BaseCheckpointSaver, Checkpoint, CheckpointMetadata
-from sqlalchemy import create_engine, Column, String, DateTime, Text, Integer
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from langgraph.checkpoint.memory import MemorySaver
+from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.config import settings
 from app.orchestration.state import AgentState
@@ -53,7 +52,7 @@ class PostgresCheckpointManager:
     fault tolerance and recovery in distributed systems.
     """
 
-    def __init__(self, connection_string: Optional[str] = None):
+    def __init__(self, connection_string: str | None = None):
         """Initialize the checkpoint manager.
 
         Args:
@@ -75,8 +74,8 @@ class PostgresCheckpointManager:
         thread_id: str,
         checkpoint_id: str,
         checkpoint: Checkpoint,
-        metadata: Optional[CheckpointMetadata] = None,
-        state: Optional[AgentState] = None,
+        metadata: CheckpointMetadata | None = None,
+        state: AgentState | None = None,
     ) -> None:
         """Save a checkpoint to PostgreSQL.
 
@@ -124,8 +123,8 @@ class PostgresCheckpointManager:
             session.close()
 
     def load_checkpoint(
-        self, thread_id: str, checkpoint_id: Optional[str] = None
-    ) -> Optional[Checkpoint]:
+        self, thread_id: str, checkpoint_id: str | None = None
+    ) -> Checkpoint | None:
         """Load a checkpoint from PostgreSQL.
 
         Args:
@@ -158,9 +157,7 @@ class PostgresCheckpointManager:
         finally:
             session.close()
 
-    def load_state(
-        self, thread_id: str, checkpoint_id: Optional[str] = None
-    ) -> Optional[AgentState]:
+    def load_state(self, thread_id: str, checkpoint_id: str | None = None) -> AgentState | None:
         """Load an AgentState from PostgreSQL.
 
         Args:
@@ -193,9 +190,7 @@ class PostgresCheckpointManager:
         finally:
             session.close()
 
-    def list_checkpoints(
-        self, thread_id: str, limit: int = 10
-    ) -> List[Dict[str, Any]]:
+    def list_checkpoints(self, thread_id: str, limit: int = 10) -> list[dict[str, Any]]:
         """List all checkpoints for a thread.
 
         This enables "time travel" - the ability to restore to any
@@ -281,11 +276,7 @@ class PostgresCheckpointManager:
 
         try:
             # Count checkpoints to be deleted
-            count = (
-                session.query(CheckpointEntry)
-                .filter_by(thread_id=thread_id)
-                .count()
-            )
+            count = session.query(CheckpointEntry).filter_by(thread_id=thread_id).count()
 
             # Delete all checkpoints
             session.query(CheckpointEntry).filter_by(thread_id=thread_id).delete()
@@ -339,7 +330,7 @@ class PostgresCheckpointManager:
         checkpoint_dict = json.loads(data)
         return Checkpoint(**checkpoint_dict)
 
-    def create_config(self, thread_id: str) -> Dict[str, Any]:
+    def create_config(self, thread_id: str) -> dict[str, Any]:
         """Create a LangGraph config dict for a thread.
 
         Args:
@@ -364,8 +355,8 @@ class InMemoryCheckpointManager:
 
     def __init__(self):
         """Initialize the in-memory checkpoint manager."""
-        self.checkpoints: Dict[str, Dict[str, Checkpoint]] = {}
-        self.states: Dict[str, Dict[str, AgentState]] = {}
+        self.checkpoints: dict[str, dict[str, Checkpoint]] = {}
+        self.states: dict[str, dict[str, AgentState]] = {}
         self.checkpoint_saver = MemorySaver()
 
     def save_checkpoint(
@@ -373,8 +364,8 @@ class InMemoryCheckpointManager:
         thread_id: str,
         checkpoint_id: str,
         checkpoint: Checkpoint,
-        metadata: Optional[CheckpointMetadata] = None,
-        state: Optional[AgentState] = None,
+        metadata: CheckpointMetadata | None = None,
+        state: AgentState | None = None,
     ) -> None:
         """Save a checkpoint to memory."""
         if thread_id not in self.checkpoints:
@@ -387,8 +378,8 @@ class InMemoryCheckpointManager:
             self.states[thread_id][checkpoint_id] = state
 
     def load_checkpoint(
-        self, thread_id: str, checkpoint_id: Optional[str] = None
-    ) -> Optional[Checkpoint]:
+        self, thread_id: str, checkpoint_id: str | None = None
+    ) -> Checkpoint | None:
         """Load a checkpoint from memory."""
         if thread_id not in self.checkpoints:
             return None
@@ -400,9 +391,7 @@ class InMemoryCheckpointManager:
         checkpoints = self.checkpoints[thread_id]
         return list(checkpoints.values())[-1] if checkpoints else None
 
-    def load_state(
-        self, thread_id: str, checkpoint_id: Optional[str] = None
-    ) -> Optional[AgentState]:
+    def load_state(self, thread_id: str, checkpoint_id: str | None = None) -> AgentState | None:
         """Load a state from memory."""
         if thread_id not in self.states:
             return None
@@ -414,9 +403,7 @@ class InMemoryCheckpointManager:
         states = self.states[thread_id]
         return list(states.values())[-1] if states else None
 
-    def list_checkpoints(
-        self, thread_id: str, limit: int = 10
-    ) -> List[Dict[str, Any]]:
+    def list_checkpoints(self, thread_id: str, limit: int = 10) -> list[dict[str, Any]]:
         """List checkpoints for a thread."""
         if thread_id not in self.checkpoints:
             return []
@@ -447,7 +434,7 @@ class InMemoryCheckpointManager:
         """Get the LangGraph checkpoint saver."""
         return self.checkpoint_saver
 
-    def create_config(self, thread_id: str) -> Dict[str, Any]:
+    def create_config(self, thread_id: str) -> dict[str, Any]:
         """Create a LangGraph config dict for a thread."""
         return {
             "configurable": {

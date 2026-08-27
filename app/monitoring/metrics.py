@@ -1,11 +1,10 @@
 """Metrics definitions for agent monitoring."""
 
+import statistics
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
-
-import statistics
+from typing import Any
 
 
 class AgentStatus(Enum):
@@ -59,12 +58,12 @@ class AgentMetrics:
     p99_execution_time: float = 0.0
 
     # Recent execution time list (for percentile calculation)
-    recent_execution_times: List[float] = field(default_factory=list)
+    recent_execution_times: list[float] = field(default_factory=list)
 
     # Error statistics
-    errors_by_type: Dict[str, int] = field(default_factory=dict)
-    last_error: Optional[Dict] = None
-    last_failure_time: Optional[datetime] = None
+    errors_by_type: dict[str, int] = field(default_factory=dict)
+    last_error: dict | None = None
+    last_failure_time: datetime | None = None
 
     # Health
     success_rate: float = 1.0
@@ -117,7 +116,8 @@ class AgentMetrics:
             # Decay penalty over 1 hour
             recent_failure_penalty = max(0, 20 * (1 - time_since_failure / 3600))
 
-        health_score = success_rate_score + stability_score - recent_failure_penalty
+        recency_score = 20 - recent_failure_penalty
+        health_score = success_rate_score + stability_score + recency_score
         return max(0, min(100, health_score))
 
     def update_percentiles(self) -> None:
@@ -139,8 +139,8 @@ class AgentMetrics:
         self,
         success: bool,
         execution_time: float,
-        error_type: Optional[str] = None,
-        error_message: Optional[str] = None,
+        error_type: str | None = None,
+        error_message: str | None = None,
         timeout: bool = False,
     ) -> None:
         """Record an agent execution.
@@ -188,7 +188,7 @@ class AgentMetrics:
         self.success_rate = self.calculate_success_rate()
         self.health_score = self.calculate_health_score()
 
-    def get_summary(self) -> Dict[str, any]:
+    def get_summary(self) -> dict[str, any]:
         """Get a summary of metrics.
 
         Returns:
@@ -212,9 +212,9 @@ class AgentMetrics:
             "p99_execution_time": self.p99_execution_time,
             "errors_by_type": self.errors_by_type,
             "last_error": self.last_error,
-            "last_failure_time": self.last_failure_time.isoformat()
-            if self.last_failure_time
-            else None,
+            "last_failure_time": (
+                self.last_failure_time.isoformat() if self.last_failure_time else None
+            ),
         }
 
 
@@ -228,9 +228,9 @@ class Alert:
     agent: str
     message: str
     timestamp: datetime
-    metadata: Dict[str, any] = field(default_factory=dict)
+    metadata: dict[str, any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, any]:
+    def to_dict(self) -> dict[str, any]:
         """Convert alert to dictionary."""
         return {
             "alert_id": self.alert_id,
@@ -250,9 +250,9 @@ class EventLog:
     event_type: str
     agent: str
     timestamp: datetime
-    data: Dict[str, any] = field(default_factory=dict)
+    data: dict[str, any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, any]:
+    def to_dict(self) -> dict[str, any]:
         """Convert event log to dictionary."""
         return {
             "event_type": self.event_type,
@@ -279,10 +279,10 @@ class AgentExecutionLog:
     level: str  # 'info', 'warning', 'error', 'debug'
     message: str
     timestamp: datetime
-    data: Dict[str, Any] = field(default_factory=dict)
-    duration_ms: Optional[int] = None
+    data: dict[str, Any] = field(default_factory=dict)
+    duration_ms: int | None = None
 
-    def to_dict(self) -> Dict[str, any]:
+    def to_dict(self) -> dict[str, any]:
         """Convert log to dictionary."""
         return {
             "log_id": self.log_id,

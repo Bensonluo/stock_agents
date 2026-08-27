@@ -1,15 +1,16 @@
 """Agent monitoring system for tracking execution metrics."""
 
 import uuid
+from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING
 
 from app.monitoring.metrics import (
     AgentExecutionLog,
-    Alert,
-    AlertSeverity,
     AgentMetrics,
     AgentStatus,
+    Alert,
+    AlertSeverity,
     EventLog,
 )
 from app.utils.logging import get_logger
@@ -32,23 +33,23 @@ class AgentMonitor:
     Core learning: Building enterprise-grade monitoring systems.
     """
 
-    def __init__(self, alert_thresholds: Optional[Dict] = None):
+    def __init__(self, alert_thresholds: dict | None = None):
         """Initialize the agent monitor.
 
         Args:
             alert_thresholds: Optional custom alert thresholds
         """
-        self.metrics: Dict[str, AgentMetrics] = {}
+        self.metrics: dict[str, AgentMetrics] = {}
         self.alert_thresholds = alert_thresholds or {
             "success_rate": 0.95,
             "avg_execution_time": 30.0,
             "health_score": 70.0,
             "error_count": 10,
         }
-        self.alert_handlers: List[Callable] = []
-        self.event_log: List[EventLog] = []
-        self.alerts: List[Alert] = []
-        self.execution_logs: Dict[str, List[AgentExecutionLog]] = {}
+        self.alert_handlers: list[Callable] = []
+        self.event_log: list[EventLog] = []
+        self.alerts: list[Alert] = []
+        self.execution_logs: dict[str, list[AgentExecutionLog]] = {}
 
         self._lock = None  # Could use threading.Lock for thread safety
         self.broadcast_manager = None  # Optional ConnectionManager for WebSocket broadcasts
@@ -67,7 +68,7 @@ class AgentMonitor:
         self,
         agent_name: str,
         state: "AgentState",
-        metadata: Optional[Dict] = None,
+        metadata: dict | None = None,
     ) -> None:
         """Called when an agent starts execution.
 
@@ -101,9 +102,9 @@ class AgentMonitor:
         self,
         agent_name: str,
         execution_time: float,
-        result: Optional[Dict] = None,
-        metadata: Optional[Dict] = None,
-        thread_id: Optional[str] = None,
+        result: dict | None = None,
+        metadata: dict | None = None,
+        thread_id: str | None = None,
     ) -> None:
         """Called when an agent completes successfully.
 
@@ -147,8 +148,8 @@ class AgentMonitor:
         error: str,
         execution_time: float,
         error_type: str = "UnknownError",
-        metadata: Optional[Dict] = None,
-        thread_id: Optional[str] = None,
+        metadata: dict | None = None,
+        thread_id: str | None = None,
     ) -> None:
         """Called when an agent fails.
 
@@ -198,7 +199,7 @@ class AgentMonitor:
         self,
         agent_name: str,
         timeout_limit: float,
-        metadata: Optional[Dict] = None,
+        metadata: dict | None = None,
     ) -> None:
         """Called when an agent times out.
 
@@ -249,7 +250,7 @@ class AgentMonitor:
         agent_name: str,
         retry_count: int,
         max_retries: int,
-        last_error: Optional[str] = None,
+        last_error: str | None = None,
     ) -> None:
         """Called when an agent is being retried.
 
@@ -278,7 +279,7 @@ class AgentMonitor:
         self._log_event(event)
         logger.info(f"Agent retry: {agent_name} (attempt {retry_count}/{max_retries})")
 
-    def get_agent_health(self, agent_name: str) -> Dict:
+    def get_agent_health(self, agent_name: str) -> dict:
         """Get the health status of a specific agent.
 
         Args:
@@ -292,11 +293,12 @@ class AgentMonitor:
             return {"status": "unknown", "agent": agent_name}
 
         summary = metrics.get_summary()
+        summary["agent"] = agent_name
         summary["recommendations"] = self._generate_health_recommendations(metrics)
 
         return summary
 
-    def get_system_overview(self) -> Dict:
+    def get_system_overview(self) -> dict:
         """Get an overview of the entire system.
 
         Returns:
@@ -308,9 +310,7 @@ class AgentMonitor:
         total_timeout = sum(m.timeout_executions for m in self.metrics.values())
 
         # Calculate overall success rate
-        overall_success_rate = (
-            total_successful / total_executions if total_executions > 0 else 1.0
-        )
+        overall_success_rate = total_successful / total_executions if total_executions > 0 else 1.0
 
         # Calculate average health score
         avg_health_score = (
@@ -335,15 +335,13 @@ class AgentMonitor:
             "total_timeout": total_timeout,
             "overall_success_rate": overall_success_rate,
             "avg_health_score": avg_health_score,
-            "agents_health": {
-                name: metrics.health_score for name, metrics in self.metrics.items()
-            },
+            "agents_health": {name: metrics.health_score for name, metrics in self.metrics.items()},
             "unhealthy_agents": unhealthy_agents,
             "recent_events": [e.to_dict() for e in self.event_log[-50:]],
             "active_alerts": [a.to_dict() for a in self.alerts if self._is_alert_active(a)],
         }
 
-    def get_metrics(self, agent_name: Optional[str] = None) -> Dict:
+    def get_metrics(self, agent_name: str | None = None) -> dict:
         """Get metrics for a specific agent or all agents.
 
         Args:
@@ -355,16 +353,14 @@ class AgentMonitor:
         if agent_name:
             return self.get_agent_health(agent_name)
 
-        return {
-            name: metrics.get_summary() for name, metrics in self.metrics.items()
-        }
+        return {name: metrics.get_summary() for name, metrics in self.metrics.items()}
 
     def get_events(
         self,
-        agent_name: Optional[str] = None,
-        event_type: Optional[str] = None,
+        agent_name: str | None = None,
+        event_type: str | None = None,
         limit: int = 100,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Get event log entries.
 
         Args:
@@ -390,11 +386,11 @@ class AgentMonitor:
 
     def get_alerts(
         self,
-        severity: Optional[AlertSeverity] = None,
-        agent_name: Optional[str] = None,
+        severity: AlertSeverity | None = None,
+        agent_name: str | None = None,
         active_only: bool = True,
         limit: int = 50,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Get alerts.
 
         Args:
@@ -430,7 +426,7 @@ class AgentMonitor:
         self.alert_handlers.append(handler)
         logger.debug(f"Added alert handler: {handler.__name__}")
 
-    def reset_metrics(self, agent_name: Optional[str] = None) -> None:
+    def reset_metrics(self, agent_name: str | None = None) -> None:
         """Reset metrics for a specific agent or all agents.
 
         Args:
@@ -463,8 +459,8 @@ class AgentMonitor:
         step: int,
         level: str,
         message: str,
-        data: Optional[Dict] = None,
-        duration_ms: Optional[int] = None,
+        data: dict | None = None,
+        duration_ms: int | None = None,
     ) -> None:
         """Record an agent execution step.
 
@@ -513,10 +509,10 @@ class AgentMonitor:
     def get_agent_logs(
         self,
         agent_name: str,
-        thread_id: Optional[str] = None,
-        level: Optional[str] = None,
+        thread_id: str | None = None,
+        level: str | None = None,
         limit: int = 100,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Get logs for a specific agent.
 
         Args:
@@ -545,7 +541,7 @@ class AgentMonitor:
         self,
         thread_id: str,
         limit: int = 500,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Get all logs for a workflow thread.
 
         Args:
@@ -571,7 +567,7 @@ class AgentMonitor:
 
         return [log.to_dict() for log in all_logs]
 
-    def clear_agent_logs(self, agent_name: Optional[str] = None) -> None:
+    def clear_agent_logs(self, agent_name: str | None = None) -> None:
         """Clear execution logs.
 
         Args:
@@ -612,7 +608,8 @@ class AgentMonitor:
         alerts = []
 
         # Success rate alert
-        if metrics.success_rate < self.alert_thresholds["success_rate"]:
+        success_rate_threshold = self.alert_thresholds.get("success_rate", 0.95)
+        if metrics.success_rate < success_rate_threshold:
             alerts.append(
                 Alert(
                     alert_id=str(uuid.uuid4()),
@@ -623,13 +620,14 @@ class AgentMonitor:
                     timestamp=datetime.now(),
                     metadata={
                         "current_value": metrics.success_rate,
-                        "threshold": self.alert_thresholds["success_rate"],
+                        "threshold": success_rate_threshold,
                     },
                 )
             )
 
         # Health score alert
-        if metrics.health_score < self.alert_thresholds["health_score"]:
+        health_score_threshold = self.alert_thresholds.get("health_score", 70.0)
+        if metrics.health_score < health_score_threshold:
             alerts.append(
                 Alert(
                     alert_id=str(uuid.uuid4()),
@@ -640,14 +638,14 @@ class AgentMonitor:
                     timestamp=datetime.now(),
                     metadata={
                         "current_value": metrics.health_score,
-                        "threshold": self.alert_thresholds["health_score"],
+                        "threshold": health_score_threshold,
                     },
                 )
             )
 
         # Execution time alert
         if (
-            metrics.avg_execution_time > self.alert_thresholds["avg_execution_time"]
+            metrics.avg_execution_time > self.alert_thresholds.get("avg_execution_time", 30.0)
             and metrics.total_executions > 5
         ):
             alerts.append(
@@ -660,7 +658,7 @@ class AgentMonitor:
                     timestamp=datetime.now(),
                     metadata={
                         "current_value": metrics.avg_execution_time,
-                        "threshold": self.alert_thresholds["avg_execution_time"],
+                        "threshold": self.alert_thresholds.get("avg_execution_time", 30.0),
                     },
                 )
             )
@@ -697,7 +695,7 @@ class AgentMonitor:
         time_since_alert = (datetime.now() - alert.timestamp).total_seconds()
         return time_since_alert < 300  # 5 minutes
 
-    def _generate_health_recommendations(self, metrics: AgentMetrics) -> List[str]:
+    def _generate_health_recommendations(self, metrics: AgentMetrics) -> list[str]:
         """Generate health recommendations based on metrics.
 
         Args:
@@ -722,7 +720,7 @@ class AgentMonitor:
 
         return recommendations
 
-    def _summarize_result(self, result: Dict) -> Dict:
+    def _summarize_result(self, result: dict) -> dict:
         """Create a summary of agent result.
 
         Args:
@@ -752,7 +750,7 @@ class AgentMonitor:
 
 
 # Global monitor instance
-_monitor: Optional[AgentMonitor] = None
+_monitor: AgentMonitor | None = None
 
 
 def get_monitor() -> AgentMonitor:
