@@ -42,10 +42,22 @@ def audit_packets(
                     "detail": f"Data is {age} days old (as_of {as_of}).",
                 }
             )
+        # A market block with no price and no cutoff is a fetch failure, not
+        # fresh data — flagging it keeps a hollow report from auditing clean.
+        elif isinstance(mkt, dict) and mkt.get("current_price") is None and as_of is None:
+            insufficient.append(
+                {
+                    "symbol": symbol,
+                    "subject": "market_data",
+                    "detail": "No usable market data (price and as_of missing — fetch failed).",
+                }
+            )
 
     technical = data.get("technical_analysis") or {}
     fundamental = data.get("fundamental_analysis") or {}
     risk = data.get("risk_assessment") or {}
+    if isinstance(risk, dict) and "risk_by_symbol" in risk:
+        risk = risk.get("risk_by_symbol") or {}  # pipeline shape
     sentiment = _sentiment_flat(data)
 
     for symbol in market:
@@ -73,18 +85,31 @@ def _insufficient_findings(
     risk: dict | None,
     out: list,
 ) -> None:
-    checks = (
-        ("technical_analysis", (technical or {}).get("status")),
-        ("fundamental_analysis.quality", ((fundamental or {}).get("quality") or {}).get("status")),
-        (
-            "fundamental_analysis.valuation_scenarios",
-            ((fundamental or {}).get("valuation_scenarios") or {}).get("status"),
-        ),
-        ("risk_assessment", (risk or {}).get("risk_level") if risk else None),
+    quality = (fundamental or {}).get("quality") if isinstance(fundamental, dict) else None
+    valuation = (
+        (fundamental or {}).get("valuation_scenarios") if isinstance(fundamental, dict) else None
     )
-    for subject, status in checks:
-        if status in ("insufficient_data", "error"):
-            out.append({"symbol": symbol, "subject": subject, "detail": f"status={status}"})
+
+    checks = (
+        ("technical_analysis", _usable(technical)),
+        ("fundamental_analysis.quality", _usable(quality)),
+        ("fundamental_analysis.valuation_scenarios", _usable(valuation)),
+        ("risk_assessment", _usable(risk)),
+    )
+    for subject, block in checks:
+        status = block.get("status") if isinstance(block, dict) else None
+        if block is None or status in ("insufficient_data", "error"):
+            detail = "no usable data block (missing or fetch failed)" if block is None else f"status={status}"
+            out.append({"symbol": symbol, "subject": subject, "detail": detail})
+
+
+def _usable(block: dict | None) -> dict | None:
+    """Treat error-wrapped blocks ({'_error': ...}) and empty dicts as no data."""
+    if not isinstance(block, dict) or not block:
+        return None
+    if set(block) == {"_error"}:
+        return None
+    return block
 
 
 def _conflict_findings(

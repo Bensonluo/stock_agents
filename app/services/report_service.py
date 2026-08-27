@@ -389,6 +389,21 @@ class ReportService:
             price = m.get("current_price")
             company = m.get("company_name") or symbol
 
+            # No price AND no usable technical block means the data layer
+            # failed for this symbol — say so loudly instead of dressing a
+            # neutral fallback up as a real "hold" recommendation.
+            tech_block = c["technical_analysis"].get(symbol)
+            tech_usable = isinstance(tech_block, dict) and tech_block and "_error" not in tech_block
+            if price is None and not tech_usable:
+                if lang == "zh":
+                    parts.append(f"⚠ {symbol}: 行情数据不可用,本次未能生成有效分析(以下为空数据回退,不构成建议)。")
+                else:
+                    parts.append(
+                        f"⚠ {symbol}: market data unavailable — no valid analysis was produced "
+                        f"(sections below are empty-data fallbacks, not advice)."
+                    )
+                continue
+
             price_str = f"${price:.2f}" if isinstance(price, (int, float)) else "N/A"
             composite_str = (
                 f", {labels['composite']} {composite:.0f}/100"
