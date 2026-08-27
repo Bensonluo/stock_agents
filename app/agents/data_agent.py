@@ -16,6 +16,16 @@ logger = get_logger(__name__)
 # Semaphore to cap concurrent yfinance calls and avoid rate-limiting
 _yfinance_semaphore = asyncio.Semaphore(5)
 
+# Three calendar years provide ample warm-up for SMA200 and weekly trend features.
+DEFAULT_HISTORY_DAYS = 3 * 365
+
+
+def _yfinance_debt_to_equity_ratio(value: Any) -> Optional[float]:
+    """Convert yfinance's percentage-valued debtToEquity to a decimal ratio."""
+    if value is None:
+        return None
+    return float(value) / 100.0
+
 
 def convert_to_yahoo_symbol(symbol: str) -> str:
     """Convert local symbol format to Yahoo Finance format.
@@ -88,7 +98,7 @@ def _sync_fetch_market_data(yahoo_symbol: str, symbol: str, hist_converter) -> D
     info = ticker.info
 
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=90)
+    start_date = end_date - timedelta(days=DEFAULT_HISTORY_DAYS)
     hist = ticker.history(start=start_date, end=end_date)
 
     if hist.empty:
@@ -153,7 +163,7 @@ def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -
             "peg_ratio": info.get("pegRatio"),
             "enterprise_value": info.get("enterpriseValue"),
             "ev_ebitda": info.get("enterpriseToEbitda"),
-            "debt_to_equity": info.get("debtToEquity"),
+            "debt_to_equity": _yfinance_debt_to_equity_ratio(info.get("debtToEquity")),
             "current_ratio": info.get("currentRatio"),
             "quick_ratio": info.get("quickRatio"),
             "total_cash": info.get("totalCash"),
@@ -163,6 +173,19 @@ def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -
             "dividend_yield": info.get("dividendYield"),
             "dividend_rate": info.get("dividendRate"),
             "payout_ratio": info.get("payoutRatio"),
+            "revenue_growth": info.get("revenueGrowth"),
+            "earnings_growth": info.get("earningsGrowth"),
+        },
+        "metric_units": {
+            "roe": "ratio",
+            "roa": "ratio",
+            "profit_margin": "ratio",
+            "operating_margin": "ratio",
+            "debt_to_equity": "ratio",
+            "dividend_yield": "ratio",
+            "payout_ratio": "ratio",
+            "revenue_growth": "ratio",
+            "earnings_growth": "ratio",
         },
         "income_statement": stmt_converter(income_stmt) if income_stmt is not None else {},
         "balance_sheet": stmt_converter(balance_sheet) if balance_sheet is not None else {},

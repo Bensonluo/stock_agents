@@ -622,29 +622,29 @@ class FundamentalAnalysisAgent(BaseAgent):
         details = {}
 
         # ROE analysis (0-40 points)
-        if roe:
+        if roe is not None:
             details["roe"] = float(roe)
-            if roe >= 20:
+            if roe >= 0.20:
                 score += 40
-            elif roe >= 15:
+            elif roe >= 0.15:
                 score += 30
-            elif roe >= 10:
+            elif roe >= 0.10:
                 score += 20
-            elif roe >= 5:
+            elif roe >= 0.05:
                 score += 10
 
         # ROA analysis (0-20 points)
-        if roa:
+        if roa is not None:
             details["roa"] = float(roa)
-            if roa >= 10:
+            if roa >= 0.10:
                 score += 20
-            elif roa >= 5:
+            elif roa >= 0.05:
                 score += 15
-            elif roa >= 2:
+            elif roa >= 0.02:
                 score += 10
 
         # Profit margin analysis (0-20 points)
-        if profit_margin:
+        if profit_margin is not None:
             details["profit_margin"] = float(profit_margin)
             if profit_margin >= 0.2:
                 score += 20
@@ -654,7 +654,7 @@ class FundamentalAnalysisAgent(BaseAgent):
                 score += 10
 
         # Operating margin analysis (0-20 points)
-        if operating_margin:
+        if operating_margin is not None:
             details["operating_margin"] = float(operating_margin)
             if operating_margin >= 0.15:
                 score += 20
@@ -667,6 +667,7 @@ class FundamentalAnalysisAgent(BaseAgent):
             "score": score,
             "rating": self._score_to_rating(score, 100),
             "details": details,
+            "status": "available" if details else "insufficient_data",
         }
 
     def _analyze_valuation(self, metrics: Dict, mkt_data: Dict) -> Dict[str, Any]:
@@ -688,7 +689,7 @@ class FundamentalAnalysisAgent(BaseAgent):
         details = {}
 
         # P/E analysis (0-30 points)
-        if pe:
+        if pe is not None:
             details["pe_ratio"] = float(pe)
             if 0 < pe <= 15:
                 score += 30  # Undervalued
@@ -698,7 +699,7 @@ class FundamentalAnalysisAgent(BaseAgent):
                 score += 10  # Slightly overvalued
 
         # P/B analysis (0-25 points)
-        if pb:
+        if pb is not None:
             details["pb_ratio"] = float(pb)
             if 0 < pb <= 1:
                 score += 25
@@ -708,7 +709,7 @@ class FundamentalAnalysisAgent(BaseAgent):
                 score += 15
 
         # P/S analysis (0-25 points)
-        if ps:
+        if ps is not None:
             details["ps_ratio"] = float(ps)
             if 0 < ps <= 2:
                 score += 25
@@ -718,7 +719,7 @@ class FundamentalAnalysisAgent(BaseAgent):
                 score += 15
 
         # EV/EBITDA analysis (0-20 points)
-        if ev_ebitda:
+        if ev_ebitda is not None:
             details["ev_ebitda"] = float(ev_ebitda)
             if 0 < ev_ebitda <= 8:
                 score += 20
@@ -731,6 +732,7 @@ class FundamentalAnalysisAgent(BaseAgent):
             "score": score,
             "rating": self._score_to_rating(score, 100),
             "details": details,
+            "status": "available" if details else "insufficient_data",
         }
 
     def _analyze_financial_health(self, metrics: Dict) -> Dict[str, Any]:
@@ -762,7 +764,7 @@ class FundamentalAnalysisAgent(BaseAgent):
                 score += 10
 
         # Current ratio analysis (0-30 points)
-        if current_ratio:
+        if current_ratio is not None:
             details["current_ratio"] = float(current_ratio)
             if current_ratio >= 2:
                 score += 30
@@ -772,7 +774,7 @@ class FundamentalAnalysisAgent(BaseAgent):
                 score += 15
 
         # Quick ratio analysis (0-30 points)
-        if quick_ratio:
+        if quick_ratio is not None:
             details["quick_ratio"] = float(quick_ratio)
             if quick_ratio >= 1.5:
                 score += 30
@@ -785,6 +787,7 @@ class FundamentalAnalysisAgent(BaseAgent):
             "score": score,
             "rating": self._score_to_rating(score, 100),
             "details": details,
+            "status": "available" if details else "insufficient_data",
         }
 
     def _analyze_growth(self, fin_data: Dict) -> Dict[str, Any]:
@@ -796,14 +799,42 @@ class FundamentalAnalysisAgent(BaseAgent):
         Returns:
             Growth analysis
         """
-        # This would require historical financial data
-        # For now, return a placeholder
-        return {
-            "score": 50,
-            "rating": "neutral",
-            "details": {
-                "note": "Growth analysis requires historical data comparison"
+        metrics = fin_data.get("metrics", {})
+        growth_metrics = {
+            "revenue_growth": metrics.get("revenue_growth"),
+            "earnings_growth": metrics.get("earnings_growth"),
+        }
+        available = {key: value for key, value in growth_metrics.items() if value is not None}
+        if not available:
+            return {
+                "score": None,
+                "rating": "insufficient_data",
+                "status": "insufficient_data",
+                "details": {
+                    "note": "Growth analysis requires revenue or earnings growth data"
+                },
             }
+
+        def score_metric(value: float) -> int:
+            if value >= 0.20:
+                return 50
+            if value >= 0.10:
+                return 40
+            if value >= 0.05:
+                return 30
+            if value >= 0:
+                return 20
+            if value >= -0.10:
+                return 10
+            return 0
+
+        raw_score = sum(score_metric(float(value)) for value in available.values())
+        score = raw_score / (50 * len(available)) * 100
+        return {
+            "score": round(score, 2),
+            "rating": self._score_to_rating(score, 100),
+            "status": "available",
+            "details": {key: float(value) for key, value in available.items()},
         }
 
     def _calculate_overall_score(
@@ -830,27 +861,40 @@ class FundamentalAnalysisAgent(BaseAgent):
         # Health: 25%
         # Growth: 10%
 
-        p_score = profitability.get("score", 0)
-        v_score = valuation.get("score", 0)
-        h_score = health.get("score", 0)
-        g_score = growth.get("score", 0)
+        components = {
+            "profitability": (profitability, 0.35),
+            "valuation": (valuation, 0.30),
+            "health": (health, 0.25),
+            "growth": (growth, 0.10),
+        }
+        available = {
+            name: (component.get("score"), weight)
+            for name, (component, weight) in components.items()
+            if component.get("score") is not None
+            and component.get("status") != "insufficient_data"
+        }
+        available_weight = sum(weight for _, weight in available.values())
+        component_scores = {
+            name: component.get("score") for name, (component, _) in components.items()
+        }
 
-        overall = (
-            p_score * 0.35 +
-            v_score * 0.30 +
-            h_score * 0.25 +
-            g_score * 0.10
-        )
+        if available_weight == 0:
+            return {
+                "score": None,
+                "components": component_scores,
+                "rating": "insufficient_data",
+                "status": "insufficient_data",
+                "available_weight": 0.0,
+            }
+
+        overall = sum(score * weight for score, weight in available.values()) / available_weight
 
         return {
             "score": round(overall, 2),
-            "components": {
-                "profitability": p_score,
-                "valuation": v_score,
-                "health": h_score,
-                "growth": g_score,
-            },
+            "components": component_scores,
             "rating": self._score_to_rating(overall, 100),
+            "status": "complete" if len(available) == len(components) else "partial",
+            "available_weight": round(available_weight, 2),
         }
 
     def _generate_recommendation(self, overall_score: Dict) -> str:
@@ -862,7 +906,10 @@ class FundamentalAnalysisAgent(BaseAgent):
         Returns:
             Recommendation string
         """
-        score = overall_score.get("score", 50)
+        score = overall_score.get("score")
+
+        if score is None:
+            return "insufficient_data"
 
         if score >= 75:
             return "strong_buy"

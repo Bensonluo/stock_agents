@@ -4,7 +4,6 @@ These wrap the existing analysis functions but automatically fetch data
 from the multi-source fetcher, so the LLM only needs to pass a symbol string.
 """
 
-import asyncio
 from typing import Any
 
 from langchain_core.tools import tool
@@ -12,10 +11,11 @@ from pydantic import BaseModel, Field
 
 from app.tools.analysis.fundamental import (
     _analyze_financial_health,
+    _analyze_growth,
     _analyze_profitability,
     _analyze_valuation,
+    _calculate_overall_score,
     _recommendation,
-    _score_to_rating,
 )
 from app.tools.analysis.sentiment import (
     NEGATIVE_WORDS,
@@ -31,7 +31,7 @@ from app.tools.analysis.technical import (
     _generate_signals,
     _to_dataframe,
 )
-from app.tools.data.fetcher import fetch_stock_data, fetch_historical
+from app.tools.data.fetcher import fetch_historical, fetch_stock_data
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -54,7 +54,7 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
     # pull the OHLC series from fetch_historical and merge it in.
     if not hist_block.get("dates"):
         try:
-            hist = await fetch_historical(symbol, period="3mo")
+            hist = await fetch_historical(symbol, period="3y")
             if isinstance(hist, dict) and hist.get("dates") and "error" not in hist:
                 market["historical_data"] = {
                     "dates": hist["dates"],
@@ -136,18 +136,17 @@ async def analyze_fundamental(symbol: str) -> dict[str, Any]:
     profitability = _analyze_profitability(metrics)
     valuation = _analyze_valuation(metrics, mkt)
     health = _analyze_financial_health(metrics)
-    p_score = profitability["score"]
-    v_score = valuation["score"]
-    h_score = health["score"]
-    overall = p_score * 0.35 + v_score * 0.30 + h_score * 0.25 + 50 * 0.10
+    growth = _analyze_growth(financial)
+    overall = _calculate_overall_score(profitability, valuation, health, growth)
 
     return {
         "symbol": symbol,
         "profitability": profitability,
         "valuation": valuation,
         "financial_health": health,
-        "overall_score": {"score": round(overall, 2), "rating": _score_to_rating(overall, 100)},
-        "recommendation": _recommendation(overall),
+        "growth": growth,
+        "overall_score": overall,
+        "recommendation": _recommendation(overall["score"]),
     }
 
 
@@ -224,10 +223,14 @@ async def assess_risk(symbol: str) -> dict[str, Any]:
     Automatically fetches the latest market data.
     """
     import numpy as np
+
     from app.tools.risk.assessment import (
+        _calculate_beta_from_histories,
         _calculate_score,
         _downside_risk,
+        _get_benchmark_history,
         _max_drawdown,
+        _minimal_risk,
         _position_size,
         _score_to_level,
         _warnings,
@@ -242,10 +245,7 @@ async def assess_risk(symbol: str) -> dict[str, Any]:
     closes = np.array(hist.get("close", []))
 
     if len(closes) < 20:
-        return {
-            "symbol": symbol, "risk_score": 50, "risk_level": "medium",
-            "metrics": {}, "note": "Insufficient data for detailed risk assessment",
-        }
+        return _minimal_risk(market, symbol)
 
     returns = np.diff(closes) / closes[:-1]
     volatility = float(np.std(returns))
@@ -253,13 +253,16 @@ async def assess_risk(symbol: str) -> dict[str, Any]:
     var_99 = float(np.percentile(returns, 1))
     max_dd = _max_drawdown(closes)
     downside = _downside_risk(returns)
-    risk_score = _calculate_score(volatility, max_dd, var_95, 1.0)
+    beta = _calculate_beta_from_histories(hist, _get_benchmark_history(market))
+    beta_status = "available" if beta is not None else "insufficient_data"
+    risk_score = _calculate_score(volatility, max_dd, var_95, beta)
     risk_level = _score_to_level(risk_score)
 
     return {
         "symbol": symbol,
         "risk_score": risk_score,
         "risk_level": risk_level,
+        "risk_score_status": "complete" if beta is not None else "partial",
         "metrics": {
             "volatility": volatility,
             "volatility_annualized": float(volatility * np.sqrt(252)),
@@ -267,12 +270,15 @@ async def assess_risk(symbol: str) -> dict[str, Any]:
             "var_99": var_99,
             "max_drawdown": max_dd,
             "downside_risk": downside,
+            "beta": beta,
+            "beta_status": beta_status,
         },
         "position_recommendation": {
-            "max_position_size": _position_size(risk_score),
+            "max_position_size": _position_size(risk_score) if beta is not None else None,
             "stop_loss_percentage": float(volatility * 2 * 100),
+            "status": "available" if beta is not None else "insufficient_data",
         },
-        "warnings": _warnings(risk_level, volatility, max_dd),
+        "warnings": _warnings(risk_level, volatility, max_dd, beta_status),
     }
 
 

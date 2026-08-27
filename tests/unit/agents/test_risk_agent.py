@@ -1,0 +1,192 @@
+"""Specification tests for evidence-based risk assessment."""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from datetime import date, timedelta
+from pathlib import Path
+from types import ModuleType
+
+import numpy as np
+import pytest
+
+
+def _load_risk_agent_class() -> type:
+    """Load the target module without exercising the app's unrelated package cycle."""
+    base_module = ModuleType("app.agents.base")
+    base_module.StatelessAgent = type("StatelessAgent", (), {})
+    state_module = ModuleType("app.orchestration.state")
+    state_module.AgentState = dict
+
+    replaced = {
+        name: sys.modules.get(name) for name in ("app.agents.base", "app.orchestration.state")
+    }
+    sys.modules.update({"app.agents.base": base_module, "app.orchestration.state": state_module})
+    try:
+        module_path = Path(__file__).parents[3] / "app" / "agents" / "risk_agent.py"
+        spec = importlib.util.spec_from_file_location("risk_agent_under_test", module_path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.RiskAssessmentAgent
+    finally:
+        for name, original in replaced.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
+
+
+RiskAssessmentAgent = _load_risk_agent_class()
+
+
+def _history(returns: np.ndarray, *, start_offset: int = 0) -> dict[str, list]:
+    prices = [100.0]
+    for value in returns:
+        prices.append(prices[-1] * (1 + float(value)))
+
+    start = date(2024, 1, 1) + timedelta(days=start_offset)
+    dates = [(start + timedelta(days=index)).isoformat() for index in range(len(prices))]
+    return {"dates": dates, "close": prices}
+
+
+def test_estimate_beta_uses_benchmark_returns() -> None:
+    agent = RiskAssessmentAgent()
+    benchmark_returns = np.array(
+        [
+            -0.012,
+            0.008,
+            0.015,
+            -0.006,
+            0.004,
+            0.011,
+            -0.009,
+            0.007,
+            0.013,
+            -0.004,
+            0.006,
+            -0.011,
+            0.014,
+            0.003,
+            -0.007,
+            0.009,
+            -0.005,
+            0.012,
+            -0.008,
+            0.005,
+        ]
+    )
+
+    beta = agent._estimate_beta(benchmark_returns * 1.75, benchmark_returns)
+
+    assert beta == pytest.approx(1.75)
+
+
+@pytest.mark.parametrize(
+    ("benchmark_returns", "stock_returns"),
+    [
+        (None, np.arange(20, dtype=float)),
+        (np.ones(20), np.arange(20, dtype=float)),
+        (np.arange(10, dtype=float), np.arange(10, dtype=float)),
+    ],
+)
+def test_estimate_beta_returns_none_without_sufficient_market_evidence(
+    benchmark_returns: np.ndarray | None,
+    stock_returns: np.ndarray,
+) -> None:
+    agent = RiskAssessmentAgent()
+
+    assert agent._estimate_beta(stock_returns, benchmark_returns) is None
+
+
+def test_risk_score_accepts_missing_beta_without_inventing_a_default() -> None:
+    agent = RiskAssessmentAgent()
+
+    score = agent._calculate_risk_score(
+        {"volatility": 0.02, "max_drawdown": 0.2, "var_95": -0.03, "beta": None}
+    )
+
+    assert score == 55
+
+
+def test_risk_score_and_position_remain_unknown_when_core_metrics_are_missing() -> None:
+    agent = RiskAssessmentAgent()
+
+    score = agent._calculate_risk_score(
+        {"volatility": None, "max_drawdown": 0.2, "var_95": -0.03, "beta": None}
+    )
+
+    assert score is None
+    assert agent._risk_score_to_level(score) == "insufficient_data"
+    assert agent._calculate_position_size(score) is None
+
+
+def test_portfolio_summary_ignores_unknown_scores_without_inventing_an_average() -> None:
+    agent = RiskAssessmentAgent()
+
+    result = agent._assess_portfolio_risk(
+        {
+            "UNKNOWN": {
+                "risk_score": None,
+                "risk_level": "insufficient_data",
+            }
+        }
+    )
+
+    assert result["avg_risk_score"] is None
+    assert result["portfolio_risk_level"] == "insufficient_data"
+
+
+@pytest.mark.asyncio
+async def test_assessment_marks_score_partial_and_withholds_position_without_benchmark() -> None:
+    agent = RiskAssessmentAgent()
+    stock_returns = np.linspace(-0.02, 0.025, 24)
+
+    result = await agent._assess_risk(
+        "TEST",
+        {"symbol": "TEST", "historical_data": _history(stock_returns)},
+    )
+
+    assert result["metrics"]["beta"] is None
+    assert result["metrics"]["beta_status"] == "insufficient_data"
+    assert result["risk_score_status"] == "partial"
+    assert result["position_recommendation"]["max_position_size"] is None
+    assert "benchmark" in " ".join(result["warnings"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_assessment_calculates_beta_from_aligned_benchmark_history() -> None:
+    agent = RiskAssessmentAgent()
+    benchmark_returns = np.array(
+        [(-1 if index % 3 == 0 else 1) * (0.003 + index * 0.0004) for index in range(24)]
+    )
+    stock_returns = benchmark_returns * 1.4
+
+    result = await agent._assess_risk(
+        "TEST",
+        {
+            "symbol": "TEST",
+            "historical_data": _history(stock_returns),
+            "benchmark_historical_data": _history(benchmark_returns),
+        },
+    )
+
+    assert result["metrics"]["beta"] == pytest.approx(1.4)
+    assert result["metrics"]["beta_status"] == "available"
+    assert result["risk_score_status"] == "complete"
+    assert result["position_recommendation"]["max_position_size"] is not None
+
+
+@pytest.mark.asyncio
+async def test_insufficient_price_history_does_not_claim_numeric_risk_or_position() -> None:
+    agent = RiskAssessmentAgent()
+
+    result = await agent._assess_risk(
+        "TEST",
+        {"symbol": "TEST", "historical_data": _history(np.array([0.01, -0.01]))},
+    )
+
+    assert result["risk_score"] is None
+    assert result["risk_level"] == "insufficient_data"
+    assert result["position_recommendation"]["max_position_size"] is None

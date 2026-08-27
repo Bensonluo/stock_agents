@@ -1,12 +1,17 @@
 """Risk assessment agent for evaluating investment risks."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
 from app.agents.base import StatelessAgent
 from app.orchestration.state import AgentState
+from app.tools.risk.assessment import (
+    _calculate_beta,
+    _calculate_beta_from_histories,
+    _get_benchmark_history,
+)
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -23,7 +28,7 @@ class RiskAssessmentAgent(StatelessAgent):
     - Suggests position sizing based on risk
     """
 
-    async def process(self, state: AgentState) -> Dict[str, Any]:
+    async def process(self, state: AgentState) -> dict[str, Any]:
         """Process risk assessment.
 
         Args:
@@ -63,7 +68,7 @@ class RiskAssessmentAgent(StatelessAgent):
             "timestamp": datetime.now().isoformat(),
         }
 
-    async def _assess_risk(self, symbol: str, data: Dict) -> Dict[str, Any]:
+    async def _assess_risk(self, symbol: str, data: dict) -> dict[str, Any]:
         """Assess risk for a single symbol.
 
         Args:
@@ -93,22 +98,24 @@ class RiskAssessmentAgent(StatelessAgent):
         max_drawdown = self._calculate_max_drawdown(closes)
         downside_risk = self._calculate_downside_risk(returns)
 
-        # Calculate beta (simplified, using S&P 500 as proxy)
-        beta = self._estimate_beta(returns)
+        # Beta requires aligned benchmark observations; never substitute a default.
+        beta = _calculate_beta_from_histories(hist_data, _get_benchmark_history(data))
 
         # Risk score
-        risk_score = self._calculate_risk_score({
-            "volatility": volatility,
-            "max_drawdown": max_drawdown,
-            "var_95": var_95,
-            "beta": beta,
-        })
+        risk_score = self._calculate_risk_score(
+            {
+                "volatility": volatility,
+                "max_drawdown": max_drawdown,
+                "var_95": var_95,
+                "beta": beta,
+            }
+        )
 
         # Risk level
         risk_level = self._risk_score_to_level(risk_score)
 
-        # Position size recommendation
-        position_size = self._calculate_position_size(risk_score)
+        # A position limit based on an incomplete score would imply false precision.
+        position_size = self._calculate_position_size(risk_score) if beta is not None else None
 
         # Stop loss recommendation
         stop_loss = self._calculate_stop_loss(closes, volatility)
@@ -117,6 +124,7 @@ class RiskAssessmentAgent(StatelessAgent):
             "symbol": symbol,
             "risk_score": risk_score,
             "risk_level": risk_level,
+            "risk_score_status": "complete" if beta is not None else "partial",
             "metrics": {
                 "volatility": volatility,
                 "volatility_annualized": float(volatility * np.sqrt(252)),
@@ -125,13 +133,17 @@ class RiskAssessmentAgent(StatelessAgent):
                 "max_drawdown": max_drawdown,
                 "downside_risk": downside_risk,
                 "beta": beta,
+                "beta_status": "available" if beta is not None else "insufficient_data",
             },
             "position_recommendation": {
                 "max_position_size": position_size,
                 "stop_loss_percentage": stop_loss,
                 "risk_reward_ratio": self._estimate_risk_reward(closes, volatility),
+                "status": "available" if beta is not None else "insufficient_data",
             },
-            "warnings": self._generate_risk_warnings(risk_level, volatility, max_drawdown),
+            "warnings": self._generate_risk_warnings(
+                risk_level, volatility, max_drawdown, beta_available=beta is not None
+            ),
         }
 
     def _calculate_volatility(self, returns: np.ndarray, annualize: bool = False) -> float:
@@ -188,20 +200,21 @@ class RiskAssessmentAgent(StatelessAgent):
             return 0.0
         return float(np.std(negative_returns))
 
-    def _estimate_beta(self, returns: np.ndarray) -> Optional[float]:
-        """Estimate beta (simplified without market data).
+    def _estimate_beta(
+        self, returns: np.ndarray, benchmark_returns: np.ndarray | None = None
+    ) -> float | None:
+        """Estimate beta from paired stock and benchmark returns.
 
         Args:
-            returns: Array of returns
+            returns: Array of stock returns
+            benchmark_returns: Array of benchmark returns for the same intervals
 
         Returns:
-            Estimated beta (1.0 as default placeholder)
+            Estimated beta, or None when aligned evidence is insufficient
         """
-        # In a real implementation, you would calculate correlation with market
-        # For now, return a placeholder
-        return 1.0
+        return _calculate_beta(returns, benchmark_returns)
 
-    def _calculate_risk_score(self, metrics: Dict[str, float]) -> float:
+    def _calculate_risk_score(self, metrics: dict[str, float | None]) -> float | None:
         """Calculate overall risk score (0-100, higher = riskier).
 
         Args:
@@ -210,10 +223,18 @@ class RiskAssessmentAgent(StatelessAgent):
         Returns:
             Risk score
         """
+        required = (
+            metrics.get("volatility"),
+            metrics.get("max_drawdown"),
+            metrics.get("var_95"),
+        )
+        if any(value is None or not np.isfinite(value) for value in required):
+            return None
+
         score = 0
 
         # Volatility score (0-30 points)
-        vol = metrics.get("volatility", 0)
+        vol = metrics["volatility"]
         if vol >= 0.03:  # >3% daily volatility
             score += 30
         elif vol >= 0.02:
@@ -222,7 +243,7 @@ class RiskAssessmentAgent(StatelessAgent):
             score += 10
 
         # Max drawdown score (0-30 points)
-        dd = metrics.get("max_drawdown", 0)
+        dd = metrics["max_drawdown"]
         if dd >= 0.3:  # >30% drawdown
             score += 30
         elif dd >= 0.2:
@@ -231,7 +252,7 @@ class RiskAssessmentAgent(StatelessAgent):
             score += 10
 
         # VaR score (0-20 points)
-        var = abs(metrics.get("var_95", 0))
+        var = abs(metrics["var_95"])
         if var >= 0.05:  # >5% daily VaR
             score += 20
         elif var >= 0.03:
@@ -240,17 +261,18 @@ class RiskAssessmentAgent(StatelessAgent):
             score += 10
 
         # Beta score (0-20 points)
-        beta = metrics.get("beta", 1)
-        if beta >= 1.5:
-            score += 20
-        elif beta >= 1.2:
-            score += 15
-        elif beta <= 0.5:
-            score += 5
+        beta = metrics.get("beta")
+        if beta is not None:
+            if beta >= 1.5:
+                score += 20
+            elif beta >= 1.2:
+                score += 15
+            elif beta <= 0.5:
+                score += 5
 
         return min(100, score)
 
-    def _risk_score_to_level(self, score: float) -> str:
+    def _risk_score_to_level(self, score: float | None) -> str:
         """Convert risk score to risk level.
 
         Args:
@@ -259,6 +281,8 @@ class RiskAssessmentAgent(StatelessAgent):
         Returns:
             Risk level string
         """
+        if score is None:
+            return "insufficient_data"
         if score >= 70:
             return "very_high"
         elif score >= 50:
@@ -270,7 +294,7 @@ class RiskAssessmentAgent(StatelessAgent):
         else:
             return "very_low"
 
-    def _calculate_position_size(self, risk_score: float) -> float:
+    def _calculate_position_size(self, risk_score: float | None) -> float | None:
         """Calculate recommended position size based on risk.
 
         Args:
@@ -280,6 +304,8 @@ class RiskAssessmentAgent(StatelessAgent):
             Maximum position size as percentage of portfolio
         """
         # Higher risk = smaller position
+        if risk_score is None:
+            return None
         if risk_score >= 70:
             return 2.0  # Max 2% of portfolio
         elif risk_score >= 50:
@@ -305,7 +331,7 @@ class RiskAssessmentAgent(StatelessAgent):
         # Convert to percentage and multiply for position
         return float(volatility * 2 * 100)
 
-    def _estimate_risk_reward(self, prices: np.ndarray, volatility: float) -> Optional[float]:
+    def _estimate_risk_reward(self, prices: np.ndarray, volatility: float) -> float | None:
         """Estimate risk/reward ratio.
 
         Args:
@@ -332,8 +358,12 @@ class RiskAssessmentAgent(StatelessAgent):
         return None
 
     def _generate_risk_warnings(
-        self, risk_level: str, volatility: float, max_drawdown: float
-    ) -> List[str]:
+        self,
+        risk_level: str,
+        volatility: float,
+        max_drawdown: float,
+        beta_available: bool = True,
+    ) -> list[str]:
         """Generate risk warnings.
 
         Args:
@@ -350,17 +380,24 @@ class RiskAssessmentAgent(StatelessAgent):
             warnings.append("This stock has high risk. Consider smaller position size.")
 
         if volatility > 0.03:
-            warnings.append(f"High daily volatility ({volatility*100:.1f}%). Expect large price swings.")
+            warnings.append(
+                f"High daily volatility ({volatility * 100:.1f}%). Expect large price swings."
+            )
 
         if max_drawdown > 0.3:
-            warnings.append(f"History of deep drawdowns ({max_drawdown*100:.1f}%). Risk of significant loss.")
+            warnings.append(
+                f"History of deep drawdowns ({max_drawdown * 100:.1f}%). Risk of significant loss."
+            )
 
         if risk_level == "very_high":
             warnings.append("Consider using stop-loss orders to limit potential losses.")
 
+        if not beta_available:
+            warnings.append("Beta unavailable: aligned benchmark history is insufficient.")
+
         return warnings
 
-    def _minimal_risk_assessment(self, data: Dict) -> Dict[str, Any]:
+    def _minimal_risk_assessment(self, data: dict) -> dict[str, Any]:
         """Provide minimal risk assessment when insufficient data.
 
         Args:
@@ -371,16 +408,18 @@ class RiskAssessmentAgent(StatelessAgent):
         """
         return {
             "symbol": data.get("symbol", ""),
-            "risk_score": 50,
-            "risk_level": "medium",
-            "metrics": {},
+            "risk_score": None,
+            "risk_level": "insufficient_data",
+            "risk_score_status": "insufficient_data",
+            "metrics": {"beta": None, "beta_status": "insufficient_data"},
             "position_recommendation": {
-                "max_position_size": 10.0,
+                "max_position_size": None,
+                "status": "insufficient_data",
             },
             "warnings": ["Insufficient data for detailed risk assessment"],
         }
 
-    def _assess_portfolio_risk(self, results: Dict[str, Dict]) -> Dict[str, Any]:
+    def _assess_portfolio_risk(self, results: dict[str, dict]) -> dict[str, Any]:
         """Assess portfolio-level risk.
 
         Args:
@@ -390,8 +429,12 @@ class RiskAssessmentAgent(StatelessAgent):
             Portfolio risk summary
         """
         # Calculate average risk metrics
-        risk_scores = [r.get("risk_score", 50) for r in results.values()]
-        avg_risk_score = sum(risk_scores) / len(risk_scores) if risk_scores else 50
+        risk_scores = [
+            score
+            for result in results.values()
+            if isinstance((score := result.get("risk_score")), (int, float))
+        ]
+        avg_risk_score = sum(risk_scores) / len(risk_scores) if risk_scores else None
 
         # Count by risk level
         risk_levels = [r.get("risk_level", "medium") for r in results.values()]
@@ -405,11 +448,12 @@ class RiskAssessmentAgent(StatelessAgent):
                 "medium": risk_levels.count("medium"),
                 "low": risk_levels.count("low"),
                 "very_low": risk_levels.count("very_low"),
+                "insufficient_data": risk_levels.count("insufficient_data"),
             },
             "diversification_score": self._calculate_diversification_score(results),
         }
 
-    def _calculate_diversification_score(self, results: Dict[str, Dict]) -> float:
+    def _calculate_diversification_score(self, results: dict[str, dict]) -> float:
         """Calculate diversification score.
 
         Args:
@@ -432,7 +476,7 @@ class RiskAssessmentAgent(StatelessAgent):
         else:
             return 20
 
-    def _calculate_overall_risk(self, results: Dict[str, Dict]) -> str:
+    def _calculate_overall_risk(self, results: dict[str, dict]) -> str:
         """Calculate overall risk level for the analysis.
 
         Args:
@@ -442,9 +486,15 @@ class RiskAssessmentAgent(StatelessAgent):
             Overall risk level
         """
         if not results:
-            return "medium"
+            return "insufficient_data"
 
-        risk_scores = [r.get("risk_score", 50) for r in results.values()]
+        risk_scores = [
+            score
+            for result in results.values()
+            if isinstance((score := result.get("risk_score")), (int, float))
+        ]
+        if not risk_scores:
+            return "insufficient_data"
         avg_score = sum(risk_scores) / len(risk_scores)
 
         return self._risk_score_to_level(avg_score)

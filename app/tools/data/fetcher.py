@@ -20,6 +20,27 @@ logger = get_logger(__name__)
 # Simple in-memory cache: key -> (data, timestamp)
 _cache: dict[str, tuple[Any, float]] = {}
 _CACHE_TTL = 1800  # 30 minutes - long enough to survive across tool calls in one analysis
+DEFAULT_HISTORY_PERIOD = "3y"
+DEFAULT_HISTORY_DAYS = 3 * 365
+
+
+def _percentage_to_ratio(value: Any) -> float | None:
+    """Convert provider percentage values (75 means 75%) to decimal ratios."""
+    if value is None:
+        return None
+    return float(value) / 100.0
+
+
+def _period_to_days(period: str) -> int:
+    return {
+        "1mo": 30,
+        "3mo": 90,
+        "6mo": 180,
+        "1y": 365,
+        "2y": 730,
+        "3y": DEFAULT_HISTORY_DAYS,
+        "5y": 5 * 365,
+    }.get(period, DEFAULT_HISTORY_DAYS)
 
 
 def _cache_get(key: str) -> Any | None:
@@ -85,7 +106,7 @@ async def _yfinance_fetch(symbol: str) -> dict[str, Any] | None:
         ticker = yf.Ticker(yahoo_symbol)
         info = ticker.info
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=90)
+        start_date = end_date - timedelta(days=DEFAULT_HISTORY_DAYS)
         hist = ticker.history(start=start_date, end=end_date)
         return info, hist, ticker
 
@@ -128,11 +149,24 @@ async def _yfinance_fetch(symbol: str) -> dict[str, Any] | None:
                     "peg_ratio": info.get("pegRatio"),
                     "enterprise_value": info.get("enterpriseValue"),
                     "ev_ebitda": info.get("enterpriseToEbitda"),
-                    "debt_to_equity": info.get("debtToEquity"),
+                    "debt_to_equity": _percentage_to_ratio(info.get("debtToEquity")),
                     "current_ratio": info.get("currentRatio"),
+                    "quick_ratio": info.get("quickRatio"),
                     "total_revenue": info.get("totalRevenue"),
                     "dividend_yield": info.get("dividendYield"),
+                    "revenue_growth": info.get("revenueGrowth"),
+                    "earnings_growth": info.get("earningsGrowth"),
                 }
+            }
+            financial_data["metric_units"] = {
+                "roe": "ratio",
+                "roa": "ratio",
+                "profit_margin": "ratio",
+                "operating_margin": "ratio",
+                "debt_to_equity": "ratio",
+                "dividend_yield": "ratio",
+                "revenue_growth": "ratio",
+                "earnings_growth": "ratio",
             }
 
             news_data = []
@@ -182,7 +216,7 @@ async def _akshare_us(symbol: str, ak: Any) -> dict[str, Any] | None:
     # Get historical data
     def _get_hist():
         end_date = datetime.now().strftime("%Y%m%d")
-        start_date = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
         return ak.stock_us_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
 
     df = await asyncio.to_thread(_get_hist)
@@ -237,7 +271,7 @@ async def _akshare_cn(symbol: str, ak: Any) -> dict[str, Any] | None:
     """Chinese A-share via akshare."""
     def _get_hist():
         end_date = datetime.now().strftime("%Y%m%d")
-        start_date = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
         return ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
 
     df = await asyncio.to_thread(_get_hist)
@@ -290,7 +324,11 @@ async def _yahoo_api_fetch(symbol: str) -> dict[str, Any] | None:
         # Get quote
         def _get_quote():
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}"
-            params = {"range": "3mo", "interval": "1d", "includePrePost": "false"}
+            params = {
+                "range": DEFAULT_HISTORY_PERIOD,
+                "interval": "1d",
+                "includePrePost": "false",
+            }
             r = requests.get(url, params=params, headers=_YAHOO_HEADERS, timeout=15)
             r.raise_for_status()
             return r.json()
@@ -442,13 +480,20 @@ async def _finnhub_fetch(symbol: str) -> dict[str, Any] | None:
         "metrics": {
             "beta": metric.get("beta"),
             "pe_ratio": metric.get("peBasicExtraTTM"),
-            "roe": metric.get("roeTTM"),
-            "roa": metric.get("roaTTM"),
-            "dividend_yield": metric.get("dividendYieldIndicatedAnnual"),
+            "roe": _percentage_to_ratio(metric.get("roeTTM")),
+            "roa": _percentage_to_ratio(metric.get("roaTTM")),
+            "dividend_yield": _percentage_to_ratio(
+                metric.get("dividendYieldIndicatedAnnual")
+            ),
             "10d_avg_volume": metric.get("10DayAverageTradingVolume"),
             "52_week_high": metric.get("52WeekHigh"),
             "52_week_low": metric.get("52WeekLow"),
-        }
+        },
+        "metric_units": {
+            "roe": "ratio",
+            "roa": "ratio",
+            "dividend_yield": "ratio",
+        },
     }
 
     news_data = []
@@ -474,8 +519,7 @@ async def _finnhub_historical(symbol: str, period: str) -> dict[str, Any] | None
     """
     if not get_settings().finnhub_api_key:
         return None
-    period_map = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
-    days = period_map.get(period, 90)
+    days = _period_to_days(period)
     end_ts = int(time.time())
     start_ts = end_ts - days * 24 * 3600
 
@@ -562,7 +606,7 @@ async def _alphavantage_historical(symbol: str, period: str) -> dict[str, Any] |
     if not isinstance(series, dict) or not series:
         return None
 
-    period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}.get(period, 90)
+    period_days = _period_to_days(period)
     cutoff = (datetime.now() - timedelta(days=period_days)).strftime("%Y-%m-%d")
     rows = [(d, v) for d, v in series.items() if d >= cutoff]
     rows.sort(key=lambda x: x[0])
@@ -600,7 +644,14 @@ async def _stooq_fetch(symbol: str) -> dict[str, Any] | None:
     """Fetch via Stooq.com free CSV download."""
     try:
         stooq_symbol = symbol.lower().replace(".", "-")
-        url = f"https://stooq.com/q/d/l/?s={stooq_symbol}&d1={((datetime.now() - timedelta(days=90)).strftime('%Y%m%d'))}&d2={datetime.now().strftime('%Y%m%d')}&i=d"
+        start_date = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime(
+            "%Y%m%d"
+        )
+        end_date = datetime.now().strftime("%Y%m%d")
+        url = (
+            f"https://stooq.com/q/d/l/?s={stooq_symbol}"
+            f"&d1={start_date}&d2={end_date}&i=d"
+        )
 
         def _get():
             r = requests.get(url, timeout=15)
@@ -681,7 +732,9 @@ async def fetch_stock_data(symbol: str) -> dict[str, Any] | None:
     return None
 
 
-async def fetch_historical(symbol: str, period: str = "3mo") -> dict[str, Any]:
+async def fetch_historical(
+    symbol: str, period: str = DEFAULT_HISTORY_PERIOD
+) -> dict[str, Any]:
     """Fetch historical prices with fallback."""
     cache_key = f"hist_{symbol}_{period}"
     cached = _cache_get(cache_key)
@@ -735,8 +788,7 @@ async def fetch_historical(symbol: str, period: str = "3mo") -> dict[str, Any]:
     try:
         import akshare as ak
 
-        period_map = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
-        days = period_map.get(period, 90)
+        days = _period_to_days(period)
         end_date = datetime.now().strftime("%Y%m%d")
         start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
 
