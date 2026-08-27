@@ -42,7 +42,7 @@
 | 证据约束 prompt 与结构化输出 | ✅ 2026-08-27 | `app/research/narrator.py`(叙述)+ `app/research/analysts.py`(四专业 Analyst + PM):引用必须在允许集合内否则该角色输出被丢弃;PM 必须原样复述委员会裁决否则结论被丢弃(不得越过门控);超时/异常/不可解析静默降级。结构化校验由代码而非 prompt 保证 |
 | 前端消费 V2 字段 | ✅ 2026-08-27 | result 页已渲染:周线排列+金叉/死叉、估值情景区间+质量红旗、研究综合卡(审计/多空/叙述/委员会)、PM 结论(论点/期限/条件/失效/复述裁决)、四 Analyst 视图(带引用)、多标的切换页签、证据抽屉(指标/数值/单位/as_of/来源/公式,按标的折叠)。催化剂时间线依赖 Phase 4 事件数据,随 Phase 4 做 |
 
-## Phase 3:回测与研究闭环 — 🚧 进行中
+## Phase 3:回测与研究闭环 — ✅ 核心完成(2026-08-28;逐笔 filing date 随 Phase 4 数据源精化)
 
 | 计划项 | 状态 | 说明 |
 |---|---|---|
@@ -51,8 +51,9 @@
 | walk-forward 与参数邻域 | ✅ 2026-08-27 | 滚动 train/test:参数仅在 train 段选出、test 段评分;报告全部窗口(含亏损)、参数稳定性、configs_tested |
 | 实验 manifest | ✅ 2026-08-27 | 价格帧 sha256、参数、成本模型、git commit、configs_tested、时间戳 |
 | API | ✅ 2026-08-27 | `POST /api/backtest/v2/run`、`/v2/walkforward`(旧 /run 契约不变);service 层 run_backtest_v2/run_walk_forward |
-| as_of/vintage 数据防泄漏 | ⬜ | 财务数据按 filing date 截断未做 |
-| 历史校准与失败结果展示 | ⬜ 部分 | walk-forward 已展示失败窗口;信号命中率/置信度校准待做 |
+| as_of/vintage 数据防泄漏 | ✅ 2026-08-28 | `app/backtest/point_in_time.py`:财报仅在 period end + 报告滞后(默认 60 天)后可见,`latest_visible_value` 只返回已披露期间;data_agent 为每个财报块盖 `visible_from` 戳。逐笔 filing date(SEC EDGAR/巨潮)随 Phase 4 数据源接入精化 |
+| 历史校准与失败结果展示 | ✅ 2026-08-28 | `app/backtest/calibration.py`:入场信号按前瞻窗口(默认 20/60 bar)的实测命中率——样本数、Wilson 95% 下界、平均前瞻收益、分年明细(亏损年可见);`POST /api/backtest/v2/calibrate`。置信度自此以实测频率为锚。引擎数据卫生:乱序/重复索引确定性归一 |
+| 引擎数据卫生 | ✅ 2026-08-28 | run_backtest 对非递增索引排序、重复时间戳 keep-last 去重——索引乱序本身就是 look-ahead 缺陷 |
 
 ## Phase 4 — 未开始
 
