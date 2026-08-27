@@ -7,10 +7,9 @@ import yfinance as yf
 
 from app.backtest import (
     CN_STOCK,
+    STRATEGIES,
     US_STOCK,
     CostModel,
-    STRATEGIES,
-    STRATEGY_PARAMETERS,
     build_manifest,
 )
 from app.backtest import (
