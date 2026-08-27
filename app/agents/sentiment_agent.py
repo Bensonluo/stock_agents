@@ -1,9 +1,10 @@
 """Sentiment analysis agent for news and social sentiment."""
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
 from app.agents.base import StatelessAgent
+from app.analysis.sentiment import calculate_overall, calculate_trend, empty_sentiment, score_news
 from app.orchestration.state import AgentState
 from app.utils.logging import get_logger
 
@@ -22,7 +23,7 @@ class SentimentAnalysisAgent(StatelessAgent):
     Can use LLM for more sophisticated sentiment analysis.
     """
 
-    async def process(self, state: AgentState) -> Dict[str, Any]:
+    async def process(self, state: AgentState) -> dict[str, Any]:
         """Process sentiment analysis.
 
         Args:
@@ -77,79 +78,11 @@ class SentimentAnalysisAgent(StatelessAgent):
             "timestamp": datetime.now().isoformat(),
         }
 
-    async def _analyze_news_sentiment(self, news: List[Dict]) -> Dict[str, Any]:
-        """Analyze sentiment from news headlines and summaries.
+    async def _analyze_news_sentiment(self, news: list[dict]) -> dict[str, Any]:
+        """Score one symbol's news via the canonical sentiment module."""
+        return score_news(news)
 
-        Args:
-            news: List of news articles
-
-        Returns:
-            Sentiment analysis dictionary
-        """
-        positive_words = {
-            "up", "rise", "gain", "growth", "strong", "beat", "top", "best",
-            "surge", "rally", "bull", "buy", "outperform", "upgrade", "profit",
-            "record", "high", "breakthrough", "expansion", "dividend", "success",
-        }
-
-        negative_words = {
-            "down", "fall", "drop", "loss", "weak", "miss", "bottom", "worst",
-            "plunge", "crash", "bear", "sell", "underperform", "downgrade", "debt",
-            "low", "cut", "reduction", "layoff", "lawsuit", "fraud", "risk",
-        }
-
-        total_score = 0
-        analyzed_count = 0
-        recent_sentiment = []
-
-        for article in news:
-            text = (
-                article.get("title", "") + " " +
-                article.get("summary", "")
-            ).lower()
-
-            score = 0
-            for word in positive_words:
-                if word in text:
-                    score += 1
-            for word in negative_words:
-                if word in text:
-                    score -= 1
-
-            if score != 0:
-                total_score += score
-                analyzed_count += 1
-                recent_sentiment.append(score)
-
-        # Normalize score
-        if analyzed_count > 0:
-            avg_score = total_score / analyzed_count
-            normalized_score = max(-100, min(100, avg_score * 20))
-        else:
-            avg_score = 0
-            normalized_score = 0
-
-        # Determine sentiment
-        if normalized_score >= 40:
-            sentiment = "very_positive"
-        elif normalized_score >= 15:
-            sentiment = "positive"
-        elif normalized_score <= -40:
-            sentiment = "very_negative"
-        elif normalized_score <= -15:
-            sentiment = "negative"
-        else:
-            sentiment = "neutral"
-
-        return {
-            "sentiment": sentiment,
-            "score": normalized_score,
-            "article_count": analyzed_count,
-            "recent_scores": recent_sentiment[-10:],
-            "trend": self._calculate_sentiment_trend(recent_sentiment),
-        }
-
-    async def _llm_sentiment_analysis(self, symbol: str, news: List[Dict]) -> Dict[str, Any]:
+    async def _llm_sentiment_analysis(self, symbol: str, news: list[dict]) -> dict[str, Any]:
         """Use LLM for deeper sentiment analysis.
 
         Args:
@@ -203,70 +136,11 @@ Respond only with valid JSON."""
             logger.error(f"LLM sentiment analysis failed: {e}")
             return {}
 
-    def _calculate_sentiment_trend(self, scores: List[float]) -> str:
-        """Calculate sentiment trend from recent scores.
+    def _calculate_sentiment_trend(self, scores: list[float]) -> str:
+        return calculate_trend(scores)
 
-        Args:
-            scores: List of recent sentiment scores
+    def _calculate_overall_sentiment(self, results: dict[str, dict]) -> dict[str, Any]:
+        return calculate_overall(results)
 
-        Returns:
-            Trend string
-        """
-        if len(scores) < 3:
-            return "insufficient_data"
-
-        recent = scores[-3:]
-        if all(s > 0 for s in recent):
-            return "improving"
-        elif all(s < 0 for s in recent):
-            return "declining"
-        elif recent[-1] > recent[0]:
-            return "improving"
-        elif recent[-1] < recent[0]:
-            return "declining"
-        else:
-            return "stable"
-
-    def _calculate_overall_sentiment(self, results: Dict[str, Dict]) -> Dict[str, Any]:
-        """Calculate overall sentiment across all symbols.
-
-        Args:
-            results: Sentiment results by symbol
-
-        Returns:
-            Overall sentiment summary
-        """
-        if not results:
-            return {"sentiment": "neutral", "score": 0}
-
-        scores = [r.get("score", 0) for r in results.values()]
-        avg_score = sum(scores) / len(scores) if scores else 0
-
-        if avg_score >= 30:
-            sentiment = "positive"
-        elif avg_score <= -30:
-            sentiment = "negative"
-        else:
-            sentiment = "neutral"
-
-        return {
-            "sentiment": sentiment,
-            "score": avg_score,
-            "positive_count": sum(1 for s in results.values() if s.get("score", 0) > 15),
-            "negative_count": sum(1 for s in results.values() if s.get("score", 0) < -15),
-            "neutral_count": sum(1 for s in results.values() if -15 <= s.get("score", 0) <= 15),
-        }
-
-    def _empty_sentiment(self) -> Dict[str, Any]:
-        """Return empty sentiment result.
-
-        Returns:
-            Empty sentiment dictionary
-        """
-        return {
-            "sentiment": "neutral",
-            "score": 0,
-            "article_count": 0,
-            "recent_scores": [],
-            "trend": "no_data",
-        }
+    def _empty_sentiment(self) -> dict[str, Any]:
+        return empty_sentiment()
