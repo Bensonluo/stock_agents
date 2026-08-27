@@ -237,3 +237,120 @@ async def get_backtest_result(backtest_id: str):
     """
     # In a real implementation, this would fetch from a database
     raise HTTPException(status_code=501, detail="Not implemented - results are not persisted")
+
+
+# ---------------------------------------------------------------------------
+# V2 endpoints: deterministic engine, full costs, walk-forward, manifest
+# ---------------------------------------------------------------------------
+
+
+class V2BacktestRequest(BaseModel):
+    """Request for the V2 deterministic backtest engine."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str = Field(..., description="Stock symbol to backtest")
+    strategy: Literal["sma_crossover", "rsi_strategy", "macd_strategy", "buy_and_hold"] = Field(
+        ..., description="Strategy name"
+    )
+    start_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    initial_cash: float = Field(default=10000.0, ge=1000)
+    market: Literal["us", "cn"] = Field(
+        default="us", description="Cost preset: 'us' (commission+slippage) or 'cn' (+stamp tax, min fee)"
+    )
+    strategy_params: dict[str, float | int] = Field(
+        default_factory=dict, description="Only the selected strategy's parameters"
+    )
+    benchmark_symbol: str | None = Field(
+        default=None, description="Optional benchmark for the excess-return metric (e.g. '^GSPC')"
+    )
+
+    @field_validator("symbol", "benchmark_symbol")
+    @classmethod
+    def _validate_symbol(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not validate_stock_symbol(value):
+            raise ValueError(f"Invalid stock symbol: {value}")
+        return value.upper()
+
+    @model_validator(mode="after")
+    def _dates_in_order(self) -> "V2BacktestRequest":
+        start, end = datetime.strptime(self.start_date, "%Y-%m-%d"), datetime.strptime(
+            self.end_date, "%Y-%m-%d"
+        )
+        if end <= start:
+            raise ValueError("End date must be after start date")
+        return self
+
+
+class WalkForwardRequest(V2BacktestRequest):
+    """Request for a rolling walk-forward experiment."""
+
+    param_grid: dict[str, list[float | int]] = Field(
+        ..., description="Parameter name -> candidate values (cartesian product is tested)"
+    )
+    train_bars: int = Field(..., ge=50, description="Training window size in bars")
+    test_bars: int = Field(..., ge=10, description="Test window size in bars")
+    selection_metric: Literal["sharpe", "cagr"] = Field(
+        default="sharpe", description="Metric maximized on the train segment"
+    )
+
+
+@router.post("/v2/run")
+async def run_backtest_v2(request: V2BacktestRequest) -> dict:
+    """V2 backtest: fills at the next bar's open with full costs, benchmark
+    comparison, the complete metric suite and a reproducibility manifest."""
+    from time import time
+
+    start_time = time()
+    try:
+        service = BacktestService()
+        result = await service.run_backtest_v2(
+            symbol=request.symbol,
+            strategy=request.strategy,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            initial_cash=request.initial_cash,
+            market=request.market,
+            strategy_params=request.strategy_params,
+            benchmark_symbol=request.benchmark_symbol,
+        )
+        result["execution_time"] = round(time() - start_time, 3)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"V2 backtest failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/v2/walkforward")
+async def run_walk_forward(request: WalkForwardRequest) -> dict:
+    """Rolling walk-forward: parameters chosen on train, scored on unseen test
+    windows; reports every window (including losers) and configs tested."""
+    from time import time
+
+    start_time = time()
+    try:
+        service = BacktestService()
+        result = await service.run_walk_forward(
+            symbol=request.symbol,
+            strategy=request.strategy,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            param_grid=request.param_grid,
+            train_bars=request.train_bars,
+            test_bars=request.test_bars,
+            initial_cash=request.initial_cash,
+            market=request.market,
+            selection_metric=request.selection_metric,
+        )
+        result["execution_time"] = round(time() - start_time, 3)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Walk-forward failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e

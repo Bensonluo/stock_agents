@@ -6,9 +6,31 @@ import backtrader as bt
 import pandas as pd
 import yfinance as yf
 
+from app.backtest import (
+    CN_STOCK,
+    US_STOCK,
+    CostModel,
+    build_manifest,
+)
+from app.backtest import (
+    run_backtest as run_v2_engine,
+)
+from app.backtest import (
+    walk_forward as walk_forward_engine,
+)
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _series_to_points(series: pd.Series | None) -> list[dict[str, float | str]] | None:
+    """Equity curve as JSON points; None passes through."""
+    if series is None:
+        return None
+    return [
+        {"date": str(date), "value": round(float(value), 6)}
+        for date, value in series.items()
+    ]
 
 
 class BacktestService:
@@ -136,6 +158,100 @@ class BacktestService:
         except Exception as e:
             logger.error(f"Backtest failed: {e}")
             raise
+
+    async def run_backtest_v2(
+        self,
+        symbol: str,
+        strategy: str,
+        start_date: str,
+        end_date: str,
+        initial_cash: float = 10_000.0,
+        market: str = "us",
+        strategy_params: dict | None = None,
+        benchmark_symbol: str | None = None,
+    ) -> dict[str, Any]:
+        """V2-engine backtest: next-bar fills, full costs, benchmark, manifest."""
+        data = await self._fetch_data(symbol, start_date, end_date)
+        benchmark_data = None
+        if benchmark_symbol:
+            benchmark_data = await self._fetch_data(benchmark_symbol, start_date, end_date)
+
+        result = run_v2_engine(
+            data,
+            strategy=strategy,
+            cost_model=self._cost_model(market),
+            initial_cash=initial_cash,
+            benchmark_data=benchmark_data,
+            **(strategy_params or {}),
+        )
+        manifest = build_manifest(
+            symbol=symbol,
+            strategy=strategy,
+            params=result.params,
+            start=start_date,
+            end=end_date,
+            data=data,
+            cost_model=self._cost_model(market),
+        )
+        return {
+            "symbol": symbol,
+            "strategy": strategy,
+            "params": result.params,
+            "period": {"start": start_date, "end": end_date},
+            "bars": result.bars,
+            "initial_cash": initial_cash,
+            "metrics": result.metrics,
+            "equity": _series_to_points(result.equity),
+            "benchmark_equity": _series_to_points(result.benchmark_equity)
+            if result.benchmark_equity is not None
+            else None,
+            "trades": result.trades,
+            "manifest": manifest,
+        }
+
+    async def run_walk_forward(
+        self,
+        symbol: str,
+        strategy: str,
+        start_date: str,
+        end_date: str,
+        param_grid: dict[str, list],
+        train_bars: int,
+        test_bars: int,
+        initial_cash: float = 10_000.0,
+        market: str = "us",
+        selection_metric: str = "sharpe",
+    ) -> dict[str, Any]:
+        """Rolling walk-forward: pick params on train, score unseen test windows."""
+        data = await self._fetch_data(symbol, start_date, end_date)
+        report = walk_forward_engine(
+            data,
+            strategy=strategy,
+            param_grid=param_grid,
+            train_bars=train_bars,
+            test_bars=test_bars,
+            cost_model=self._cost_model(market),
+            initial_cash=initial_cash,
+            selection_metric=selection_metric,
+        )
+        report["manifest"] = build_manifest(
+            symbol=symbol,
+            strategy=strategy,
+            params={"grid": param_grid},
+            start=start_date,
+            end=end_date,
+            data=data,
+            cost_model=self._cost_model(market),
+            configs_tested=report.get("configs_tested", 0),
+        )
+        return report
+
+    @staticmethod
+    def _cost_model(market: str) -> CostModel:
+        preset = {"cn": CN_STOCK, "us": US_STOCK}.get(str(market).lower())
+        if preset is None:
+            raise ValueError(f"Unknown market preset: {market} (use 'cn' or 'us')")
+        return preset
 
     async def _fetch_data(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         """Fetch historical data for backtesting.
