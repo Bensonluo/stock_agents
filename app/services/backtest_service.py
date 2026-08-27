@@ -2,7 +2,6 @@
 
 from typing import Any
 
-import backtrader as bt
 import pandas as pd
 import yfinance as yf
 
@@ -10,6 +9,8 @@ from app.backtest import (
     CN_STOCK,
     US_STOCK,
     CostModel,
+    STRATEGIES,
+    STRATEGY_PARAMETERS,
     build_manifest,
 )
 from app.backtest import (
@@ -60,104 +61,66 @@ class BacktestService:
         commission: float = 0.001,
         strategy_params: dict | None = None,
     ) -> dict[str, Any]:
-        """Run a backtest for the given strategy.
+        """Run a backtest via the V2 deterministic engine (legacy response shape).
+
+        Kept for the existing ``POST /run`` contract: fills at the next bar's
+        open, costs via ``commission``, force-liquidation at the final close.
+        The old Backtrader implementation was retired — one engine, one truth.
 
         Args:
-            symbol: Stock symbol
+            symbol: Stock symbol to backtest
             strategy: Strategy name
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
             initial_cash: Initial cash amount
-            commission: Commission rate
+            commission: Commission rate (per side)
             strategy_params: Optional strategy parameters
 
         Returns:
-            Backtest results dictionary
+            Backtest results dictionary (legacy field names)
         """
         logger.info(f"Running backtest: {symbol} {strategy} from {start_date} to {end_date}")
 
-        try:
-            # Fetch historical data
-            data = await self._fetch_data(symbol, start_date, end_date)
+        data = await self._fetch_data(symbol, start_date, end_date)
+        if data.empty:
+            raise ValueError(f"No data available for {symbol}")
 
-            if data.empty:
-                raise ValueError(f"No data available for {symbol}")
+        selected_params = self._get_strategy_params(strategy, strategy_params)
+        result = run_v2_engine(
+            data,
+            strategy=strategy,
+            cost_model=CostModel(commission_rate=commission),
+            initial_cash=initial_cash,
+            **selected_params,
+        )
 
-            # Create cerebro instance
-            cerebro = bt.Cerebro()
+        final_value = float(result.equity.iloc[-1])
+        total_return = final_value - initial_cash
+        sells = [trade for trade in result.trades if trade.get("action") == "sell"]
+        won = [trade for trade in sells if (trade.get("pnl") or 0) > 0]
+        lost = [trade for trade in sells if (trade.get("pnl") or 0) <= 0]
+        metrics = result.metrics
+        cagr = metrics.get("cagr")
+        years = max(len(result.equity) / 252, 1e-9)
 
-            # Add data feed
-            cerebro.adddata(bt.feeds.PandasData(dataname=data))
-
-            # Set initial cash and commission
-            cerebro.broker.setcash(initial_cash)
-            cerebro.broker.setcommission(commission=commission)
-
-            # Add strategy
-            strategy_class = self._get_strategy(strategy)
-            selected_params = self._get_strategy_params(strategy, strategy_params)
-            cerebro.addstrategy(strategy_class, **selected_params)
-
-            # Add analyzers
-            cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name="sharpe")
-            cerebro.addanalyzer(bt.analyzers.DrawDown, _name="drawdown")
-            cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
-
-            # Run backtest
-            results = cerebro.run()
-            strat = results[0]
-
-            # Extract results
-            final_value = cerebro.broker.getvalue()
-            total_return = final_value - initial_cash
-            total_return_pct = (total_return / initial_cash) * 100
-
-            # Get analyzer results
-            sharpe = strat.analyzers.sharpe.get_analysis()
-            drawdown = strat.analyzers.drawdown.get_analysis()
-            trades = strat.analyzers.trades.get_analysis()
-
-            # Calculate metrics
-            sharpe_ratio = sharpe.get("sharperatio") if sharpe else None
-            max_drawdown = drawdown.get("max", {}).get("drawdown", 0) if drawdown else 0
-
-            # Trade statistics
-            total_trades = 0
-            won_trades = 0
-            lost_trades = 0
-
-            if trades and "total" in trades and "won" in trades and "lost" in trades:
-                total_trades = trades.get("total", {}).get("total", 0)
-                won_trades = trades.get("won", {}).get("total", 0)
-                lost_trades = trades.get("lost", {}).get("total", 0)
-
-            win_rate = (won_trades / total_trades * 100) if total_trades > 0 else 0
-
-            # Calculate annual return (simplified)
-            days = (data.index[-1] - data.index[0]).days
-            years = days / 365.25 if days > 0 else 1
-            annual_return = ((final_value / initial_cash) ** (1 / years) - 1) * 100
-
-            return {
-                "symbol": symbol,
-                "strategy": strategy,
-                "initial_cash": initial_cash,
-                "final_value": final_value,
-                "total_return": total_return,
-                "total_return_pct": total_return_pct,
-                "annual_return": annual_return,
-                "sharpe_ratio": sharpe_ratio or 0,
-                "max_drawdown": abs(max_drawdown),
-                "win_rate": win_rate,
-                "total_trades": total_trades,
-                "won_trades": won_trades,
-                "lost_trades": lost_trades,
-                "trades_list": strat.trades if hasattr(strat, "trades") else [],
-            }
-
-        except Exception as e:
-            logger.error(f"Backtest failed: {e}")
-            raise
+        return {
+            "symbol": symbol,
+            "strategy": strategy,
+            "initial_cash": initial_cash,
+            "final_value": final_value,
+            "total_return": total_return,
+            "total_return_pct": (total_return / initial_cash) * 100,
+            "annual_return": ((final_value / initial_cash) ** (1 / years) - 1) * 100
+            if cagr is None
+            else cagr * 100,
+            "sharpe_ratio": metrics.get("sharpe") or 0,
+            "max_drawdown": (metrics.get("max_drawdown") or 0) * 100,
+            "win_rate": (metrics.get("win_rate") or 0) * 100,
+            "total_trades": int(metrics.get("total_trades") or 0),
+            "won_trades": len(won),
+            "lost_trades": len(lost),
+            "trades_list": result.trades,
+        }
 
     async def run_backtest_v2(
         self,
@@ -319,27 +282,6 @@ class BacktestService:
             logger.error(f"Error fetching data for {symbol}: {e}")
             raise
 
-    def _get_strategy(self, strategy_name: str) -> type:
-        """Get strategy class by name.
-
-        Args:
-            strategy_name: Name of the strategy
-
-        Returns:
-            Strategy class
-        """
-        strategies = {
-            "sma_crossover": SMACrossoverStrategy,
-            "rsi_strategy": RSIStrategy,
-            "macd_strategy": MACDStrategy,
-            "buy_and_hold": BuyAndHoldStrategy,
-        }
-
-        if strategy_name not in strategies:
-            raise ValueError(f"Unknown strategy: {strategy_name}")
-
-        return strategies[strategy_name]
-
     def _get_strategy_params(self, strategy_name: str, strategy_params: dict | None = None) -> dict:
         """Validate and select only parameters supported by a strategy.
 
@@ -347,7 +289,8 @@ class BacktestService:
         pass a shared parameter collection. Unknown names are rejected to surface
         misspellings instead of silently running with an unintended default.
         """
-        self._get_strategy(strategy_name)
+        if strategy_name not in STRATEGIES:
+            raise ValueError(f"Unknown strategy: {strategy_name}")
         provided_params = strategy_params or {}
         known_params = set().union(*self.STRATEGY_PARAMETERS.values())
         unknown_params = set(provided_params) - known_params
@@ -361,149 +304,3 @@ class BacktestService:
             for name, value in provided_params.items()
             if name in accepted_params and value is not None
         }
-
-
-# Backtrader Strategies
-
-
-class SMACrossoverStrategy(bt.Strategy):
-    """Simple Moving Average Crossover Strategy."""
-
-    params = (
-        ("sma_short", 20),
-        ("sma_long", 50),
-    )
-
-    def __init__(self):
-        """Initialize the strategy."""
-        self.sma_short = bt.indicators.SMA(self.data.close, period=self.params.sma_short)
-        self.sma_long = bt.indicators.SMA(self.data.close, period=self.params.sma_long)
-        self.crossover = bt.indicators.CrossOver(self.sma_short, self.sma_long)
-
-        self.trades = []
-
-    def next(self):
-        """Execute trading logic on each bar."""
-        if not self.position:
-            if self.crossover > 0:  # Short crosses above Long
-                self.buy()
-                self.trades.append(
-                    {
-                        "type": "buy",
-                        "date": self.data.datetime.date(0).isoformat(),
-                        "price": self.data.close[0],
-                    }
-                )
-        else:
-            if self.crossover < 0:  # Short crosses below Long
-                self.sell()
-                self.trades.append(
-                    {
-                        "type": "sell",
-                        "date": self.data.datetime.date(0).isoformat(),
-                        "price": self.data.close[0],
-                    }
-                )
-
-
-class RSIStrategy(bt.Strategy):
-    """RSI Overbought/Oversold Strategy."""
-
-    params = (
-        ("rsi_period", 14),
-        ("rsi_overbought", 70),
-        ("rsi_oversold", 30),
-    )
-
-    def __init__(self):
-        """Initialize the strategy."""
-        self.rsi = bt.indicators.RSI(self.data.close, period=self.params.rsi_period)
-        self.trades = []
-
-    def next(self):
-        """Execute trading logic on each bar."""
-        if not self.position:
-            if self.rsi < self.params.rsi_oversold:
-                self.buy()
-                self.trades.append(
-                    {
-                        "type": "buy",
-                        "date": self.data.datetime.date(0).isoformat(),
-                        "price": self.data.close[0],
-                        "rsi": self.rsi[0],
-                    }
-                )
-        else:
-            if self.rsi > self.params.rsi_overbought:
-                self.sell()
-                self.trades.append(
-                    {
-                        "type": "sell",
-                        "date": self.data.datetime.date(0).isoformat(),
-                        "price": self.data.close[0],
-                        "rsi": self.rsi[0],
-                    }
-                )
-
-
-class MACDStrategy(bt.Strategy):
-    """MACD Signal Line Crossover Strategy."""
-
-    params = (
-        ("fast_period", 12),
-        ("slow_period", 26),
-        ("signal_period", 9),
-    )
-
-    def __init__(self):
-        """Initialize the strategy."""
-        self.macd = bt.indicators.MACD(
-            self.data.close,
-            period_me1=self.params.fast_period,
-            period_me2=self.params.slow_period,
-            period_signal=self.params.signal_period,
-        )
-        self.trades = []
-
-    def next(self):
-        """Execute trading logic on each bar."""
-        if not self.position:
-            if self.macd.macd[0] > self.macd.signal[0]:
-                self.buy()
-                self.trades.append(
-                    {
-                        "type": "buy",
-                        "date": self.data.datetime.date(0).isoformat(),
-                        "price": self.data.close[0],
-                    }
-                )
-        else:
-            if self.macd.macd[0] < self.macd.signal[0]:
-                self.sell()
-                self.trades.append(
-                    {
-                        "type": "sell",
-                        "date": self.data.datetime.date(0).isoformat(),
-                        "price": self.data.close[0],
-                    }
-                )
-
-
-class BuyAndHoldStrategy(bt.Strategy):
-    """Buy and Hold Benchmark Strategy."""
-
-    def __init__(self):
-        """Initialize the strategy."""
-        self.trades = []
-
-    def next(self):
-        """Execute trading logic on each bar."""
-        if not self.position:
-            self.buy()
-            self.trades.append(
-                {
-                    "type": "buy",
-                    "date": self.data.datetime.date(0).isoformat(),
-                    "price": self.data.close[0],
-                }
-            )
