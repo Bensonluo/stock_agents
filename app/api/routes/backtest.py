@@ -354,3 +354,67 @@ async def run_walk_forward(request: WalkForwardRequest) -> dict:
     except Exception as e:  # noqa: BLE001
         logger.error(f"Walk-forward failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class CalibrateRequest(BaseModel):
+    """Request for historical signal hit-rate calibration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str = Field(..., description="Stock symbol to calibrate on")
+    strategy: Literal["sma_crossover", "rsi_strategy", "macd_strategy", "buy_and_hold"] = Field(
+        ..., description="Strategy whose entry signals are calibrated"
+    )
+    start_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    horizons: list[int] = Field(
+        default=[20, 60], description="Forward horizons in bars for hit measurement"
+    )
+    benchmark_symbol: str | None = Field(
+        default=None, description="Hits are measured as excess over this benchmark"
+    )
+    strategy_params: dict[str, float | int] = Field(default_factory=dict)
+
+    @field_validator("symbol", "benchmark_symbol")
+    @classmethod
+    def _validate_symbol(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not validate_stock_symbol(value):
+            raise ValueError(f"Invalid stock symbol: {value}")
+        return value.upper()
+
+    @field_validator("horizons")
+    @classmethod
+    def _validate_horizons(cls, value: list[int]) -> list[int]:
+        if not value or any(h <= 0 or h > 750 for h in value):
+            raise ValueError("horizons must be within 1..750 bars")
+        return value
+
+
+@router.post("/v2/calibrate")
+async def calibrate_signals(request: CalibrateRequest) -> dict:
+    """Empirical hit rates of the strategy's entry signals per horizon, with
+    Wilson lower bounds and per-year breakdowns — the grounding for any
+    reported confidence."""
+    from time import time
+
+    start_time = time()
+    try:
+        service = BacktestService()
+        result = await service.calibrate_signals(
+            symbol=request.symbol,
+            strategy=request.strategy,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            horizons=request.horizons,
+            benchmark_symbol=request.benchmark_symbol,
+            strategy_params=request.strategy_params,
+        )
+        result["execution_time"] = round(time() - start_time, 3)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Calibration failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e

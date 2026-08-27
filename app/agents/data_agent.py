@@ -483,15 +483,21 @@ class DataCollectionAgent(BaseAgent):
             df: Financial statement DataFrame
 
         Returns:
-            Dictionary with financial data
+            Dictionary with financial data, stamped with per-period visibility
+            dates (period end + reporting lag) so backtests cannot peek at
+            statements before they were filed.
         """
         if df is None or df.empty:
             return {}
 
-        return {
-            "dates": [d.strftime("%Y-%m-%d") for d in df.columns],
-            "data": {row: df.loc[row].tolist() for row in df.index},
-        }
+        from app.backtest import stamp_visibility
+
+        return stamp_visibility(
+            {
+                "dates": [d.strftime("%Y-%m-%d") for d in df.columns],
+                "data": {row: df.loc[row].tolist() for row in df.index},
+            }
+        )
 
 
 class AkShareDataAgent(BaseAgent):

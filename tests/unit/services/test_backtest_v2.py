@@ -120,3 +120,20 @@ class TestWalkForwardService:
 
         assert report["windows"] == []
         assert "error" in report["aggregate"]
+
+
+class TestCalibrateService:
+    @pytest.mark.asyncio
+    async def test_calibration_report_with_manifest(self, service: BacktestService) -> None:
+        report = await service.calibrate_signals(
+            symbol="AAPL",
+            strategy="sma_crossover",
+            start_date="2024-01-01",
+            end_date="2025-12-31",
+            horizons=[20],
+            strategy_params={"sma_short": 10, "sma_long": 40},
+        )
+
+        assert report["strategy"] == "sma_crossover"
+        assert "20" in report["by_horizon"]
+        assert report["manifest"]["data_sha256"]

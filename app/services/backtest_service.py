@@ -246,6 +246,42 @@ class BacktestService:
         )
         return report
 
+    async def calibrate_signals(
+        self,
+        symbol: str,
+        strategy: str,
+        start_date: str,
+        end_date: str,
+        horizons: list[int] | None = None,
+        benchmark_symbol: str | None = None,
+        strategy_params: dict | None = None,
+    ) -> dict[str, Any]:
+        """Empirical hit rates of the strategy's entry signals, per horizon."""
+        from app.backtest import calibrate_signals as calibrate_engine
+
+        data = await self._fetch_data(symbol, start_date, end_date)
+        benchmark_data = None
+        if benchmark_symbol:
+            benchmark_data = await self._fetch_data(benchmark_symbol, start_date, end_date)
+
+        report = calibrate_engine(
+            data,
+            strategy=strategy,
+            horizons=tuple(horizons or (20, 60)),
+            benchmark_data=benchmark_data,
+            **(strategy_params or {}),
+        )
+        report["manifest"] = build_manifest(
+            symbol=symbol,
+            strategy=strategy,
+            params=report["params"],
+            start=start_date,
+            end=end_date,
+            data=data,
+            cost_model=self._cost_model("us"),
+        )
+        return report
+
     @staticmethod
     def _cost_model(market: str) -> CostModel:
         preset = {"cn": CN_STOCK, "us": US_STOCK}.get(str(market).lower())

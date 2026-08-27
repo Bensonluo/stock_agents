@@ -80,6 +80,7 @@ def run_backtest(
         raise ValueError("data must contain Open and Close columns")
 
     cost_model = cost_model or CostModel()
+    data = _sanitize(data)
     merged = {**DEFAULT_PARAMS[strategy], **params}
     target = _target_position(data, strategy, merged)
 
@@ -115,6 +116,16 @@ def run_backtest(
 # ----------------------------------------------------------------------
 # Signals: computed on close of bar t; execution happens at t+1 open.
 # ----------------------------------------------------------------------
+
+
+def _sanitize(data: pd.DataFrame) -> pd.DataFrame:
+    """Chronological order, one bar per timestamp — an unsorted or duplicated
+    index is itself a look-ahead bug, so it is normalized deterministically."""
+    if not data.index.is_monotonic_increasing:
+        data = data.sort_index()
+    if data.index.has_duplicates:
+        data = data[~data.index.duplicated(keep="last")]
+    return data
 
 
 def _target_position(data: pd.DataFrame, strategy: str, params: dict[str, Any]) -> pd.Series:
