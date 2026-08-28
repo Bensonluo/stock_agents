@@ -4,6 +4,7 @@ Graph: agent_reason -> [tool_execute | END] -> observe -> reflect -> [agent_reas
 """
 
 import asyncio
+import ast
 import json
 from typing import Any, Literal
 
@@ -225,6 +226,21 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
         }
         if market_data:
             data["market_data"] = market_data
+
+    # The raw fetch tool may have failed while the analyze_* tools succeeded
+    # via their historical fallback — reconstruct a minimal market block from
+    # the technical results so the overview isn't all N/A.
+    if not data.get("market_data"):
+        reconstructed = {}
+        for sym, tech in (data.get("technical_analysis") or {}).items():
+            if isinstance(tech, dict) and tech.get("current_price") is not None:
+                reconstructed[sym] = {
+                    "symbol": sym,
+                    "current_price": tech.get("current_price"),
+                    "as_of": ((tech.get("weekly_sma") or {}).get("as_of")),
+                }
+        if reconstructed:
+            data["market_data"] = reconstructed
         if financial_data:
             data["financial_data"] = financial_data
         all_news: list[dict] = []
@@ -333,8 +349,20 @@ def observe_node(state: ReActState) -> dict[str, Any]:
     if "generate_report" in tools_used:
         for msg in reversed(messages):
             if isinstance(msg, ToolMessage) and msg.name == "generate_report":
+                report = msg.content
+                if isinstance(report, str):
+                    try:
+                        report = json.loads(report)
+                    except json.JSONDecodeError:
+                        # Tool results with non-JSON-native values (numpy floats)
+                        # fall back to a Python-repr string — parse that too.
+                        try:
+                            report = ast.literal_eval(report)
+                        except (ValueError, SyntaxError):
+                            report = None
+                if not isinstance(report, dict):
+                    return {"final_answer": str(msg.content)[:2000]}
                 try:
-                    report = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
                     summary = report.get("executive_summary", "")
                     title = report.get("title", "Analysis Report")
                     sections = report.get("sections", {})
@@ -346,11 +374,11 @@ def observe_node(state: ReActState) -> dict[str, Any]:
                     for section_name, section_data in sections.items():
                         label = section_name.replace("_", " ").title()
                         parts.append(f"## {label}\n")
-                        parts.append(f"```json\n{json.dumps(section_data, indent=2, ensure_ascii=False)}\n```\n")
+                        parts.append(f"```json\n{json.dumps(section_data, indent=2, ensure_ascii=False, default=str)}\n```\n")
 
                     return {"final_answer": "\n".join(parts)}
                 except Exception:
-                    return {"final_answer": msg.content[:2000]}
+                    return {"final_answer": str(msg.content)[:2000]}
     return {}
 
 
