@@ -2,7 +2,7 @@
 
 # Stock Analysis Multi-Agent System
 
-**A production-grade multi-agent system for stock analysis — dual architecture (LangGraph pipeline + ReAct agent), evidence-constrained research synthesis, costed backtesting, supporting both US/international and Chinese A-share markets.**
+**A production-grade multi-agent system for stock analysis — dual execution paths, one source of truth (LangGraph pipeline + ReAct agent), evidence-constrained research synthesis, costed backtesting, supporting both US/international and Chinese A-share markets.**
 
 [![Live Demo](https://img.shields.io/badge/LIVE-DEMO-brightgreen?style=for-the-badge&logo=vercel)](http://101.43.97.91/stock)
 [![GitHub stars](https://img.shields.io/github/stars/Bensonluo/stock_agents?style=for-the-badge)](https://github.com/Bensonluo/stock_agents/stargazers)
@@ -27,7 +27,7 @@
 
 - [Why This Project](#-why-this-project)
 - [Key Highlights](#-key-highlights)
-- [Dual Architecture](#-dual-architecture)
+- [Dual Execution Paths](#-dual-execution-paths)
 - [Quick Start](#-quick-start)
 - [API Examples](#-api-examples)
 - [System Architecture](#-system-architecture)
@@ -79,13 +79,13 @@ It's a **reference implementation** for production-grade multi-agent systems —
 
 1. **Evidence-constrained research, not LLM guessing** — deterministic engines compute every number as `MetricEvidence` (unit, as-of, source, formula); the LLM only narrates, and citations outside the evidence set are dropped
 2. **Bull/Bear cross-examination + audit + committee** — the strongest bull and bear arguments face off with evidence refs; an auditor blocks stale/conflicting data; a risk committee issues approve/limit/veto/watch — low risk alone never justifies a buy
-3. **Dual architecture, one source of truth** — pipeline and ReAct delegate to the same engines; parity tests pin bit-identical outputs so paths can't drift
+3. **Dual execution paths, one source of truth** — the pipeline and ReAct delegate to the same engines; parity tests pin bit-identical outputs so paths can't drift
 4. **Native A-share support** — 6-digit codes auto-trigger AkShare; a 5-provider fallback chain (yfinance → Alpha Vantage → Finnhub → AkShare → Yahoo API → Stooq) keeps CN-hosted servers alive
 5. **Backtesting you can trust** — signals fill at the next bar's open, commissions/slippage/stamp tax included, force-liquidation at the end, walk-forward with Wilson-bounded hit rates, and a reproducibility manifest (data hash + params + commit)
 
 ---
 
-## 🔄 Dual Architecture
+## 🔄 Dual Execution Paths
 
 ### Architecture 1: Sequential Pipeline (LangGraph)
 
@@ -424,11 +424,11 @@ If this project helped you learn multi-agent systems, please ⭐ star the repo.
 
 ## 🇨🇳 中文说明
 
-**股票分析多智能体系统** — 双架构(顺序流水线 + ReAct 自主 Agent),支持美股和中国 A 股。
+**股票分析多智能体系统** — 双执行路径(顺序流水线 + ReAct 自主 Agent)共享单一事实源,支持美股和中国 A 股。
 
 ### 核心亮点
 
-- **双架构**:LangGraph 顺序流水线(7 个专业 Agent)+ ReAct 自主 Agent
+- **双执行路径·单一事实源**:LangGraph 顺序流水线 + ReAct 自主 Agent,共享同一组确定性引擎
 - **7 个专业 Agent**:数据采集、技术分析、基本面分析、舆情分析、风险评估、决策制定、报告生成
 - **A 股支持**:6 位股票代码自动触发 AkShare 数据源
 - **企业级容错**:每个 Agent 都有熔断器、超时、重试
