@@ -639,6 +639,42 @@ async def _alphavantage_historical(symbol: str, period: str) -> dict[str, Any] |
 # ── Provider 3b: Stooq (free CSV) ────────────────────────────────
 
 
+async def _alphavantage_fetch(symbol: str) -> dict[str, Any] | None:
+    """Snapshot via Alpha Vantage GLOBAL_QUOTE (free tier, 25 req/day).
+
+    Quote fields: 01. symbol, 02. open, 03. high, 04. low, 05. price,
+    06. volume, 07. latest day, 08. previous close, 09. change.
+    """
+    data = _alphavantage_get({"function": "GLOBAL_QUOTE", "symbol": symbol})
+    quote = (data or {}).get("Global Quote") or {}
+    price = quote.get("05. price")
+    if not price:
+        return None
+
+    yahoo_symbol = _convert_to_yahoo_symbol(symbol)
+    current = float(price)
+    previous = float(quote["08. previous close"]) if quote.get("08. previous close") else None
+    latest_day = str(quote.get("07. latest day") or "") or None
+
+    return {
+        "market_data": {
+            yahoo_symbol: {
+                "symbol": symbol,
+                "current_price": current,
+                "previous_close": previous,
+                "change": current - previous if previous else None,
+                "change_percent": float(quote["10. change percent"].rstrip("%")) if quote.get("10. change percent") else None,
+                "volume": int(quote["06. volume"]) if quote.get("06. volume") else None,
+                "as_of": latest_day,
+                "historical_data": {},
+            }
+        },
+        "financial_data": {},
+        "news_data": [],
+        "provider": "alphavantage",
+    }
+
+
 async def _stooq_fetch(symbol: str) -> dict[str, Any] | None:
     """Fetch via Stooq.com free CSV download."""
     try:
@@ -710,6 +746,7 @@ async def fetch_stock_data(symbol: str) -> dict[str, Any] | None:
 
     providers = [
         ("yfinance", _yfinance_fetch),
+        ("alphavantage", _alphavantage_fetch),
         ("finnhub", _finnhub_fetch),
         ("akshare", _akshare_fetch),
         ("yahoo-api", _yahoo_api_fetch),
