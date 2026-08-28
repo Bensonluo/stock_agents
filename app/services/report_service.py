@@ -151,16 +151,22 @@ class ReportService:
     @classmethod
     def _fundamental(cls, c: dict[str, Any]) -> dict[str, Any]:
         by_symbol: dict[str, Any] = {}
-        total_score = 0.0
+        numeric_scores: list[float] = []
         for symbol, analysis in c["fundamental_analysis"].items():
             overall = analysis.get("overall_score", {})
             if isinstance(overall, dict):
-                score = overall.get("score", 50)
+                score = overall.get("score")
                 rating = overall.get("rating", "fair")
             else:  # legacy numeric score
-                score = overall if isinstance(overall, (int, float)) else 50
+                score = overall
                 rating = "fair"
-            total_score += score
+            # Insufficient data yields score=None — display it as such and
+            # keep it OUT of the average instead of crashing on += None.
+            if isinstance(score, (int, float)):
+                numeric_scores.append(float(score))
+            else:
+                score = None
+                rating = rating if rating != "fair" else "insufficient_data"
             by_symbol[symbol] = {
                 "overall_score": score,
                 "rating": rating,
@@ -175,8 +181,8 @@ class ReportService:
             }
 
         overall_rating = "hold"
-        if c["fundamental_analysis"]:
-            avg = total_score / len(c["fundamental_analysis"])
+        if numeric_scores:
+            avg = sum(numeric_scores) / len(numeric_scores)
             overall_rating = "buy" if avg >= 65 else "sell" if avg < 35 else "hold"
         return {"by_symbol": by_symbol, "overall_rating": overall_rating}
 

@@ -399,3 +399,29 @@ class TestDataUnavailableVisibility:
 
         assert "行情数据不可用" not in report["executive_summary"]
         assert "建议" in report["executive_summary"]  # a real verdict, not the failure banner
+
+
+def test_report_survives_none_fundamental_score() -> None:
+    """Live-run crash: empty financials make overall_score.score None; the
+    report must render 'insufficient' instead of raising on += None."""
+    from app.services.report_service import ReportService
+
+    report = ReportService.build_report(
+        {
+            "query": "q",
+            "symbols": ["AAPL"],
+            "market_data": {"AAPL": {"current_price": 314.58, "as_of": "2026-08-27"}},
+            "technical_analysis": {"AAPL": _technical()},
+            "fundamental_analysis": {
+                "AAPL": {
+                    "overall_score": {"score": None, "rating": "insufficient_data"},
+                    "recommendation": "insufficient_data",
+                }
+            },
+            "risk_assessment": {"AAPL": {"risk_level": "medium", "metrics": {}}},
+        }
+    )
+
+    entry = report["sections"]["fundamental_analysis"]["by_symbol"]["AAPL"]
+    assert entry["overall_score"] is None
+    assert report["sections"]["fundamental_analysis"]["overall_rating"] == "hold"
