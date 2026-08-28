@@ -2,7 +2,7 @@
 
 # Stock Analysis Multi-Agent System
 
-**A production-grade multi-agent system for stock analysis — dual architecture (LangGraph pipeline + ReAct agent), supporting both US/international and Chinese A-share markets.**
+**A production-grade multi-agent system for stock analysis — dual architecture (LangGraph pipeline + ReAct agent), evidence-constrained research synthesis, costed backtesting, supporting both US/international and Chinese A-share markets.**
 
 [![Live Demo](https://img.shields.io/badge/LIVE-DEMO-brightgreen?style=for-the-badge&logo=vercel)](http://101.43.97.91/stock)
 [![GitHub stars](https://img.shields.io/github/stars/Bensonluo/stock_agents?style=for-the-badge)](https://github.com/Bensonluo/stock_agents/stargazers)
@@ -46,7 +46,7 @@ There are plenty of "LLM stock analysis" demos, but most have the same problems:
 
 This project solves all of them:
 
-> 🚀 **Two complementary architectures**: a deterministic 7-agent LangGraph pipeline for structured reports, plus an autonomous ReAct agent for ad-hoc queries. Built-in circuit breakers, retries, WebSocket streaming, and Chinese A-share support via AkShare.
+> 🚀 **Two complementary architectures sharing one set of deterministic engines**: a 8-stage LangGraph pipeline for structured reports, plus an autonomous ReAct agent for ad-hoc queries. Every number is engine-computed and traceable (unit, as-of, source, formula); the LLM only narrates and orchestrates. A Bull/Bear cross-examination, evidence auditor and risk committee gate every report before it ships.
 
 It's a **reference implementation** for production-grade multi-agent systems — the kind of architecture you'd build for a real fintech product.
 
@@ -58,30 +58,30 @@ It's a **reference implementation** for production-grade multi-agent systems —
 
 | 🤖 Agents | 🌍 Markets | 🛡️ Resilience |
 |:---:|:---:|:---:|
-| **7** specialized agents | US & international | Circuit breaker |
-| Sequential + ReAct dual arch | Chinese A-shares | Retry with backoff |
+| **8**-stage pipeline + ReAct | US & international | Circuit breaker |
+| Shared deterministic engines | Chinese A-shares | Retry with backoff |
 | Each with monitoring | Auto-detect by code | Timeout enforcement |
 
-| 📡 Real-time | 📊 Analysis | 🧪 Backtesting |
+| 📡 Real-time | 🔬 Evidence-constrained | 🧪 Backtesting |
 |:---:|:---:|:---:|
-| WebSocket streaming | Technical (RSI/MACD/BB) | SMA crossover |
-| Live agent metrics | Fundamental (ROE/P/E/P/B) | RSI / MACD strategy |
-| Circuit breaker status | Sentiment scoring | Buy & Hold baseline |
+| WebSocket streaming | Bull/Bear cross-exam | Next-bar fills + costs |
+| Live agent metrics | Evidence auditor gate | Walk-forward + calibration |
+| Circuit breaker status | Risk committee verdicts | Manifest reproducibility |
 
 | 📈 Stats | | |
 |:---:|:---:|:---:|
-| **7** specialized agents | **2** architectures | **2** markets |
-| **4** backtest strategies | **2** LLM providers | **WebSocket** real-time |
+| **5** data providers | **282** tests green | **2** architectures |
+| **4** backtest strategies | **1** shared engine per domain | **WebSocket** real-time |
 
 </div>
 
 ### 🧠 What makes it different
 
-1. **Dual architecture, not one** — sequential pipeline for reliable reports + ReAct for autonomous exploration
-2. **Native A-share support** — 6-digit codes auto-trigger AkShare data source
-3. **Enterprise-grade resilience** — every agent wrapped with circuit breaker, timeout, retry
-4. **Real-time observability** — WebSocket streams agent execution events live to the dashboard
-5. **Multi-factor decision** — technical 30% + fundamental 40% + sentiment 15% + risk 15%
+1. **Evidence-constrained research, not LLM guessing** — deterministic engines compute every number as `MetricEvidence` (unit, as-of, source, formula); the LLM only narrates, and citations outside the evidence set are dropped
+2. **Bull/Bear cross-examination + audit + committee** — the strongest bull and bear arguments face off with evidence refs; an auditor blocks stale/conflicting data; a risk committee issues approve/limit/veto/watch — low risk alone never justifies a buy
+3. **Dual architecture, one source of truth** — pipeline and ReAct delegate to the same engines; parity tests pin bit-identical outputs so paths can't drift
+4. **Native A-share support** — 6-digit codes auto-trigger AkShare; a 5-provider fallback chain (yfinance → Alpha Vantage → Finnhub → AkShare → Yahoo API → Stooq) keeps CN-hosted servers alive
+5. **Backtesting you can trust** — signals fill at the next bar's open, commissions/slippage/stamp tax included, force-liquidation at the end, walk-forward with Wilson-bounded hit rates, and a reproducibility manifest (data hash + params + commit)
 
 ---
 
@@ -92,19 +92,21 @@ It's a **reference implementation** for production-grade multi-agent systems —
 For structured, deterministic reports — every agent runs in order:
 
 ```
-data_collection
+data_collection      ← 3y history, multi-provider fallback chain
     ↓
-technical_analysis   ← RSI, MACD, Bollinger Bands, K-line patterns
+technical_analysis   ← Daily + weekly SMA(5/10/20/40/60w) engines
     ↓
-fundamental_analysis ← ROE, P/E, P/B, debt ratio, profitability
+fundamental_analysis ← Scoring + quality red flags + Bear/Base/Bull valuation
     ↓
-sentiment_analysis   ← News keyword scoring
+sentiment_analysis   ← Canonical lexicon scoring (+ optional LLM enrichment)
     ↓
-risk_assessment      ← VaR, max drawdown, position sizing
+risk_assessment      ← Beta/alpha/R², CVaR, Sortino, stress scenarios
     ↓
-decision_making      ← Multi-factor weighted score
+research_synthesis   ← Bull/Bear debate → evidence audit → risk committee
     ↓
-report_generation    ← Structured investment report
+decision_making      ← Single formula (fund 45% + tech 30% + sent 15% + risk 10%)
+    ↓
+report_generation    ← Versioned report + evidence index + quality gates
 ```
 
 ### Architecture 2: ReAct Autonomous Agent
@@ -198,13 +200,48 @@ curl -X POST "http://localhost:8000/api/analysis/analyze/sync" \
 ### Backtest a strategy
 
 ```bash
+# V2 engine: next-bar fills, full costs (CN/US presets), benchmark excess,
+# complete metric suite, reproducibility manifest
+curl -X POST "http://localhost:8000/api/backtest/v2/run" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "AAPL",
+    "strategy": "sma_crossover",
+    "start_date": "2026-05-01",
+    "end_date": "2026-08-27",
+    "market": "us",
+    "benchmark_symbol": "^GSPC",
+    "strategy_params": {"sma_short": 10, "sma_long": 40}
+  }'
+
+# Rolling walk-forward: params picked on train, scored on unseen test windows,
+# failures and parameter stability reported
+curl -X POST "http://localhost:8000/api/backtest/v2/walkforward" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "AAPL", "strategy": "sma_crossover",
+    "start_date": "2025-01-01", "end_date": "2026-08-27",
+    "param_grid": {"sma_short": [5, 10], "sma_long": [30, 60]},
+    "train_bars": 150, "test_bars": 60
+  }'
+
+# Signal hit-rate calibration with Wilson lower bounds
+curl -X POST "http://localhost:8000/api/backtest/v2/calibrate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "AAPL", "strategy": "sma_crossover",
+    "start_date": "2025-01-01", "end_date": "2026-08-27",
+    "horizons": [20, 60]
+  }'
+
+# Legacy endpoint (same engine, legacy response shape)
 curl -X POST "http://localhost:8000/api/backtest/run" \
   -H "Content-Type: application/json" \
   -d '{
     "symbol": "AAPL",
     "strategy": "sma_crossover",
-    "start_date": "2023-01-01",
-    "end_date": "2024-01-01"
+    "start_date": "2026-05-01",
+    "end_date": "2026-08-27"
   }'
 ```
 
@@ -262,10 +299,16 @@ curl -X POST "http://localhost:8000/api/backtest/run" \
 
 ### Data Sources
 
-| Source | Scope | Trigger |
-|--------|-------|---------|
-| **yfinance** | US & international stocks | Always active |
+| Source | Scope | Notes |
+|--------|-------|-------|
+| **yfinance** | US & international | Primary |
+| **Alpha Vantage** | Global | Free tier 25 req/day, 100-day history; snapshot + historical |
+| **Finnhub** | US snapshots | Needs `FINNHUB_API_KEY` |
 | **AkShare** | Chinese A-shares | Auto-triggered for 6-digit codes |
+| **Yahoo chart API / Stooq** | Global | Last-resort fallbacks |
+
+Providers chain automatically on failure; statements become visible only
+after a reporting lag (point-in-time), and `as_of` gates every metric.
 
 ### Configuration
 
@@ -287,24 +330,29 @@ See `.env.example` for the full list.
 ```
 stock_agents/
 ├── app/
-│   ├── agents/              # 🎯 7 specialized agents
-│   │   ├── base.py          #   BaseAgent with circuit breaker
-│   │   ├── data_agent.py    #   yfinance + AkShare collection
-│   │   ├── analysis_agent.py#   Technical + fundamental
-│   │   ├── sentiment_agent.py
-│   │   ├── risk_agent.py
-│   │   ├── decision_agent.py
-│   │   └── report_agent.py
+│   ├── domain/schemas/      # 📐 MetricEvidence, DataQuality, ReportV2 contracts
+│   ├── analysis/            # ⚙️ Deterministic engines (single source of truth)
+│   │   ├── technical/       #   Daily + weekly SMA engines
+│   │   ├── fundamental/     #   Scoring + quality/red flags
+│   │   ├── valuation/       #   Bear/Base/Bull scenarios + sensitivity
+│   │   ├── risk/            #   Beta/CVaR/Sortino/stress/correlation
+│   │   └── sentiment.py     #   Canonical lexicon scoring
+│   ├── research/            # 🔬 Bull/Bear debate, auditor, committee,
+│   │                        #   narrator + analyst panel (evidence-bound)
+│   ├── backtest/            # 🧪 V2 engine: costs, walk-forward,
+│   │                        #   calibration, point-in-time, manifest
+│   ├── agents/              # 🎯 Pipeline agents (thin delegates)
 │   ├── react_agent/         # ReAct autonomous agent
-│   ├── orchestration/       # LangGraph workflow
-│   ├── api/routes/          # analysis, backtest, history, monitoring, ws
+│   ├── services/            # ReportService, BacktestService
+│   ├── orchestration/       # LangGraph workflow (+ synthesis node)
+│   ├── api/routes/          # analysis, backtest v2, history, monitoring, ws
 │   ├── monitoring/          # Metrics, WebSocket broadcast
 │   ├── resilience/          # Circuit breaker, retry, timeout
 │   ├── storage/             # PostgreSQL layer
-│   └── tools/               # Agent tool registry
+│   └── tools/               # Agent tool registry (wrappers over engines)
 ├── frontend/                # Next.js dashboard
 ├── deploy/                  # Production deployment scripts
-├── tests/                   # Unit + integration + e2e
+├── tests/                   # 282 tests: unit + integration + path parity
 └── docker-compose.yml
 ```
 
@@ -312,15 +360,33 @@ stock_agents/
 
 ## 🗺️ Roadmap
 
-- [x] 7-agent sequential pipeline (LangGraph)
-- [x] ReAct autonomous agent
-- [x] Chinese A-share support (AkShare)
+- [x] 7-agent sequential pipeline (LangGraph) + research synthesis stage
+- [x] ReAct autonomous agent (evidence-constrained tools)
+- [x] Chinese A-share support (AkShare + 5-provider fallback chain)
 - [x] WebSocket real-time monitoring
 - [x] Circuit breaker + retry + timeout
-- [x] Strategy backtesting (4 strategies)
+- [x] Strategy backtesting (4 strategies, V2 costed engine)
+- [x] Deterministic engines with MetricEvidence traceability
+- [x] Bull/Bear debate + evidence auditor + risk committee
+- [x] Walk-forward evaluation + signal calibration
+- [x] Pipeline/ReAct parity tests (bit-identical outputs)
+- [ ] Phase 4: filings RAG, expectations data, options-implied signals
 - [ ] Portfolio optimization agent
-- [ ] Options analysis
 - [ ] Multi-language reports (EN/ZH auto-switch)
+
+---
+
+## 🧪 Testing
+
+```bash
+poetry run pytest tests/ -q          # 282 passed (5 network tests deselected)
+```
+
+Coverage highlights: every engine has golden-value tests; pipeline/ReAct
+**parity tests** assert bit-identical outputs for fundamental, risk,
+sentiment and the decision formula; functional tests run the full
+seven-agent sequence and the backtest API through the real engine;
+point-in-time and no-look-ahead rules are pinned by dedicated suites.
 
 ---
 

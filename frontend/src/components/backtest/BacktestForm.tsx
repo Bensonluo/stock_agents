@@ -67,10 +67,10 @@ export function BacktestForm() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Play className="h-5 w-5" />
-            Backtesting
+            运行回测
           </CardTitle>
           <CardDescription>
-            Test trading strategies with historical data
+            下一根 K 线成交 · 含交易成本 · 基准对比与完整指标
           </CardDescription>
         </CardHeader>
         <CardContent>
