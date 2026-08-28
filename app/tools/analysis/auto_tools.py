@@ -45,9 +45,52 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
 
     Tries both fetch_stock_data (snapshot) and fetch_historical (OHLC series).
     If the snapshot's historical_data is empty, supplements it from fetch_historical.
+    If the snapshot fails entirely (all providers down — e.g. CN-hosted servers
+    where Yahoo blocks), falls back to fetch_historical alone and builds the
+    market block from the series (current price = last close): history is the
+    critical data, the snapshot is enrichment.
     """
     data = await fetch_stock_data(symbol)
+
     if not data:
+        # Snapshot chain exhausted — history alone can still power the analysis.
+        try:
+            hist = await fetch_historical(symbol, period="3y")
+        except Exception as e:
+            logger.warning(f"[auto_tools] historical fallback failed for {symbol}: {e}")
+            return None
+        if isinstance(hist, dict) and hist.get("dates") and "error" not in hist:
+            closes = hist.get("close") or []
+            last_close = closes[-1] if closes else None
+            prev_close = closes[-2] if len(closes) > 1 else None
+            market = {
+                "symbol": symbol,
+                "current_price": last_close,
+                "previous_close": prev_close,
+                "change": (last_close - prev_close) if last_close and prev_close else None,
+                "change_percent": ((last_close - prev_close) / prev_close * 100)
+                if last_close and prev_close
+                else None,
+                "volume": (hist.get("volume") or [None])[-1],
+                "as_of": (hist.get("dates") or [None])[-1],
+                "historical_data": {
+                    "dates": hist["dates"],
+                    "open": hist.get("open", []),
+                    "high": hist.get("high", []),
+                    "low": hist.get("low", []),
+                    "close": hist.get("close", []),
+                    "volume": hist.get("volume", []),
+                },
+            }
+            logger.info(
+                f"[auto_tools] snapshot chain failed for {symbol}; "
+                f"built market block from historical series ({len(hist['dates'])} bars)"
+            )
+            return {
+                "market_data": {symbol: market},
+                "financial_data": {symbol: {}},
+                "news_data": [],
+            }
         return None
 
     market = data.get("market_data", {}) or {}
