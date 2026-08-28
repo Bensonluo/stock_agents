@@ -545,14 +545,25 @@ async def _finnhub_historical(symbol: str, period: str) -> dict[str, Any] | None
 # ── Provider 2c: Alpha Vantage (25 req/day free, historical OHLC) ────
 
 
+# Back off for a minute after Alpha Vantage signals a rate limit — the agent's
+# retry loops can otherwise burn the free 5 req/min cap in seconds.
+_AV_COOLDOWN_UNTIL = 0.0
+
+
 def _alphavantage_get(params: dict[str, Any]) -> dict[str, Any] | None:
     """Synchronous Alpha Vantage GET. Returns parsed JSON or None on error.
 
     Free tier: 25 req/day, 1 req/sec burst, 5 req/min sustained.
-    Rate-limited responses carry a "Note" or "Information" field — treat as miss.
+    Rate-limited responses carry a "Note" or "Information" field — treat as miss
+    and cool down so callers fall through to other providers.
     """
+    import time
+
+    global _AV_COOLDOWN_UNTIL
     api_key = get_settings().alpha_vantage_key
     if not api_key:
+        return None
+    if time.monotonic() < _AV_COOLDOWN_UNTIL:
         return None
     qp = {**params, "apikey": api_key}
     try:
@@ -563,6 +574,7 @@ def _alphavantage_get(params: dict[str, Any]) -> dict[str, Any] | None:
             return None
         if any(k in data for k in ("Note", "Information", "Error Message", "error")):
             logger.warning(f"[alphavantage] {data.get('Note') or data.get('Information') or data.get('Error Message') or data.get('error')}")
+            _AV_COOLDOWN_UNTIL = time.monotonic() + 60
             return None
         return data
     except Exception as e:
@@ -654,7 +666,7 @@ async def _alphavantage_fetch(symbol: str) -> dict[str, Any] | None:
     yahoo_symbol = _convert_to_yahoo_symbol(symbol)
     current = float(price)
     previous = float(quote["08. previous close"]) if quote.get("08. previous close") else None
-    latest_day = str(quote.get("07. latest day") or "") or None
+    latest_day = str(quote.get("07. latest trading day") or quote.get("07. latest day") or "") or None
 
     return {
         "market_data": {
