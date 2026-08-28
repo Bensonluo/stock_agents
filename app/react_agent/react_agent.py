@@ -226,6 +226,14 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
         }
         if market_data:
             data["market_data"] = market_data
+        if financial_data:
+            data["financial_data"] = financial_data
+        all_news: list[dict] = []
+        for r in fetch.values():
+            if isinstance(r, dict):
+                all_news.extend(r.get("news_data") or [])
+        if all_news:
+            data["news_data"] = all_news
 
     # The raw fetch tool may have failed while the analyze_* tools succeeded
     # via their historical fallback — reconstruct a minimal market block from
@@ -241,14 +249,6 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
                 }
         if reconstructed:
             data["market_data"] = reconstructed
-        if financial_data:
-            data["financial_data"] = financial_data
-        all_news: list[dict] = []
-        for r in fetch.values():
-            if isinstance(r, dict):
-                all_news.extend(r.get("news_data") or [])
-        if all_news:
-            data["news_data"] = all_news
 
     # analyze_technical / fundamental / valuation / assess_risk: result has
     # "symbol" key, already indexed
