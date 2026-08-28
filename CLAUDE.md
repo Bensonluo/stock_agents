@@ -99,7 +99,7 @@ Workflow results are stored in an **in-memory dict** (`workflows` in `analysis.p
 
 Environment variables loaded via `pydantic-settings` from `.env` (copy from `.env.example`). Key variables:
 - `ZHIPUAI_API_KEY` — Primary LLM (GLM models via OpenAI-compatible API)
-- `PRIMARY_LLM_MODEL` — `glm-5.2` (default), `glm-5.2`, `glm-5.2`
+- `PRIMARY_LLM_MODEL` — `glm-5.3-flash` (default)
 - `DATABASE_URL` — PostgreSQL for checkpoint persistence and analysis history
 - `REDIS_URL` — Redis for caching (configured but usage varies)
 - `MAX_RETRIES`, `TIMEOUT_PER_AGENT` — Resilience settings

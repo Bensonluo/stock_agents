@@ -63,9 +63,9 @@ class Settings(BaseSettings):
     ]
 
     # LLM Settings
-    primary_llm_model: str = "glm-5.2"  # GLM-5.2 for complex tasks
-    secondary_llm_model: str = "glm-5.2"  # GLM-5.2 for faster responses
-    batch_llm_model: str = "glm-5.2"  # GLM-5.2 for batch operations
+    primary_llm_model: str = "glm-5.3-flash"  # fast tier for analysis
+    secondary_llm_model: str = "glm-5.3-flash"
+    batch_llm_model: str = "glm-5.3-flash"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
     llm_timeout: int = 60
@@ -79,8 +79,8 @@ class Settings(BaseSettings):
     # Agent Settings (ReAct)
     agent_max_iterations: int = 15
     agent_cost_limit: float = 0.50  # USD
-    agent_reasoning_model: str = "glm-5.2"
-    agent_reflection_model: str = "glm-5.2"
+    agent_reasoning_model: str = "glm-5.3-flash"
+    agent_reflection_model: str = "glm-5.3-flash"
 
     # Backtesting
     backtest_initial_cash: float = 10000.0

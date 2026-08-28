@@ -273,7 +273,7 @@ curl -X POST "http://localhost:8000/api/backtest/run" \
 |----------|-------------|---------|
 | `ZHIPUAI_API_KEY` | Zhipu AI API key (primary LLM) | — |
 | `OPENAI_API_KEY` | OpenAI API key (fallback) | — |
-| `PRIMARY_LLM_MODEL` | LLM model for analysis | `glm-5.2` |
+| `PRIMARY_LLM_MODEL` | LLM model for analysis | `glm-5.3-flash` |
 | `DATABASE_URL` | PostgreSQL connection | `postgresql://...` |
 | `MAX_RETRIES` | Max retry attempts per agent | `3` |
 | `TIMEOUT_PER_AGENT` | Timeout per agent (seconds) | `300` |
