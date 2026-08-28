@@ -130,3 +130,16 @@
 .react-markdown strong {
   @apply font-semibold text-slate-900;
 }
+
+@layer utilities {
+  /* Hero grid texture */
+  .bg-grid-slate {
+    background-image:
+      linear-gradient(to right, rgba(148, 163, 184, 0.07) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(148, 163, 184, 0.07) 1px, transparent 1px);
+    background-size: 42px 42px;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+}
