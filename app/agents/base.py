@@ -94,7 +94,6 @@ class BaseAgent(ABC):
             Updated agent state
         """
         import time
-        from datetime import datetime
 
         # Check circuit breaker
         if not self.circuit_breaker_registry.allow_request(self.name):

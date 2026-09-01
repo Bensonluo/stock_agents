@@ -841,9 +841,23 @@ async def fetch_historical(
         start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
 
         if _is_chinese_symbol(symbol):
-            hist_fn = lambda: ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
+            def hist_fn():
+                return ak.stock_zh_a_hist(
+                    symbol=symbol,
+                    period="daily",
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust="qfq",
+                )
         else:
-            hist_fn = lambda: ak.stock_us_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
+            def hist_fn():
+                return ak.stock_us_hist(
+                    symbol=symbol,
+                    period="daily",
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust="qfq",
+                )
 
         df = await asyncio.to_thread(hist_fn)
         if df is not None and not df.empty:
@@ -863,7 +877,6 @@ async def fetch_historical(
 
     # Direct Yahoo API
     try:
-        interval_map = {"1d": "1d", "1wk": "1wk", "1mo": "1mo"}
         def _get():
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}"
             r = requests.get(url, params={"range": period, "interval": "1d"}, headers=_YAHOO_HEADERS, timeout=15)

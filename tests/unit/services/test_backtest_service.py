@@ -80,6 +80,8 @@ async def test_each_strategy_runs_with_only_its_own_parameters(
     assert result["strategy"] == strategy
     assert result["final_value"] > 0
     assert isinstance(result["total_trades"], int)
+    assert result["equity"][0]["value"] == pytest.approx(10_000.0)
+    assert len(result["equity"]) == len(_market_data())
 
 
 def test_unknown_strategy_parameter_is_rejected() -> None:

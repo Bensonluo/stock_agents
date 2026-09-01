@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.monitoring import AgentMonitor, AgentMetrics, AlertSeverity
+from app.monitoring import AgentMetrics, AgentMonitor
 from app.orchestration.state import create_initial_state
 
 

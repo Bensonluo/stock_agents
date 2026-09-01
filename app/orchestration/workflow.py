@@ -6,7 +6,6 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.graph import StateGraph
 
 from app.orchestration.orchestrator import MultiAgentOrchestrator
-from app.orchestration.state import AgentState
 
 
 def build_workflow_graph(

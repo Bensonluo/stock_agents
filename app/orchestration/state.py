@@ -12,7 +12,7 @@ class AgentState(TypedDict):
 
     This state follows immutability principles:
     - State updates produce new states, never modifying the original
-    - All state is serializable for PostgreSQL checkpoint persistence
+    - All state is serializable for checkpoint persistence
     - Uses TypedDict for type safety
     - Uses Annotated with add operator for list accumulation
     """

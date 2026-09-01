@@ -119,6 +119,7 @@ class BacktestService:
             "won_trades": len(won),
             "lost_trades": len(lost),
             "trades_list": result.trades,
+            "equity": _series_to_points(result.equity) or [],
         }
 
     async def run_backtest_v2(

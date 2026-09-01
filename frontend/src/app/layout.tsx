@@ -1,10 +1,7 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
 import Link from 'next/link'
 import { LineChart, FlaskConical, Radar } from 'lucide-react'
 import './globals.css'
-
-const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: 'Stock Agent · 智能股票研究平台',
@@ -25,7 +22,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN">
-      <body className={inter.className}>
+      <body>
         <div className="min-h-screen bg-background flex flex-col">
           <header className="sticky top-0 z-50 border-b border-slate-200/70 bg-white/80 backdrop-blur-md">
             <div className="container mx-auto px-4 py-3">

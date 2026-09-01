@@ -6,11 +6,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 
-T = TypeVar("T")
-
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
+T = TypeVar("T")
 
 
 class TimeoutResult(Enum):
@@ -188,7 +187,6 @@ class TimeLimiter:
         Raises:
             TimeoutError: If operation times out
         """
-        import signal
         from threading import Thread
 
         timeout = timeout or self.default_timeout

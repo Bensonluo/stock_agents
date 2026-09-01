@@ -145,11 +145,11 @@ class TestProviderChainFallback:
 
         service = BacktestService()
 
-        class RateLimited(Exception):
+        class RateLimitedError(Exception):
             pass
 
         def broken_ticker(symbol: str):
-            raise RateLimited("Too Many Requests")
+            raise RateLimitedError("Too Many Requests")
 
         monkeypatch.setattr("app.services.backtest_service.yf.Ticker", broken_ticker)
 

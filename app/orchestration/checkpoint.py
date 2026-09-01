@@ -1,7 +1,7 @@
-"""PostgreSQL checkpoint manager for state persistence."""
+"""Checkpoint managers for SQL-backed history and LangGraph state."""
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver, Checkpoint, CheckpointMetadata
@@ -24,7 +24,7 @@ class CheckpointEntry(Base):
     checkpoint_id = Column(String, primary_key=True)
     checkpoint = Column(Text, nullable=False)
     meta_data = Column(Text, nullable=True)  # Renamed from 'metadata'
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     step = Column(Integer, default=0)
 
 
@@ -36,17 +36,20 @@ class CheckpointState(Base):
     thread_id = Column(String, primary_key=True)
     checkpoint_id = Column(String, primary_key=True)
     state = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
 
 class PostgresCheckpointManager:
-    """PostgreSQL state persistence manager.
+    """SQL-backed checkpoint utilities with a process-local LangGraph saver.
 
     This class provides:
     - Checkpoint saving and loading
     - State recovery after failures
     - Time travel (restore to previous checkpoints)
     - Concurrent-safe state management
+
+    The custom SQL save/load methods are durable. The saver returned to
+    LangGraph is still a ``MemorySaver`` until a compatible SQL saver is wired.
 
     Core learning: Understanding how state persistence enables
     fault tolerance and recovery in distributed systems.
@@ -97,8 +100,8 @@ class PostgresCheckpointManager:
                 thread_id=thread_id,
                 checkpoint_id=checkpoint_id,
                 checkpoint=checkpoint_data,
-                metadata=json.dumps(metadata) if metadata else None,
-                created_at=datetime.utcnow(),
+                meta_data=json.dumps(metadata) if metadata else None,
+                created_at=datetime.now(UTC),
             )
 
             # Merge to handle new and existing entries
@@ -110,7 +113,7 @@ class PostgresCheckpointManager:
                     thread_id=thread_id,
                     checkpoint_id=checkpoint_id,
                     state=json.dumps(state, default=str),
-                    created_at=datetime.utcnow(),
+                    created_at=datetime.now(UTC),
                 )
                 session.merge(state_entry)
 

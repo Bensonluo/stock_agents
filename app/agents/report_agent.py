@@ -1,7 +1,7 @@
 """Report generation agent for creating investment research reports."""
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from app.agents.base import StatelessAgent
 from app.orchestration.state import AgentState

@@ -1,14 +1,15 @@
 """Main FastAPI application entry point."""
 
-import os
 from contextlib import asynccontextmanager
-from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import agent, analysis, backtest, health, history as history_router, monitor as monitor_router, monitoring, websocket as ws_router
+from app.api.routes import agent, analysis, backtest, health, monitoring
+from app.api.routes import history as history_router
+from app.api.routes import monitor as monitor_router
+from app.api.routes import websocket as ws_router
 from app.config import settings
 from app.utils.logging import get_logger, setup_logging
 

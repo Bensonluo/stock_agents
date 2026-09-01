@@ -60,7 +60,7 @@
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 风险数学 | ✅ | `risk_agent` 只留编排+组合层;个股指标走 `assess_symbol`(引擎路径),流水线同步获得 CVaR/Sortino/alpha/R²/压力情景。共享评分升级为带 None 校验的超集;废弃 agent 独有的 `beta<=0.5→+5` 分支(与"分高=险高"语义相悖) |
-| 旧 Backtrader 路径 | ✅ | `/run` 委托 V2 引擎并映射旧响应字段;四个 Backtrader 策略类删除(-203 行)。依赖暂留 pyproject,随下次 lock 刷新移除 |
+| 旧 Backtrader 路径 | ✅ | `/run` 委托 V2 引擎并映射旧响应字段;四个 Backtrader 策略类删除(-203 行);`backtrader` 依赖已从 `pyproject.toml` 与锁文件移除 |
 | 基本面评分 | ✅ | `app/analysis/fundamental/scoring.py` 为规范实现;工具=LangChain 包装+别名;`FundamentalAnalysisAgent` 委托 |
 | 情绪评分 | ✅ | `app/analysis/sentiment.py` 为规范实现;工具与 agent 均委托(agent 保留 LLM 增强——那是特性不是重复) |
 | 执行摘要第三份 | ✅ | `routes/agent.py` 改调 `ReportService.detect_lang/executive_summary` |
@@ -75,6 +75,24 @@
 
 2026-08-28 线上反馈修复:用户在服务器跑 AAPL 得到"空壳报告"(全 _error 段+假持有建议+审计 pass)。两轮修复:①执行摘要对"无价格且无可用技术块"显式告警(⚠ 行情数据不可用),不再输出中性回退建议;②审计对象改为运行符号全集(全源失败时 ReAct 不写 market_data,旧逻辑空循环→漏检),_error/缺失块=数据不足。线上复现验证通过。另:服务器磁盘 100% 曾致构建假挂(no space on device),已清理 docker 构建缓存 12.7GB。
 
+## 2026-08-30 查漏补缺与安全升级
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 决策与失败语义 | ✅ | ReAct 不再由低风险/仓位结果单独推导买入;委员会 `veto/watch/limit` 强制约束动作与仓位。流水线执行异常改为真实失败,异步 API 不再把失败状态标成 completed |
+| 结构化报告链路 | ✅ | `observe_node` 将 `generate_report` 的结构化对象写入 state;API 持久化并返回 `report`;前端优先消费结构化报告,旧 Markdown/JSON answer 保持兼容;请求的 `max_iterations` 已贯穿到状态机 |
+| 回测 UI 真实性 | ✅ | 旧 `/run` 返回真实净值序列;前端删除随机曲线,胜率不再重复乘 100,并按 SMA/RSI/MACD 仅发送当前策略参数 |
+| 前端安全版本 | ✅ | Next.js 升至 15.5.24、React 19.2.8;对 lodash/nanoid/picomatch/PostCSS 使用同主版本安全补丁覆盖;官方 npm 生产依赖审计为 0 vulnerabilities |
+| 可复现构建 | ✅ | 移除未使用的 `backtrader`、`python-multipart`;Docker 固定 Poetry 2.4.1、只校验锁文件而不在镜像内重新解析;`docker compose config` 通过 |
+| 质量门禁 | ✅ | 新增 GitHub Actions:Poetry 锁校验、后端高价值 Ruff、全量 pytest、前端 npm audit/lint/type-check/build;补齐 ESLint 配置 |
+| 运行健康 | ✅ | readiness 不再无条件返回 true,现在实际查询 SQLite;Checkpoint ORM 的 `meta_data` 字段错配已修复并覆盖测试 |
+
+本轮全量验证:`poetry run pytest tests/ -q` → **292 passed, 5 deselected**;后端 Ruff(E/F/I/N/W)全绿;前端 `npm ci`、ESLint、TypeScript、Next.js production build 全绿;`npm audit --omit=dev` 为 0 漏洞。
+
+2026-08-30 腾讯云生产发布完成:发布编号 `20260830-1346`;API/前端镜像分别为 `sha256:e422e33f...`、`sha256:a103c21c...`;Compose 与公网健康检查通过,readiness 已返回 SQLite `ready`;AAPL 真实回测烟测返回 83 个净值点。发布前源码归档、前后镜像 ID、健康结果与源码哈希保存在服务器 `/opt/stock_agents_releases/20260830-1346/`;保留两套 rollback 镜像。清理旧 worktree 与未使用构建缓存后根盘使用率由 85% 降至 72%。部署脚本同步改为保留生产 `.env`/数据/日志、构建期间不中断旧容器、健康失败自动回滚。
+
+仍待后续阶段:LangGraph checkpoint saver 仍为进程内 MemorySaver(自定义 PostgreSQL 表尚未接入 graph saver);异步任务状态仍依赖单进程内存,多 worker/重启期间任务不可恢复;ReportV2 schema 尚未成为两条路径的唯一 API 契约;真实 token/成本计量、前端组件测试、Phase 4 数据源与研究能力仍未完成。
+
 ## Phase 4 — 未开始
 
 见计划 §9(文档 RAG、预期数据、期权隐含、Qlib/LEAN 级研究、沙盒内自动因子)。
@@ -82,5 +100,5 @@
 ## 环境备忘
 
 - Poetry 2.4.1 经 `uv tool` 安装(`~/.local/bin/poetry`);项目本地 `poetry.toml` 固定 `virtualenvs.in-project=true`。
-- 全量验证命令:`poetry run pytest tests/ -q`(当前 144 passed / 5 network 跳过)。
-- 存量 lint 债务:`poetry run ruff check app/` 约 480+ 告警,属既有代码(主要 Dict→dict、Optional→`|` 迁移未完成),新代码已按新风格并通过。
+- 全量验证命令:`poetry run pytest tests/ -q`(当前 292 passed / 5 network 跳过)。
+- 高价值 lint 门禁:`poetry run ruff check app tests --select E,F,I,N,W --ignore E501` 已全绿;剩余主要为 Ruff `UP` 现代化迁移债务。

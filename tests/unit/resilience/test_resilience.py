@@ -1,7 +1,8 @@
 """Unit tests for resilience module."""
 
-import pytest
 import asyncio
+
+import pytest
 
 from app.resilience import (
     CircuitBreaker,
@@ -9,9 +10,7 @@ from app.resilience import (
     CircuitBreakerRegistry,
     CircuitState,
     RetryConfig,
-    RetryHistory,
     RetryManager,
-    RetryStrategy,
     TimeLimiter,
 )
 

@@ -1,4 +1,4 @@
-# Frontend Dockerfile - Next.js 14
+# Frontend Dockerfile - Next.js 15
 # Multi-stage build for production optimization
 
 # Stage 1: Dependencies

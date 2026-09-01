@@ -81,12 +81,12 @@ Analysis agents produce numpy types (np.float64, np.int64, np.ndarray) that aren
 FastAPI routes in `app/api/routes/`:
 - `analysis.py` — `/api/analysis/analyze` (async background), `/api/analysis/analyze/sync` (waits for completion)
 - `backtest.py` — `/api/backtest/run`
-- `history.py` — `/api/history/` — query past analysis records from PostgreSQL
+- `history.py` — `/api/history/` — query past analysis records from SQLite
 - `monitor.py` — `/api/monitor/` — in-memory workflow state (separate from the monitoring module)
 - `monitoring.py` — `/api/monitoring/` — agent health, metrics, circuit breakers
 - `websocket.py` — `/api/ws/monitoring` — real-time agent events via WebSocket
 
-Workflow results are stored in an **in-memory dict** (`workflows` in `analysis.py`) and also persisted to PostgreSQL via `app/storage/database.py`. The in-memory store is lost on restart.
+Workflow results are stored in an **in-memory dict** (`workflows` in `analysis.py`) and persisted to SQLite via `app/storage/database.py`. The in-memory status cache is lost on restart; completed history survives.
 
 ### Monitoring & Resilience
 
@@ -100,7 +100,7 @@ Workflow results are stored in an **in-memory dict** (`workflows` in `analysis.p
 Environment variables loaded via `pydantic-settings` from `.env` (copy from `.env.example`). Key variables:
 - `ZHIPUAI_API_KEY` — Primary LLM (GLM models via OpenAI-compatible API)
 - `PRIMARY_LLM_MODEL` — `glm-5.3-flash` (default)
-- `DATABASE_URL` — PostgreSQL for checkpoint persistence and analysis history
+- `DATABASE_URL` — optional PostgreSQL connection for the checkpoint manager; the active LangGraph saver is currently memory-backed
 - `REDIS_URL` — Redis for caching (configured but usage varies)
 - `MAX_RETRIES`, `TIMEOUT_PER_AGENT` — Resilience settings
 

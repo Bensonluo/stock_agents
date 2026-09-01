@@ -6,7 +6,7 @@ from typing import Any
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from app.tools.data.fetcher import fetch_stock_data
+from app.tools.data.fetcher import fetch_stock_data as fetch_stock_data_from_providers
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -28,7 +28,7 @@ async def fetch_stock_data_tool(symbols: list[str], source: str = "auto") -> dic
     if one fails.
     """
     async with _semaphore:
-        tasks = [fetch_stock_data(s) for s in symbols]
+        tasks = [fetch_stock_data_from_providers(s) for s in symbols]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
     output = {}

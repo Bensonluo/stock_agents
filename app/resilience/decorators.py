@@ -1,14 +1,14 @@
 """Resilience decorators for fault-tolerant function execution."""
 
+import asyncio
 import functools
 from typing import Any, Callable, Optional, TypeVar
 
 from app.resilience.circuit_breaker import (
-    CircuitBreakerRegistry,
     get_circuit_breaker_registry,
 )
-from app.resilience.retry import RetryConfig, RetryManager, get_retry_manager
-from app.resilience.timeout import TimeLimiter, get_time_limiter
+from app.resilience.retry import RetryConfig, get_retry_manager
+from app.resilience.timeout import get_time_limiter
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -138,10 +138,6 @@ def fault_tolerant(
 
     return decorator
 
-
-import asyncio
-
-
 def with_retry(
     max_attempts: int = 3,
     strategy: str = "exponential_backoff",
@@ -161,7 +157,7 @@ def with_retry(
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            from app.resilience.retry import RetryStrategy, RetryConfig
+            from app.resilience.retry import RetryConfig, RetryStrategy
 
             retry_manager = get_retry_manager()
             retry_config = RetryConfig(
@@ -176,7 +172,7 @@ def with_retry(
 
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            from app.resilience.retry import RetryStrategy, RetryConfig
+            from app.resilience.retry import RetryConfig, RetryStrategy
 
             retry_manager = get_retry_manager()
             retry_config = RetryConfig(

@@ -11,7 +11,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-StateGraph-FF6B6B)](https://github.com/langchain-ai/langgraph)
-[![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js&logoColor=white)](https://nextjs.org/)
+[![Next.js](https://img.shields.io/badge/Next.js-15.5-black?logo=next.js&logoColor=white)](https://nextjs.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 
 <!-- 🎬 录制说明:录一次完整分析 AAPL 的流程,展示前端 dashboard 实时更新 -->
@@ -271,7 +271,7 @@ curl -X POST "http://localhost:8000/api/backtest/run" \
 ┌─────────────────────────▼────────────────────────────────┐
 │                   FastAPI API (:8000)                     │
 │  ┌────────────┐  ┌────────────┐  ┌────────────────────┐  │
-│  │ Analysis   │  │ Backtest   │  │ History (PostgreSQL)│ │
+│  │ Analysis   │  │ Backtest   │  │  History (SQLite)  │  │
 │  └────────────┘  └────────────┘  └────────────────────┘  │
 └─────────────────────────┬────────────────────────────────┘
                           │
@@ -279,7 +279,7 @@ curl -X POST "http://localhost:8000/api/backtest/run" \
 │               LangGraph Orchestrator                      │
 │  ┌────────────────────────────────────────────────────┐  │
 │  │              State Management                       │  │
-│  │      (PostgreSQL Checkpoint Persistence)            │  │
+│  │   (In-memory checkpoints; durable history in SQLite)│  │
 │  └────────────────────────────────────────────────────┘  │
 └───────┬──────────┬──────────┬──────────┬────────────────┘
         │          │          │          │
@@ -317,7 +317,7 @@ after a reporting lag (point-in-time), and `as_of` gates every metric.
 | `ZHIPUAI_API_KEY` | Zhipu AI API key (primary LLM) | — |
 | `OPENAI_API_KEY` | OpenAI API key (fallback) | — |
 | `PRIMARY_LLM_MODEL` | LLM model for analysis | `glm-5.3-flash` |
-| `DATABASE_URL` | PostgreSQL connection | `postgresql://...` |
+| `DATABASE_URL` | Optional PostgreSQL checkpoint-manager connection | `postgresql://...` |
 | `MAX_RETRIES` | Max retry attempts per agent | `3` |
 | `TIMEOUT_PER_AGENT` | Timeout per agent (seconds) | `300` |
 
@@ -348,11 +348,11 @@ stock_agents/
 │   ├── api/routes/          # analysis, backtest v2, history, monitoring, ws
 │   ├── monitoring/          # Metrics, WebSocket broadcast
 │   ├── resilience/          # Circuit breaker, retry, timeout
-│   ├── storage/             # PostgreSQL layer
+│   ├── storage/             # SQLite analysis-history layer
 │   └── tools/               # Agent tool registry (wrappers over engines)
 ├── frontend/                # Next.js dashboard
 ├── deploy/                  # Production deployment scripts
-├── tests/                   # 282 tests: unit + integration + path parity
+├── tests/                   # 292 tests: unit + integration + path parity
 └── docker-compose.yml
 ```
 
@@ -379,7 +379,7 @@ stock_agents/
 ## 🧪 Testing
 
 ```bash
-poetry run pytest tests/ -q          # 282 passed (5 network tests deselected)
+poetry run pytest tests/ -q          # 292 passed (5 network tests deselected)
 ```
 
 Coverage highlights: every engine has golden-value tests; pipeline/ReAct

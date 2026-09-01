@@ -7,16 +7,16 @@ __all__ = ["get_all_tools", "get_tool", "register_tool", "register_all_tools"]
 
 def register_all_tools() -> None:
     """Register all available tools. Call this during agent initialization."""
-    from app.tools.data.market_data import fetch_stock_data
-    from app.tools.data.historical import get_historical_prices
     from app.tools.analysis.auto_tools import (
-        analyze_technical,
         analyze_fundamental,
         analyze_sentiment,
+        analyze_technical,
         analyze_valuation,
         assess_risk,
         get_stock_overview,
     )
+    from app.tools.data.historical import get_historical_prices
+    from app.tools.data.market_data import fetch_stock_data
     from app.tools.decision.portfolio import calculate_position_size
     from app.tools.report.generate import generate_report
 

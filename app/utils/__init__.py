@@ -13,6 +13,7 @@ from app.utils.time_helpers import (
     to_datetime,
 )
 from app.utils.validators import (
+    normalize_stock_symbol,
     sanitize_string,
     validate_date_range,
     validate_email,
@@ -22,7 +23,6 @@ from app.utils.validators import (
     validate_sort_field,
     validate_sort_order,
     validate_stock_symbol,
-    normalize_stock_symbol,
 )
 
 __all__ = [

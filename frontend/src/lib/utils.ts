@@ -270,6 +270,9 @@ export interface BacktestRequest {
   rsi_period?: number
   rsi_overbought?: number
   rsi_oversold?: number
+  fast_period?: number
+  slow_period?: number
+  signal_period?: number
 }
 
 export interface BacktestResponse {
@@ -285,6 +288,7 @@ export interface BacktestResponse {
   max_drawdown: number
   win_rate: number
   total_trades: number
+  equity: Array<{ date: string; value: number }>
   execution_time: number
 }
 

@@ -4,11 +4,10 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
-from pydantic import BaseModel, Field, validator
+from fastapi import APIRouter, BackgroundTasks, HTTPException
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.dependencies import get_orchestrator
-from app.orchestration import MultiAgentOrchestrator
 from app.orchestration.state import AgentState
 from app.utils.logging import get_logger
 from app.utils.validators import validate_stock_symbol
@@ -22,48 +21,53 @@ router = APIRouter()
 class StockAnalysisRequest(BaseModel):
     """Request model for stock analysis."""
 
-    query: str = Field(..., description="User's analysis query", min_length=1)
-    symbols: List[str] = Field(..., description="List of stock symbols", min_items=1)
-    max_retries: int = Field(default=3, ge=0, le=10, description="Maximum retry attempts")
-    timeout_per_agent: int = Field(default=300, ge=10, le=600, description="Timeout per agent in seconds")
-    parallel_execution: bool = Field(default=True, description="Enable parallel execution")
-
-    @validator("symbols", each_item=True)
-    def validate_symbols(cls, v):
-        """Validate stock symbols."""
-        if not validate_stock_symbol(v):
-            raise ValueError(f"Invalid stock symbol: {v}")
-        return v.upper()
-
-    class Config:
-        extra = "ignore"  # Ignore extra fields
-        json_schema_extra = {
+    model_config = ConfigDict(
+        extra="ignore",
+        json_schema_extra={
             "example": {
                 "query": "Analyze these stocks for investment potential",
                 "symbols": ["AAPL", "MSFT", "GOOGL"],
                 "max_retries": 3,
                 "timeout_per_agent": 300,
             }
-        }
+        },
+    )
+
+    query: str = Field(..., description="User's analysis query", min_length=1)
+    symbols: List[str] = Field(..., description="List of stock symbols", min_length=1)
+    max_retries: int = Field(default=3, ge=0, le=10, description="Maximum retry attempts")
+    timeout_per_agent: int = Field(default=300, ge=10, le=600, description="Timeout per agent in seconds")
+    parallel_execution: bool = Field(default=True, description="Enable parallel execution")
+
+    @field_validator("symbols")
+    @classmethod
+    def validate_symbols(cls, symbols: List[str]) -> List[str]:
+        """Validate stock symbols."""
+        normalized = []
+        for symbol in symbols:
+            if not validate_stock_symbol(symbol):
+                raise ValueError(f"Invalid stock symbol: {symbol}")
+            normalized.append(symbol.upper())
+        return normalized
 
 
 class AnalysisResponse(BaseModel):
     """Response model for stock analysis."""
 
-    thread_id: str
-    status: str
-    message: str
-    report_url: Optional[str] = None
-
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "thread_id": "workflow-1234567890.123",
                 "status": "completed",
                 "message": "Analysis completed successfully",
             }
         }
+    )
 
+    thread_id: str
+    status: str
+    message: str
+    report_url: Optional[str] = None
 
 class WorkflowStatusResponse(BaseModel):
     """Response model for workflow status."""
@@ -375,13 +379,31 @@ async def _execute_workflow_impl(
         parallel_execution=parallel_execution,
     )
 
+    errors = result.get("errors", [])
+    agent_status = result.get("agent_status", {})
+    failed_agents = [name for name, status in agent_status.items() if status == "failed"]
+    execution_error = result.get("execution_metadata", {}).get("error")
+    if errors or failed_agents or execution_error:
+        if execution_error:
+            detail = execution_error
+        elif failed_agents:
+            detail = f"Workflow failed in agents: {', '.join(failed_agents)}"
+        else:
+            latest_error = errors[-1]
+            detail = (
+                latest_error.get("error", str(latest_error))
+                if isinstance(latest_error, dict)
+                else str(latest_error)
+            )
+        raise RuntimeError(detail)
+
     logger.info(f"Workflow {thread_id} result agent_status: {result.get('agent_status', {})}")
 
-    # Store workflow progress in shared dict
-    workflows[thread_id]["agent_status"] = result.get("agent_status", {})
-    workflows[thread_id]["current_agent"] = result.get("current_agent")
-    workflows[thread_id]["current_step"] = result.get("current_step", 0)
-    workflows[thread_id]["has_errors"] = len(result.get("errors", [])) > 0
+    workflow = workflows.setdefault(thread_id, {"status": "running"})
+    workflow["agent_status"] = agent_status
+    workflow["current_agent"] = result.get("current_agent")
+    workflow["current_step"] = result.get("current_step", 0)
+    workflow["has_errors"] = False
 
     logger.info(f"Updated workflows[{thread_id}] with agent_status: {workflows[thread_id].get('agent_status', {})}")
 

@@ -4,12 +4,9 @@ import json
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-
 from langchain_core.language_models import BaseChatModel
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 
-from app.storage.database import get_database, AnalysisRecord
 from app.agents import (
     AkShareDataAgent,
     DataCollectionAgent,
@@ -21,19 +18,17 @@ from app.agents import (
     SentimentAnalysisAgent,
     TechnicalAnalysisAgent,
 )
-from app.api.routes.monitor import init_workflow, update_agent_status, add_log
+from app.api.routes.monitor import add_log, init_workflow, update_agent_status
 from app.monitoring import get_connection_manager, get_monitor
 from app.orchestration.checkpoint import PostgresCheckpointManager
 from app.orchestration.state import (
     AgentState,
-    add_agent_output,
     add_error,
     create_initial_state,
     get_agent_errors,
-    get_retry_count,
-    set_agent_status,
     should_retry,
 )
+from app.storage.database import AnalysisRecord, get_database
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -427,7 +422,7 @@ class MultiAgentOrchestrator:
             except Exception as db_error:
                 logger.error(f"[Orchestrator] 更新历史记录失败: {db_error}")
 
-            return _convert_to_serializable(initial_state)
+            raise RuntimeError(f"Workflow execution failed: {e}") from e
 
     async def _run_agent_node(
         self,

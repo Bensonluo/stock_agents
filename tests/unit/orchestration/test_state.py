@@ -1,14 +1,13 @@
 """Unit tests for orchestration module."""
 
-import pytest
 
 from app.orchestration.state import (
     add_agent_output,
     add_error,
     create_initial_state,
     get_agent_errors,
-    get_retry_count,
     get_agent_status,
+    get_retry_count,
     has_errors,
     set_agent_status,
     should_retry,

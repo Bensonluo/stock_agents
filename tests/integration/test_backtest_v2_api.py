@@ -183,7 +183,9 @@ class TestLegacyRunEndpoint:
         for key in (
             "final_value", "total_return", "total_return_pct", "annual_return",
             "sharpe_ratio", "max_drawdown", "win_rate", "total_trades",
+            "equity",
         ):
             assert key in body
         assert body["final_value"] > 0
         assert body["total_trades"] >= 1  # force-liquidation guarantees a round trip
+        assert len(body["equity"]) == 400

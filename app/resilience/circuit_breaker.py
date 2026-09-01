@@ -1,9 +1,9 @@
 """Circuit breaker pattern implementation for preventing cascading failures."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.utils.logging import get_logger
 

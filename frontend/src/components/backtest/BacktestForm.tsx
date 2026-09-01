@@ -25,6 +25,12 @@ export function BacktestForm() {
   const [initialCash, setInitialCash] = useState('10000')
   const [smaShort, setSmaShort] = useState('20')
   const [smaLong, setSmaLong] = useState('50')
+  const [rsiPeriod, setRsiPeriod] = useState('14')
+  const [rsiOverbought, setRsiOverbought] = useState('70')
+  const [rsiOversold, setRsiOversold] = useState('30')
+  const [fastPeriod, setFastPeriod] = useState('12')
+  const [slowPeriod, setSlowPeriod] = useState('26')
+  const [signalPeriod, setSignalPeriod] = useState('9')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<BacktestResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -40,14 +46,25 @@ export function BacktestForm() {
     setResult(null)
 
     try {
+      const selectedStrategy = strategy as BacktestRequest['strategy']
       const request: BacktestRequest = {
         symbol: symbol.toUpperCase(),
-        strategy: strategy as any,
+        strategy: selectedStrategy,
         start_date: startDate,
         end_date: endDate,
         initial_cash: parseFloat(initialCash),
-        sma_short: parseInt(smaShort),
-        sma_long: parseInt(smaLong),
+      }
+      if (selectedStrategy === 'sma_crossover') {
+        request.sma_short = parseInt(smaShort)
+        request.sma_long = parseInt(smaLong)
+      } else if (selectedStrategy === 'rsi_strategy') {
+        request.rsi_period = parseInt(rsiPeriod)
+        request.rsi_overbought = parseFloat(rsiOverbought)
+        request.rsi_oversold = parseFloat(rsiOversold)
+      } else if (selectedStrategy === 'macd_strategy') {
+        request.fast_period = parseInt(fastPeriod)
+        request.slow_period = parseInt(slowPeriod)
+        request.signal_period = parseInt(signalPeriod)
       }
 
       const response = await API.runBacktest(request)
@@ -58,8 +75,6 @@ export function BacktestForm() {
       setLoading(false)
     }
   }
-
-  const showSmaParams = strategy === 'sma_crossover' || strategy === 'macd_strategy'
 
   return (
     <div className="space-y-6">
@@ -138,7 +153,7 @@ export function BacktestForm() {
                 />
               </div>
 
-              {showSmaParams && (
+              {strategy === 'sma_crossover' && (
                 <>
                   <div className="space-y-2">
                     <Label htmlFor="sma_short">Short Period</Label>
@@ -163,6 +178,40 @@ export function BacktestForm() {
                       min="10"
                       max="200"
                     />
+                  </div>
+                </>
+              )}
+
+              {strategy === 'rsi_strategy' && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="rsi_period">RSI Period</Label>
+                    <Input id="rsi_period" type="number" value={rsiPeriod} onChange={(e) => setRsiPeriod(e.target.value)} disabled={loading} min="5" max="50" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="rsi_overbought">Overbought</Label>
+                    <Input id="rsi_overbought" type="number" value={rsiOverbought} onChange={(e) => setRsiOverbought(e.target.value)} disabled={loading} min="50" max="100" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="rsi_oversold">Oversold</Label>
+                    <Input id="rsi_oversold" type="number" value={rsiOversold} onChange={(e) => setRsiOversold(e.target.value)} disabled={loading} min="0" max="50" />
+                  </div>
+                </>
+              )}
+
+              {strategy === 'macd_strategy' && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="fast_period">Fast EMA</Label>
+                    <Input id="fast_period" type="number" value={fastPeriod} onChange={(e) => setFastPeriod(e.target.value)} disabled={loading} min="2" max="100" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="slow_period">Slow EMA</Label>
+                    <Input id="slow_period" type="number" value={slowPeriod} onChange={(e) => setSlowPeriod(e.target.value)} disabled={loading} min="3" max="200" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="signal_period">Signal EMA</Label>
+                    <Input id="signal_period" type="number" value={signalPeriod} onChange={(e) => setSignalPeriod(e.target.value)} disabled={loading} min="2" max="100" />
                   </div>
                 </>
               )}
@@ -203,32 +252,6 @@ interface BacktestResultProps {
 function BacktestResult({ result }: BacktestResultProps) {
   const isProfitable = result.total_return >= 0
 
-  // Generate chart data
-  const generateEquityCurve = () => {
-    const days = Math.floor(
-      (new Date(result.period.end).getTime() - new Date(result.period.start).getTime()) /
-        (1000 * 60 * 60 * 24)
-    )
-    const points = Math.min(days, 100)
-    const data = []
-
-    for (let i = 0; i <= points; i++) {
-      const progress = i / points
-      // Simulate equity curve with some volatility
-      const baseProgress = result.initial_cash + (result.final_value - result.initial_cash) * progress
-      const volatility = result.max_drawdown * Math.sin(progress * Math.PI * 4) * (1 - progress)
-      const randomNoise = (Math.random() - 0.5) * result.initial_cash * 0.02
-      data.push({
-        day: i,
-        value: Math.max(baseProgress + volatility + randomNoise, result.initial_cash * 0.5),
-      })
-    }
-
-    return data
-  }
-
-  const equityData = generateEquityCurve()
-
   return (
     <div className="space-y-4">
       <Card>
@@ -242,7 +265,7 @@ function BacktestResult({ result }: BacktestResultProps) {
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Chart */}
-          <BacktestChart data={equityData} initialCash={result.initial_cash} />
+          <BacktestChart data={result.equity} initialCash={result.initial_cash} />
 
           {/* Stats Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -278,7 +301,7 @@ function BacktestResult({ result }: BacktestResultProps) {
             </div>
             <div className="p-4 bg-muted/50 rounded-lg">
               <div className="text-sm text-muted-foreground">Win Rate</div>
-              <div className="text-xl font-bold">{(result.win_rate * 100).toFixed(1)}%</div>
+              <div className="text-xl font-bold">{result.win_rate.toFixed(1)}%</div>
             </div>
             <div className="p-4 bg-muted/50 rounded-lg">
               <div className="text-sm text-muted-foreground">Total Trades</div>

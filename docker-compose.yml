@@ -2,7 +2,7 @@
 #
 # 实际架构：
 # - 后端: FastAPI + SQLite (data/analysis_history.db)
-# - 前端: Next.js 14
+# - 前端: Next.js 15
 #
 # 使用方式：
 #   开发模式: docker-compose up -d
@@ -36,7 +36,7 @@ services:
     restart: unless-stopped
 
   # ===========================================
-  # 前端服务 (Next.js 14)
+  # 前端服务 (Next.js 15)
   # ===========================================
   frontend:
     build:

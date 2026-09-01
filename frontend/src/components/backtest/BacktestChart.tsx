@@ -13,7 +13,7 @@ import {
 } from 'recharts'
 
 interface BacktestChartProps {
-  data: Array<{ day: number; value: number }>
+  data: Array<{ date: string; value: number }>
   initialCash: number
 }
 
@@ -29,9 +29,9 @@ export function BacktestChart({ data, initialCash }: BacktestChartProps) {
             <LineChart data={data} margin={{ top: 5, right: 5, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
               <XAxis
-                dataKey="day"
+                dataKey="date"
                 className="text-xs"
-                tickFormatter={(value) => `Day ${value}`}
+                minTickGap={32}
               />
               <YAxis
                 domain={[minValue * 0.95, maxValue * 1.05]}
@@ -44,7 +44,7 @@ export function BacktestChart({ data, initialCash }: BacktestChartProps) {
                   border: '1px solid hsl(var(--border))',
                   borderRadius: '0.5rem',
                 }}
-                labelFormatter={(label) => `Day ${label}`}
+                labelFormatter={(label) => String(label)}
                 formatter={(value: number) => [`$${value.toFixed(2)}`, 'Portfolio Value']}
               />
               <ReferenceLine

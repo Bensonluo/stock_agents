@@ -3,7 +3,6 @@
 from typing import Optional
 
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import MemorySaver
 
 from app.config import settings
 from app.orchestration import PostgresCheckpointManager

@@ -117,6 +117,7 @@ class BacktestResponse(BaseModel):
     max_drawdown: float
     win_rate: float
     total_trades: int
+    equity: list[dict[str, float | str]]
     execution_time: float
 
 
@@ -173,6 +174,7 @@ async def run_backtest(request: BacktestRequest) -> BacktestResponse:
             max_drawdown=result["max_drawdown"],
             win_rate=result["win_rate"],
             total_trades=result["total_trades"],
+            equity=result["equity"],
             execution_time=execution_time,
         )
 

@@ -22,11 +22,16 @@ def calculate_position_size(risk_data: dict, scores: dict = None) -> dict[str, A
         risk_level = risk.get("risk_level", "medium")
         max_from_risk = risk.get("position_recommendation", {}).get("max_position_size", 10.0)
 
-        if risk_score >= 70: base = 2.0
-        elif risk_score >= 50: base = 5.0
-        elif risk_score >= 30: base = 10.0
-        elif risk_score >= 15: base = 15.0
-        else: base = 20.0
+        if risk_score >= 70:
+            base = 2.0
+        elif risk_score >= 50:
+            base = 5.0
+        elif risk_score >= 30:
+            base = 10.0
+        elif risk_score >= 15:
+            base = 15.0
+        else:
+            base = 20.0
 
         final = min(base, max_from_risk)
         results[symbol] = {

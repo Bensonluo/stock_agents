@@ -17,6 +17,10 @@ RESULT = {
     "max_drawdown": 5.0,
     "win_rate": 50.0,
     "total_trades": 2,
+    "equity": [
+        {"date": "2024-01-01", "value": 10_000.0},
+        {"date": "2024-12-31", "value": 11_000.0},
+    ],
 }
 
 

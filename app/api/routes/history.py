@@ -8,14 +8,14 @@
 - GET /api/history/search - 搜索记录
 """
 
-from fastapi import APIRouter, HTTPException, Query
-from typing import List, Optional
-from pydantic import BaseModel
-from datetime import datetime
 import json
 import logging
+from typing import List, Optional
 
-from app.storage.database import get_database, AnalysisRecord
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+
+from app.storage.database import AnalysisRecord, get_database
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -33,7 +33,7 @@ class HistoryListItem(BaseModel):
     created_at: str
     updated_at: str
     execution_time: float
-    
+
     class Config:
         from_attributes = True
 
@@ -77,7 +77,7 @@ def record_to_list_item(record: AnalysisRecord) -> HistoryListItem:
         symbols = json.loads(record.symbols) if record.symbols else []
     except json.JSONDecodeError:
         symbols = []
-    
+
     return HistoryListItem(
         id=record.id,
         thread_id=record.thread_id,
@@ -96,12 +96,12 @@ def record_to_detail(record: AnalysisRecord) -> HistoryDetail:
         symbols = json.loads(record.symbols) if record.symbols else []
     except json.JSONDecodeError:
         symbols = []
-    
+
     try:
         result = json.loads(record.result) if record.result else {}
     except json.JSONDecodeError:
         result = {}
-    
+
     return HistoryDetail(
         id=record.id,
         thread_id=record.thread_id,
@@ -125,31 +125,31 @@ async def list_history(
 ):
     """
     获取分析历史记录列表
-    
+
     Args:
         page: 页码（从1开始）
         page_size: 每页数量
         status: 可选的状态过滤
-        
+
     Returns:
         分页的历史记录列表
     """
     logger.info(f"[History API] 获取列表: page={page}, page_size={page_size}, status={status}")
-    
+
     db = get_database()
-    
+
     # 计算偏移量
     offset = (page - 1) * page_size
-    
+
     # 获取记录
     records = db.list_records(limit=page_size, offset=offset, status=status)
     total = db.count_records(status=status)
-    
+
     # 转换为响应格式
     items = [record_to_list_item(r) for r in records]
-    
+
     logger.info(f"[History API] 返回 {len(items)} 条记录，总计 {total} 条")
-    
+
     return HistoryListResponse(
         items=items,
         total=total,
@@ -163,14 +163,14 @@ async def list_history(
 async def get_history_stats():
     """
     获取历史统计信息
-    
+
     Returns:
         各状态的记录数量统计
     """
     logger.info("[History API] 获取统计信息")
-    
+
     db = get_database()
-    
+
     return HistoryStatsResponse(
         total_analyses=db.count_records(),
         completed=db.count_records(status="completed"),
@@ -187,22 +187,22 @@ async def search_history(
 ):
     """
     搜索历史记录
-    
+
     Args:
         keyword: 搜索关键词（匹配股票代码或查询内容）
         limit: 返回数量
-        
+
     Returns:
         匹配的记录列表
     """
     logger.info(f"[History API] 搜索: keyword={keyword}, limit={limit}")
-    
+
     db = get_database()
     records = db.search_records(keyword=keyword, limit=limit)
     items = [record_to_list_item(r) for r in records]
-    
+
     logger.info(f"[History API] 搜索到 {len(items)} 条记录")
-    
+
     return {
         "items": items,
         "keyword": keyword,
@@ -214,22 +214,22 @@ async def search_history(
 async def get_history_detail(thread_id: str):
     """
     获取单条历史记录详情
-    
+
     Args:
         thread_id: 工作流线程 ID
-        
+
     Returns:
         完整的分析记录详情
     """
     logger.info(f"[History API] 获取详情: thread_id={thread_id}")
-    
+
     db = get_database()
     record = db.get_record(thread_id)
-    
+
     if not record:
         logger.warning(f"[History API] 记录不存在: thread_id={thread_id}")
         raise HTTPException(status_code=404, detail="记录不存在")
-    
+
     logger.info(f"[History API] 返回详情: thread_id={thread_id}")
     return record_to_detail(record)
 
@@ -238,24 +238,24 @@ async def get_history_detail(thread_id: str):
 async def delete_history(thread_id: str):
     """
     删除历史记录
-    
+
     Args:
         thread_id: 工作流线程 ID
-        
+
     Returns:
         删除结果
     """
     logger.info(f"[History API] 删除记录: thread_id={thread_id}")
-    
+
     db = get_database()
     success = db.delete_record(thread_id)
-    
+
     if not success:
         logger.warning(f"[History API] 删除失败: thread_id={thread_id}")
         raise HTTPException(status_code=404, detail="记录不存在")
-    
+
     logger.info(f"[History API] 删除成功: thread_id={thread_id}")
-    
+
     return {
         "success": True,
         "message": "记录已删除",

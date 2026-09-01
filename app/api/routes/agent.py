@@ -249,8 +249,6 @@ def _save_to_db(thread_id: str, query: str, symbols: list[str], result: dict, st
     """Persist analysis result to database for history."""
     try:
         db = get_database()
-        now = datetime.now(UTC).isoformat()
-
         result_data = {
             "answer": result.get("answer", ""),
             "report": result.get("report"),
@@ -314,7 +312,11 @@ async def _run_analysis(thread_id: str, query: str, symbols: list[str], max_iter
     try:
         agent = ReActAgent()
         result = await agent.analyze(
-            query=query, symbols=symbols, thread_id=thread_id, progress_callback=on_node_complete,
+            query=query,
+            symbols=symbols,
+            thread_id=thread_id,
+            max_iterations=max_iterations,
+            progress_callback=on_node_complete,
         )
         _results[thread_id] = result
         _progress_states[thread_id]["status"] = "completed"

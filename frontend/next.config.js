@@ -2,6 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
+  outputFileTracingRoot: __dirname,
   // 设置基础路径，用于子路径部署
   basePath: '/stock',
   // 确保 assetPrefix 也正确配置

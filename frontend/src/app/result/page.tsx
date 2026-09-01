@@ -165,7 +165,7 @@ function ReactResultPage({ threadId }: { threadId: string }) {
           <div className="lg:col-span-3">
             <Card>
               <CardContent className="p-6 md:p-8">
-                <ReactReport answer={result.answer} />
+                <ReactReport answer={result.answer} report={result.report} />
               </CardContent>
             </Card>
           </div>
@@ -240,16 +240,19 @@ function ReactResultPage({ threadId }: { threadId: string }) {
 /* ── Pipeline Result View (original) ──────────────────────────── */
 
 function ResultPage() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const threadId = searchParams.get('thread_id')
   const mode = searchParams.get('mode')
 
-  // Route to ReAct view if mode=react
   if (mode === 'react' && threadId) {
     return <ReactResultPage threadId={threadId} />
   }
 
+  return <PipelineResultPage threadId={threadId} />
+}
+
+function PipelineResultPage({ threadId }: { threadId: string | null }) {
+  const router = useRouter()
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -672,12 +675,14 @@ function ResultPage() {
 }
 
 // ReAct 结构化报告组件 —— 把 answer(JSON)渲染成人类可读的投资报告
-function ReactReport({ answer }: { answer: string }) {
+function ReactReport({ answer, report: structuredReport }: {
+  answer: string
+  report: Record<string, any> | null
+}) {
   const [activeSymbol, setActiveSymbol] = useState<string>('all')
   const [openEvidence, setOpenEvidence] = useState<string | null>(null)
-  // answer 是后端返回的 JSON 字符串;解析失败则回退到 Markdown(兼容纯文本/旧数据)
-  let report: any = null
-  if (typeof answer === 'string' && answer.trim()) {
+  let report: any = structuredReport
+  if ((!report || typeof report !== 'object') && typeof answer === 'string' && answer.trim()) {
     try {
       report = JSON.parse(answer)
     } catch {

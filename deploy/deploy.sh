@@ -3,7 +3,7 @@
 # 用法: ./deploy.sh [服务器IP]
 # 示例: ./deploy.sh 124.220.28.49
 
-set -e
+set -euo pipefail
 
 # 颜色定义
 RED='\033[0;31m'
@@ -17,6 +17,7 @@ SERVER_USER="ubuntu"
 SSH_KEY="${HOME}/.ssh/ssh_tencent.pem"
 SERVER_DIR="/opt/stock_agents"
 PROJECT_NAME="stock_agents"
+DEPLOY_ID="$(date +%Y%m%d-%H%M%S)"
 
 # SSH 命令前缀
 SSH_CMD="ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_IP}"
@@ -27,6 +28,7 @@ echo -e "${GREEN}========================================${NC}"
 echo -e "服务器: ${SERVER_IP}"
 echo -e "用户: ${SERVER_USER}"
 echo -e "部署目录: ${SERVER_DIR}"
+echo -e "发布编号: ${DEPLOY_ID}"
 echo ""
 
 # 检查密钥文件
@@ -55,15 +57,41 @@ npm run build
 cd "$PROJECT_ROOT"
 echo -e "${GREEN}✓ 前端构建完成${NC}"
 
-# 3. 在服务器上创建目录
-echo -e "${YELLOW}[3/6] 准备服务器环境...${NC}"
-${SSH_CMD} "sudo mkdir -p ${SERVER_DIR}/{data,logs} && sudo chown -R ${SERVER_USER}:${SERVER_USER} ${SERVER_DIR}"
+# 3. 在服务器上创建目录和回滚点
+echo -e "${YELLOW}[3/6] 准备服务器环境和回滚点...${NC}"
+${SSH_CMD} "DEPLOY_ID=${DEPLOY_ID} bash -s" << 'ENDSSH'
+set -euo pipefail
+SERVER_DIR=/opt/stock_agents
+RELEASE_DIR="/opt/stock_agents_releases/${DEPLOY_ID}"
+
+sudo mkdir -p "${SERVER_DIR}"/{data,logs} "${RELEASE_DIR}"
+sudo chown -R ubuntu:ubuntu "${SERVER_DIR}"
+
+if [ -f "${SERVER_DIR}/.env" ]; then
+    sudo tar -C "${SERVER_DIR}" \
+        --exclude=.env --exclude=data --exclude=logs --exclude=.worktrees \
+        -czf "${RELEASE_DIR}/source-before.tar.gz" .
+fi
+
+if sudo docker inspect stock_agent_api >/dev/null 2>&1; then
+    api_image=$(sudo docker inspect stock_agent_api --format '{{.Image}}')
+    sudo docker tag "${api_image}" "stock_agents-api:rollback-${DEPLOY_ID}"
+fi
+if sudo docker inspect stock_agent_frontend >/dev/null 2>&1; then
+    frontend_image=$(sudo docker inspect stock_agent_frontend --format '{{.Image}}')
+    sudo docker tag "${frontend_image}" "stock_agents-frontend:rollback-${DEPLOY_ID}"
+fi
+
+test -f "${SERVER_DIR}/.env"
+ENDSSH
 echo -e "${GREEN}✓ 服务器目录准备完成${NC}"
 
 # 4. 上传文件到服务器
 echo -e "${YELLOW}[4/6] 上传文件到服务器...${NC}"
 # 排除不需要的文件(注意:.venv/.omc/.worktrees 等本地环境绝不进服务器)
-rsync -avz -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no" --delete \
+rsync -avz -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no" \
+    --exclude '.env' \
+    --exclude '.env.*' \
     --exclude 'node_modules' \
     --exclude '.git' \
     --exclude '__pycache__' \
@@ -91,21 +119,23 @@ echo -e "${GREEN}✓ 文件上传完成${NC}"
 
 # 5. 在服务器上构建和启动
 echo -e "${YELLOW}[5/6] 在服务器上构建和启动...${NC}"
-${SSH_CMD} << 'ENDSSH'
+${SSH_CMD} "DEPLOY_ID=${DEPLOY_ID} bash -s" << 'ENDSSH'
+set -euo pipefail
 cd /opt/stock_agents
 
-# 停止旧容器
-sudo docker compose down 2>/dev/null || true
+# 旧容器在镜像构建期间继续服务
+sudo docker compose build
 
-# 构建新镜像
-sudo docker compose build --no-cache
-
-# 启动服务
-sudo docker compose up -d
-
-# 等待服务健康
-echo "等待服务启动..."
-sleep 10
+if sudo docker compose up -d --no-build --wait --wait-timeout 180; then
+    echo "新版本健康检查通过"
+else
+    echo "新版本健康检查失败，开始回滚" >&2
+    sudo docker tag "stock_agents-api:rollback-${DEPLOY_ID}" stock_agents-api:latest
+    sudo docker tag "stock_agents-frontend:rollback-${DEPLOY_ID}" stock_agents-frontend:latest
+    sudo docker compose up -d --no-build --force-recreate --wait --wait-timeout 180
+    echo "已恢复上一版本" >&2
+    exit 1
+fi
 ENDSSH
 echo -e "${GREEN}✓ 服务启动完成${NC}"
 
@@ -119,8 +149,9 @@ ${SSH_CMD} "sudo docker ps --filter 'name=stock_agent' --format 'table {{.Names}
 # 检查健康状态
 echo ""
 echo "检查服务健康状态:"
-${SSH_CMD} "curl -sf http://localhost:8001/api/health || echo '后端健康检查失败'"
-${SSH_CMD} "curl -sf http://localhost:3002 || echo '前端健康检查失败'"
+${SSH_CMD} "curl -fsS http://localhost:8001/api/health && echo"
+${SSH_CMD} "curl -fsS http://localhost:8001/api/health/ready && echo"
+${SSH_CMD} "curl -fsSI http://localhost:3002/stock | head"
 
 echo ""
 echo -e "${GREEN}========================================${NC}"

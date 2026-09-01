@@ -1,10 +1,10 @@
 """简化的监控 API - 使用轮询方式"""
 
-from fastapi import APIRouter, HTTPException
 from datetime import datetime
 from typing import Dict, List, Optional
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import asyncio
 
 router = APIRouter()
 

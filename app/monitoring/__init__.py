@@ -2,14 +2,16 @@
 
 from app.monitoring.broadcast import (
     ConnectionManager as WebSocketConnectionManager,
+)
+from app.monitoring.broadcast import (
     get_connection_manager,
     reset_connection_manager,
 )
 from app.monitoring.metrics import (
-    Alert,
-    AlertSeverity,
     AgentMetrics,
     AgentStatus,
+    Alert,
+    AlertSeverity,
     EventLog,
 )
 from app.monitoring.monitor import AgentMonitor, get_monitor, reset_monitor
@@ -26,7 +28,7 @@ __all__ = [
     "get_monitor",
     "reset_monitor",
     # Broadcast
-    "ConnectionManager",
+    "WebSocketConnectionManager",
     "get_connection_manager",
     "reset_connection_manager",
 ]

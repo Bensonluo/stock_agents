@@ -13,6 +13,7 @@ import asyncio
 import importlib.util
 import json
 import sys
+from datetime import date
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -52,7 +53,7 @@ def _synthetic_state() -> dict[str, Any]:
     closes = [150.0]
     for _ in range(days - 1):
         closes.append(max(1.0, closes[-1] * (1 + 0.0008 + rng.normal(0, 0.011))))
-    dates = [d.isoformat() for d in pd.bdate_range("2023-08-01", periods=days)]
+    dates = [d.isoformat() for d in pd.bdate_range(end=date.today(), periods=days)]
     history = {
         "dates": dates,
         "open": [closes[0]] + closes[:-1],

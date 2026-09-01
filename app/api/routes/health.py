@@ -2,11 +2,12 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.config import settings
 from app.monitoring import get_monitor
 from app.resilience import get_circuit_breaker_registry
+from app.storage.database import get_database
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -70,9 +71,21 @@ async def readiness_check():
     Returns:
         Readiness status
     """
-    # Could add checks for database connections, external APIs, etc.
+    try:
+        get_database().list_records(limit=1)
+    except Exception as error:
+        logger.error(f"Readiness database check failed: {error}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "ready": False,
+                "components": {"database": "unavailable"},
+            },
+        ) from error
+
     return {
         "ready": True,
+        "components": {"database": "ready"},
         "timestamp": datetime.now().isoformat(),
     }
 

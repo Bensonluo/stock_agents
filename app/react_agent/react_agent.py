@@ -3,7 +3,6 @@
 Graph: agent_reason -> [tool_execute | END] -> observe -> reflect -> [agent_reason | END]
 """
 
-import asyncio
 import ast
 import json
 from typing import Any, Literal
@@ -13,9 +12,10 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 
 from app.config import settings
-from app.react_agent.prompts import REASONING_SYSTEM_PROMPT, format_reflection_prompt
+from app.react_agent.prompts import REASONING_SYSTEM_PROMPT
 from app.react_agent.state import ReActState, create_initial_react_state
 from app.research import synthesize
+from app.services.report_service import derive_recommendation
 from app.tools import get_all_tools, get_tool, register_all_tools
 from app.utils.logging import get_logger
 
@@ -235,21 +235,6 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
         if all_news:
             data["news_data"] = all_news
 
-    # The raw fetch tool may have failed while the analyze_* tools succeeded
-    # via their historical fallback — reconstruct a minimal market block from
-    # the technical results so the overview isn't all N/A.
-    if not data.get("market_data"):
-        reconstructed = {}
-        for sym, tech in (data.get("technical_analysis") or {}).items():
-            if isinstance(tech, dict) and tech.get("current_price") is not None:
-                reconstructed[sym] = {
-                    "symbol": sym,
-                    "current_price": tech.get("current_price"),
-                    "as_of": ((tech.get("weekly_sma") or {}).get("as_of")),
-                }
-        if reconstructed:
-            data["market_data"] = reconstructed
-
     # analyze_technical / fundamental / valuation / assess_risk: result has
     # "symbol" key, already indexed
     for tool_name, key in (
@@ -261,6 +246,21 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
         bucket = tr.get(tool_name, {})
         if isinstance(bucket, dict) and bucket:
             data[key] = dict(bucket)
+
+    # The raw fetch tool may have failed while the analysis tools succeeded
+    # via their historical fallback. Reconstruct a minimal market block only
+    # after technical results have been copied into the report data.
+    if not data.get("market_data"):
+        reconstructed = {}
+        for sym, tech in (data.get("technical_analysis") or {}).items():
+            if isinstance(tech, dict) and tech.get("current_price") is not None:
+                reconstructed[sym] = {
+                    "symbol": sym,
+                    "current_price": tech.get("current_price"),
+                    "as_of": ((tech.get("weekly_sma") or {}).get("as_of")),
+                }
+        if reconstructed:
+            data["market_data"] = reconstructed
 
     # D2: analyze_sentiment returns flat {symbol: {sentiment, overall_sentiment, ...}}
     # Report expects {"sentiment_by_symbol": {symbol}, "overall_sentiment": ...}
@@ -285,55 +285,62 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
         except Exception as e:
             logger.warning(f"Research synthesis failed, report continues without it: {e}")
 
-    # calculate_position_size: synthesize "action" from position_size since the
-    # tool doesn't return one (otherwise the report's recommendations would
-    # always fall back to "hold"). If the LLM called it with empty risk_data,
-    # the result will be {} — derive a fallback decision per symbol from the
-    # available risk_assessment so the recommendations section isn't empty.
     pos_bucket = tr.get("calculate_position_size", {})
-    risk_bucket = tr.get("assess_risk", {})
+    risk_bucket = data.get("risk_assessment") or {}
+    technical_bucket = data.get("technical_analysis") or {}
+    fundamental_bucket = data.get("fundamental_analysis") or {}
+    sentiment_bucket = (data.get("sentiment_analysis") or {}).get(
+        "sentiment_by_symbol", {}
+    )
+    synthesis_by_symbol = (data.get("research_synthesis") or {}).get("per_symbol", {})
     decisions: dict[str, dict] = {}
 
-    if isinstance(pos_bucket, dict) and pos_bucket:
-        for sym, r in pos_bucket.items():
-            if not isinstance(r, dict):
-                continue
-            ps = r.get("position_size", 0) or 0
-            action = "buy" if ps > 10 else "add" if ps > 5 else "hold" if ps > 2 else "reduce"
-            decisions[sym] = {
-                **r,
-                "action": action,
-                "confidence": round(min(1.0, ps / 20.0), 2),
-            }
+    for sym in symbols:
+        risk = risk_bucket.get(sym) if isinstance(risk_bucket, dict) else {}
+        technical = technical_bucket.get(sym) if isinstance(technical_bucket, dict) else {}
+        fundamental = (
+            fundamental_bucket.get(sym) if isinstance(fundamental_bucket, dict) else {}
+        )
+        sentiment = sentiment_bucket.get(sym) if isinstance(sentiment_bucket, dict) else {}
+        risk = risk if isinstance(risk, dict) else {}
+        recommendation = derive_recommendation(
+            sym,
+            fundamental if isinstance(fundamental, dict) else {},
+            technical if isinstance(technical, dict) else {},
+            sentiment if isinstance(sentiment, dict) else {},
+            risk,
+        )
 
-    # Fallback: derive a recommendation per symbol from risk_assessment
-    if not decisions and isinstance(risk_bucket, dict):
-        for sym, r in risk_bucket.items():
-            if not isinstance(r, dict):
-                continue
-            risk_score = r.get("risk_score", 50) or 50
-            risk_level = r.get("risk_level", "medium")
-            if risk_score >= 70:
-                action, ps, conf = "reduce", 2.0, 0.8
-            elif risk_score >= 50:
-                action, ps, conf = "hold", 5.0, 0.5
-            elif risk_score >= 30:
-                action, ps, conf = "add", 10.0, 0.6
-            else:
-                action, ps, conf = "buy", 15.0, 0.7
-            decisions[sym] = {
-                "symbol": sym,
-                "action": action,
-                "position_size": ps,
-                "risk_level": risk_level,
-                "risk_score": risk_score,
-                "confidence": conf,
-                "rationale": (
-                    f"Derived from assess_risk result (risk_score={risk_score}, "
-                    f"risk_level={risk_level}); calculate_position_size did not "
-                    f"return data for this symbol."
-                ),
-            }
+        sizing = pos_bucket.get(sym, {}) if isinstance(pos_bucket, dict) else {}
+        position_size = sizing.get("position_size", 0) if isinstance(sizing, dict) else 0
+        position_size = float(position_size or 0)
+
+        committee = synthesis_by_symbol.get(sym, {}).get("committee", {})
+        verdict = committee.get("verdict", "watch")
+        position_cap = committee.get("position_cap_pct")
+        action = recommendation["action"]
+        confidence = recommendation["confidence"]
+
+        if verdict in {"veto", "watch"}:
+            if action in {"buy", "add"}:
+                action = "hold"
+            position_size = 0.0
+            confidence = min(confidence, 0.5)
+        elif verdict == "limit" and isinstance(position_cap, (int, float)):
+            position_size = min(position_size, float(position_cap))
+
+        decisions[sym] = {
+            **(sizing if isinstance(sizing, dict) else {}),
+            "symbol": sym,
+            "action": action,
+            "confidence": confidence,
+            "score": recommendation["composite_score"],
+            "position_size": position_size,
+            "risk_level": risk.get("risk_level", "insufficient_data"),
+            "risk_score": risk.get("risk_score"),
+            "committee_verdict": verdict,
+            "rationale": f"{recommendation['reasoning']}; committee={verdict}",
+        }
 
     if decisions:
         data["decision"] = {"decisions": decisions}
@@ -376,9 +383,15 @@ def observe_node(state: ReActState) -> dict[str, Any]:
                         parts.append(f"## {label}\n")
                         parts.append(f"```json\n{json.dumps(section_data, indent=2, ensure_ascii=False, default=str)}\n```\n")
 
-                    return {"final_answer": "\n".join(parts)}
+                    return {
+                        "final_answer": "\n".join(parts),
+                        "report": report,
+                    }
                 except Exception:
-                    return {"final_answer": str(msg.content)[:2000]}
+                    return {
+                        "final_answer": str(msg.content)[:2000],
+                        "report": report,
+                    }
     return {}
 
 
@@ -386,7 +399,6 @@ def reflect_node(state: ReActState) -> dict[str, Any]:
     iteration = state.get("iteration", 0)
     max_iterations = state.get("max_iterations", 15)
     tools_used = list(state.get("tools_used", []))
-    query = state.get("query", "")
     messages = list(state.get("messages", []))
 
     # Hard limit
@@ -548,10 +560,14 @@ class ReActAgent:
         query: str,
         symbols: list[str],
         thread_id: str,
+        max_iterations: int | None = None,
         progress_callback: Any | None = None,
     ) -> dict[str, Any]:
         initial_state = create_initial_react_state(
-            query=query, symbols=symbols, thread_id=thread_id,
+            query=query,
+            symbols=symbols,
+            thread_id=thread_id,
+            max_iterations=max_iterations,
         )
 
         final_state: dict[str, Any] = dict(initial_state)
