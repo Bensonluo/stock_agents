@@ -233,11 +233,97 @@ async def _akshare_fetch(symbol: str) -> dict[str, Any] | None:
         return None
 
 
-async def _akshare_hk(symbol: str, ak: Any) -> dict[str, Any] | None:
-    """HK stock via akshare (East Money source — works from CN servers).
+_EASTMONEY_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+}
 
-    akshare's HK endpoints take the 5-digit zero-padded code ('00700').
+
+def _eastmoney_hk_klines(hk_code5: str, beg: str, end: str) -> list[str]:
+    """Raw East Money kline scrape for HK stocks (secid '116.xxxxx').
+
+    The plain requests call works from CN servers where both Yahoo and the
+    akshare wrapper get dropped. Kline csv fields:
+    date,open,close,high,low,volume,amount,amplitude,pct_chg,chg.
     """
+    r = requests.get(
+        "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+        params={
+            "secid": f"116.{hk_code5}",
+            "fields1": "f1,f2,f3,f4,f5,f6",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+            "klt": "101",  # daily
+            "fqt": "1",  # forward-adjusted
+            "beg": beg,
+            "end": end,
+        },
+        headers=_EASTMONEY_HEADERS,
+        timeout=20,
+    )
+    r.raise_for_status()
+    return (r.json().get("data") or {}).get("klines") or []
+
+
+def _eastmoney_klines_to_hist(klines: list[str]) -> dict[str, list]:
+    dates, opens, closes, highs, lows, volumes = [], [], [], [], [], []
+    for row in klines:
+        parts = row.split(",")
+        if len(parts) < 6:
+            continue
+        dates.append(parts[0])
+        opens.append(float(parts[1]))
+        closes.append(float(parts[2]))
+        highs.append(float(parts[3]))
+        lows.append(float(parts[4]))
+        volumes.append(float(parts[5]))
+    return {
+        "dates": dates, "open": opens, "high": highs, "low": lows,
+        "close": closes, "volume": volumes,
+    }
+
+
+async def _eastmoney_hk_fetch(symbol: str) -> dict[str, Any] | None:
+    """HK snapshot + history via direct East Money scrape (CN-friendly)."""
+    def _get():
+        end = datetime.now().strftime("%Y%m%d")
+        beg = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
+        return _eastmoney_hk_klines(_hk_akshare_code(symbol), beg, end)
+
+    klines = await asyncio.to_thread(_get)
+    if not klines:
+        return None
+
+    hist = _eastmoney_klines_to_hist(klines)
+    closes = hist["close"]
+    current = closes[-1] if closes else None
+    prev = closes[-2] if len(closes) > 1 else None
+    yahoo_symbol = _convert_to_yahoo_symbol(symbol)
+
+    return {
+        "market_data": {
+            yahoo_symbol: {
+                "symbol": symbol,
+                "current_price": current,
+                "previous_close": prev,
+                "change": current - prev if current and prev else None,
+                "change_percent": ((current - prev) / prev * 100) if current and prev else None,
+                "volume": hist["volume"][-1] if hist["volume"] else None,
+                "as_of": hist["dates"][-1] if hist["dates"] else None,
+                "historical_data": hist,
+            }
+        },
+        "financial_data": {},
+        "news_data": [],
+        "provider": "eastmoney-hk",
+    }
+
+
+async def _akshare_hk(symbol: str, ak: Any) -> dict[str, Any] | None:
+    """HK fallback via the akshare wrapper (often dropped from CN servers;
+    the direct East Money scrape above is tried first)."""
+    result = await _eastmoney_hk_fetch(symbol)
+    if result:
+        return result
+
     def _get_hist():
         end_date = datetime.now().strftime("%Y%m%d")
         start_date = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
@@ -834,11 +920,13 @@ async def fetch_stock_data(symbol: str) -> dict[str, Any] | None:
 
     providers = [
         ("yfinance", _yfinance_fetch),
+        ("eastmoney-hk", _eastmoney_hk_fetch) if _is_hk_symbol(symbol) else None,
         ("alphavantage", _alphavantage_fetch),
         ("finnhub", _finnhub_fetch),
         ("akshare", _akshare_fetch),
         ("yahoo-api", _yahoo_api_fetch),
     ]
+    providers = [p for p in providers if p]
 
     for name, provider in providers:
         try:
@@ -907,6 +995,25 @@ async def fetch_historical(
                 return result
         except Exception as e:
             logger.warning(f"[alphavantage-hist] failed for {symbol}: {e}")
+
+    # East Money direct scrape for HK (akshare wrapper is often dropped from CN)
+    if _is_hk_symbol(symbol):
+        try:
+            end = datetime.now().strftime("%Y%m%d")
+            beg = (datetime.now() - timedelta(days=_period_to_days(period))).strftime("%Y%m%d")
+            klines = await asyncio.to_thread(
+                _eastmoney_hk_klines, _hk_akshare_code(symbol), beg, end
+            )
+            if klines:
+                hist = _eastmoney_klines_to_hist(klines)
+                result = {
+                    "symbol": symbol, "period": period,
+                    **{k: v for k, v in hist.items()},
+                }
+                _cache_set(cache_key, result, ttl=60)
+                return result
+        except Exception as e:
+            logger.warning(f"[eastmoney-hk-hist] failed for {symbol}: {e}")
 
     # akshare
     try:

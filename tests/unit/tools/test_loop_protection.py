@@ -41,10 +41,41 @@ class TestHkSymbols:
         assert _hk_akshare_code("0700.HK") == "00700"
 
     @pytest.mark.asyncio
-    async def test_akshare_hk_snapshot_builds_market_block(self) -> None:
+    async def test_eastmoney_hk_scrape_builds_market_block(self) -> None:
+        """The primary HK route: direct East Money kline scrape."""
+        from app.tools.data import fetcher
+
+        klines = [
+            f"2026-09-{d:02d},440.0,44{d % 10}.0,445.0,435.0,15000000,6.6e9,2.3,0.5,2"
+            for d in range(1, 4)
+        ]
+        with patch.object(fetcher, "_eastmoney_hk_klines", return_value=klines):
+            result = await fetcher._eastmoney_hk_fetch("0700.HK")
+
+        mkt = result["market_data"]["0700.HK"]
+        assert mkt["symbol"] == "0700.HK"
+        assert mkt["as_of"] == "2026-09-03"
+        assert len(mkt["historical_data"]["close"]) == 3
+        assert result["provider"] == "eastmoney-hk"
+
+    @pytest.mark.asyncio
+    async def test_kline_parser_maps_fields(self) -> None:
+        from app.tools.data.fetcher import _eastmoney_klines_to_hist
+
+        hist = _eastmoney_klines_to_hist(
+            ["2026-09-01,10.0,11.0,12.0,9.0,100,200,3.0,10.0,1.0"]
+        )
+        assert hist["dates"] == ["2026-09-01"]
+        assert hist["open"] == [10.0] and hist["close"] == [11.0]
+        assert hist["high"] == [12.0] and hist["low"] == [9.0]
+        assert hist["volume"] == [100.0]
+
+    @pytest.mark.asyncio
+    async def test_akshare_hk_fallback_when_scrape_fails(self) -> None:
+        """akshare wrapper remains the HK fallback when the scrape misses."""
         import pandas as pd
 
-        from app.tools.data.fetcher import _akshare_hk
+        from app.tools.data import fetcher
 
         days = 30
         closes = [300.0 + i for i in range(days)]
@@ -63,7 +94,9 @@ class TestHkSymbols:
                 assert kwargs["symbol"] == "00700"
                 return fake_df
 
-        result = await _akshare_hk("0700.HK", FakeAk())
+        with patch.object(fetcher, "_eastmoney_hk_klines", return_value=[]):
+            result = await fetcher._akshare_hk("0700.HK", FakeAk())
+
         mkt = result["market_data"]["0700.HK"]
         assert mkt["current_price"] == closes[-1]
         assert mkt["previous_close"] == closes[-2]
