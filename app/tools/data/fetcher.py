@@ -1005,6 +1005,38 @@ async def _stooq_fetch(symbol: str) -> dict[str, Any] | None:
 # ── Unified fetcher ──────────────────────────────────────────────
 
 
+def _snapshot_has_price(result: dict[str, Any]) -> bool:
+    """Accept flat {'market_data': {'current_price': ...}} (yfinance/finnhub)
+    and symbol-keyed {'market_data': {'0700.HK': {'current_price': ...}}}
+    (tencent/eastmoney/alphavantage/akshare) provider shapes."""
+    market = result.get("market_data") or {}
+    if not isinstance(market, dict):
+        return False
+    if market.get("current_price"):
+        return True
+    for value in market.values():
+        if isinstance(value, dict) and value.get("current_price"):
+            return True
+    return False
+
+
+def _flatten_snapshot(result: dict[str, Any], symbol: str) -> dict[str, Any]:
+    """Normalize symbol-keyed provider results to the flat snapshot shape
+    ({'market_data': {...flat...}, 'financial_data': ..., 'news_data': ...})
+    that get_stock_overview / _fetch_and_split expect — the same shape the
+    yfinance provider has always returned."""
+    market = result.get("market_data") or {}
+    if isinstance(market, dict) and not market.get("current_price"):
+        for value in market.values():
+            if isinstance(value, dict) and value.get("current_price"):
+                return {
+                    "market_data": {**value, "symbol": symbol},
+                    "financial_data": result.get("financial_data") or {},
+                    "news_data": result.get("news_data") or [],
+                }
+    return result
+
+
 async def fetch_stock_data(symbol: str) -> dict[str, Any] | None:
     """Fetch stock data with multi-source fallback.
 
@@ -1031,9 +1063,10 @@ async def fetch_stock_data(symbol: str) -> dict[str, Any] | None:
     for name, provider in providers:
         try:
             result = await provider(symbol)
-            if result and result.get("market_data", {}).get("current_price"):
-                _cache_set(cache_key, result)
-                return result
+            if result and _snapshot_has_price(result):
+                flat = _flatten_snapshot(result, symbol)
+                _cache_set(cache_key, flat)
+                return flat
             logger.info(f"[{name}] no price data for {symbol}, trying next provider")
         except Exception as e:
             logger.warning(f"[{name}] exception for {symbol}: {e}")
@@ -1102,7 +1135,8 @@ async def fetch_historical(
     if _is_hk_symbol(symbol):
         try:
             result = await _tencent_hk_fetch(symbol)
-            hist = (result or {}).get("market_data", {}).get(_convert_to_yahoo_symbol(symbol), {}).get("histor_data") or                 (result or {}).get("market_data", {}).get(_convert_to_yahoo_symbol(symbol), {}).get("historical_data")
+            market = (result or {}).get("market_data", {}).get(_convert_to_yahoo_symbol(symbol), {})
+            hist = market.get("historical_data")
             if hist and hist.get("dates"):
                 payload = {"symbol": symbol, "period": period, **hist}
                 _cache_set(cache_key, payload, ttl=60)
