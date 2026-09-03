@@ -232,3 +232,45 @@ class TestRotationLoopDetection:
         result = self._reflect(messages)
 
         assert not any("STOP calling tools" in getattr(m, "content", "") for m in result.get("messages", []))
+
+
+class TestTencentHk:
+    @pytest.mark.asyncio
+    async def test_tencent_hk_snapshot_and_history(self) -> None:
+        """Tencent quote+kline parsers build the standard market block."""
+        from app.tools.data import fetcher
+
+        quote = {
+            "name": "腾讯控股", "price": 433.0, "prev_close": 438.2, "open": 444.2,
+            "volume": 17387096.0, "high": 445.6, "low": 433.0, "turnover": 7.6e9,
+        }
+        klines = [
+            ["2026-09-02", "440.0", "438.2", "445.0", "435.0", "15000000"],
+            ["2026-09-03", "444.2", "433.0", "445.6", "433.0", "17387096"],
+        ]
+        with patch.object(fetcher, "_tencent_hk_quote", return_value=quote), \
+             patch.object(fetcher, "_tencent_hk_klines", return_value=klines):
+            result = await fetcher._tencent_hk_fetch("0700.HK")
+
+        mkt = result["market_data"]["0700.HK"]
+        assert mkt["company_name"] == "腾讯控股"
+        assert mkt["current_price"] == 433.0
+        assert mkt["previous_close"] == 438.2
+        assert abs(mkt["change_percent"] - (-5.2 / 438.2 * 100)) < 1e-6
+        assert mkt["as_of"] == "2026-09-03"
+        assert mkt["historical_data"]["close"] == [438.2, 433.0]
+        assert result["provider"] == "tencent-hk"
+
+    def test_tencent_quote_parser(self) -> None:
+        from app.tools.data import fetcher
+
+        raw = 'v_hk00700="100~腾讯控股~00700~433.000~438.200~444.200~17387096.0~' + "~0" * 60 + '";\n'
+        with patch.object(fetcher.requests, "get") as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.content = raw.encode("gbk")
+            q = fetcher._tencent_hk_quote("00700")
+
+        assert q is not None
+        assert q["name"] == "腾讯控股"
+        assert q["price"] == 433.0
+        assert q["prev_close"] == 438.2

@@ -233,6 +233,105 @@ async def _akshare_fetch(symbol: str) -> dict[str, Any] | None:
         return None
 
 
+def _tencent_hk_quote(hk_code5: str) -> dict[str, Any] | None:
+    """Real-time HK quote via Tencent's own API (qt.gtimg.cn) — native from
+    Tencent Cloud servers. Fields (split by ~): name@1, code@2, price@3,
+    prev_close@4, open@5, volume@6, ..., high@41 area varies; stable anchors
+    below use documented positions for HK rows."""
+    r = requests.get(
+        f"https://qt.gtimg.cn/q=hk{hk_code5}",
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    text = r.content.decode("gbk", errors="replace")
+    if '="' not in text:
+        return None
+    fields = text.split('="', 1)[1].rstrip('";\n').split("~")
+    if len(fields) < 50 or not fields[3]:
+        return None
+
+    def _f(i: int) -> float | None:
+        try:
+            return float(fields[i]) if fields[i] else None
+        except (ValueError, IndexError):
+            return None
+
+    return {
+        "name": fields[1],
+        "price": _f(3),
+        "prev_close": _f(4),
+        "open": _f(5),
+        "volume": _f(6),
+        "high": _f(41) or _f(33),
+        "low": _f(42) or _f(34),
+        "turnover": _f(37),
+    }
+
+
+def _tencent_hk_klines(hk_code5: str, count: int = 800) -> list[list[str]]:
+    """Daily forward-adjusted klines via Tencent ifzq API: rows of
+    [date, open, close, high, low, volume, {dividend note?}]."""
+    r = requests.get(
+        f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=hk{hk_code5},day,,,{count},qfq",
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=20,
+    )
+    r.raise_for_status()
+    payload = r.json().get("data") or {}
+    day = payload.get(f"hk{hk_code5}") or {}
+    return day.get("day") or day.get("qfqday") or []
+
+
+async def _tencent_hk_fetch(symbol: str) -> dict[str, Any] | None:
+    """HK snapshot + history via Tencent's own quote APIs — the primary HK
+    route on Tencent Cloud servers (same network as the data source)."""
+    code5 = _hk_akshare_code(symbol)
+
+    def _get():
+        quote = _tencent_hk_quote(code5)
+        klines = _tencent_hk_klines(code5)
+        return quote, klines
+
+    quote, klines = await asyncio.to_thread(_get)
+    if not klines and not quote:
+        return None
+
+    hist: dict[str, list] = {"dates": [], "open": [], "high": [], "low": [], "close": [], "volume": []}
+    for row in klines:
+        if len(row) < 6:
+            continue
+        hist["dates"].append(row[0])
+        hist["open"].append(float(row[1]))
+        hist["close"].append(float(row[2]))
+        hist["high"].append(float(row[3]))
+        hist["low"].append(float(row[4]))
+        hist["volume"].append(float(row[5]))
+
+    price = (quote or {}).get("price") or (hist["close"][-1] if hist["close"] else None)
+    prev = (quote or {}).get("prev_close") or (hist["close"][-2] if len(hist["close"]) > 1 else None)
+    yahoo_symbol = _convert_to_yahoo_symbol(symbol)
+
+    return {
+        "market_data": {
+            yahoo_symbol: {
+                "symbol": symbol,
+                "company_name": (quote or {}).get("name"),
+                "current_price": price,
+                "previous_close": prev,
+                "change": price - prev if price and prev else None,
+                "change_percent": ((price - prev) / prev * 100) if price and prev else None,
+                "volume": (quote or {}).get("volume") or (hist["volume"][-1] if hist["volume"] else None),
+                "as_of": hist["dates"][-1] if hist["dates"] else None,
+                "historical_data": hist,
+            }
+        },
+        "financial_data": {},
+        "news_data": [],
+        "provider": "tencent-hk",
+    }
+
+
 _EASTMONEY_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
 }
@@ -920,6 +1019,7 @@ async def fetch_stock_data(symbol: str) -> dict[str, Any] | None:
 
     providers = [
         ("yfinance", _yfinance_fetch),
+        ("tencent-hk", _tencent_hk_fetch) if _is_hk_symbol(symbol) else None,
         ("eastmoney-hk", _eastmoney_hk_fetch) if _is_hk_symbol(symbol) else None,
         ("alphavantage", _alphavantage_fetch),
         ("finnhub", _finnhub_fetch),
@@ -996,8 +1096,20 @@ async def fetch_historical(
         except Exception as e:
             logger.warning(f"[alphavantage-hist] failed for {symbol}: {e}")
 
-    # East Money direct scrape for HK (akshare wrapper is often dropped from CN)
+    # HK: Tencent's own quote APIs first (same network as Tencent Cloud),
+    # then the direct East Money scrape; both bypass the akshare wrapper
+    # that gets connection-dropped from CN servers.
     if _is_hk_symbol(symbol):
+        try:
+            result = await _tencent_hk_fetch(symbol)
+            hist = (result or {}).get("market_data", {}).get(_convert_to_yahoo_symbol(symbol), {}).get("histor_data") or                 (result or {}).get("market_data", {}).get(_convert_to_yahoo_symbol(symbol), {}).get("historical_data")
+            if hist and hist.get("dates"):
+                payload = {"symbol": symbol, "period": period, **hist}
+                _cache_set(cache_key, payload, ttl=60)
+                return payload
+        except Exception as e:
+            logger.warning(f"[tencent-hk-hist] failed for {symbol}: {e}")
+
         try:
             end = datetime.now().strftime("%Y%m%d")
             beg = (datetime.now() - timedelta(days=_period_to_days(period))).strftime("%Y%m%d")
