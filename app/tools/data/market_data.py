@@ -27,6 +27,20 @@ async def fetch_stock_data_tool(symbols: list[str], source: str = "auto") -> dic
     for all other analysis tools. Automatically tries multiple data sources
     if one fails.
     """
+    # Failure circuit-breaker shared with the analyze tools: once a symbol's
+    # provider chain has failed repeatedly, refuse WITHOUT hitting providers —
+    # the ReAct retry loop otherwise burns quota on calls that cannot succeed.
+    from app.tools.analysis.auto_tools import (
+        _fetch_failures_exceeded,
+        _record_fetch_failure,
+        _reset_fetch_failures,
+        data_unavailable_error,
+    )
+
+    blocked = [s for s in symbols if _fetch_failures_exceeded(s)]
+    if blocked:
+        return data_unavailable_error(blocked[0])
+
     async with _semaphore:
         tasks = [fetch_stock_data_from_providers(s) for s in symbols]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -38,8 +52,20 @@ async def fetch_stock_data_tool(symbols: list[str], source: str = "auto") -> dic
             continue
         if result:
             output[symbol] = result
+            _reset_fetch_failures(symbol)
 
-    return output if output else {"error": "No data retrieved for any symbol", "symbols": symbols}
+    if output:
+        return output
+    for s in symbols:
+        _record_fetch_failure(s)
+    first = symbols[0] if symbols else ""
+    count = None
+    from app.tools.analysis.auto_tools import _fetch_failures
+
+    count = _fetch_failures.get(first, (0, 0.0))[0]
+    if count >= 2:
+        return data_unavailable_error(first)
+    return {"error": "No data retrieved for any symbol", "symbols": symbols}
 
 
 # Keep the old name as alias for backward compatibility with registered tools

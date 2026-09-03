@@ -414,20 +414,35 @@ def reflect_node(state: ReActState) -> dict[str, Any]:
             ]
         }
 
-    # Repetition detection
+    # Repetition detection — catches BOTH exact back-to-back repeats AND
+    # rotation loops (A→B→C→A→B→C…): any identical (tool, args) pair firing 3+
+    # times, or one tool dominating the recent window, forces a graceful finish.
     tool_calls = []
     for msg in messages:
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tc in msg.tool_calls:
                 tool_calls.append((tc.get("name"), json.dumps(tc.get("args", {}), sort_keys=True)))
+
+    force_finish_reason = None
     if len(tool_calls) >= 2 and tool_calls[-1] == tool_calls[-2]:
-        logger.info("Repeated tool call detected, forcing finish")
+        force_finish_reason = "the same tool call repeated back-to-back"
+    else:
+        from collections import Counter
+
+        counts = Counter(tool_calls)
+        top, top_n = (counts.most_common(1)[0] if counts else (None, 0))
+        if top_n >= 3:
+            force_finish_reason = f"{top[0]} called with identical arguments {top_n} times"
+
+    if force_finish_reason:
+        logger.info(f"Loop detected ({force_finish_reason}), forcing finish")
         return {
             "messages": [
                 HumanMessage(
-                    content="You are repeating the same tool call. Stop calling tools and write a comprehensive "
-                    "analysis report in markdown format based on the data you have already collected. "
-                    "If some data is missing, acknowledge it and provide analysis with available information."
+                    content=f"STOP calling tools — {force_finish_reason}. Data fetching has clearly failed for "
+                    "this symbol and retrying will not help. Immediately call generate_report with the "
+                    "data already collected. If a symbol has no data, state plainly that its data "
+                    "source is unavailable; do NOT invent numbers and do NOT retry any fetch tool."
                 )
             ]
         }

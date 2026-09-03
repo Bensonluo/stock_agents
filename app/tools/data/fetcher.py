@@ -64,8 +64,8 @@ def _cache_set(key: str, data: Any, ttl: int = _CACHE_TTL) -> None:
 def _convert_to_yahoo_symbol(symbol: str) -> str:
     if symbol.isalpha() and len(symbol) <= 5:
         return symbol
-    if ".HK" in symbol.upper():
-        return symbol.upper()
+    if _is_hk_symbol(symbol):
+        return f"{_hk_code(symbol)}.HK"
     if symbol.isdigit() and len(symbol) == 6:
         if symbol.startswith("6"):
             return f"{symbol}.SS"
@@ -77,6 +77,27 @@ def _convert_to_yahoo_symbol(symbol: str) -> str:
 
 def _is_chinese_symbol(symbol: str) -> bool:
     return symbol.isdigit() and len(symbol) == 6
+
+
+def _is_hk_symbol(symbol: str) -> bool:
+    """HK-listed codes: '0700.HK'/'00700.HK' suffixed, or bare 4-5 digit
+    zero-padded codes ('0700', '00700')."""
+    upper = symbol.upper()
+    if upper.endswith(".HK"):
+        digits = upper[:-3]
+        return digits.isdigit() and 4 <= len(digits) <= 5
+    return symbol.isdigit() and symbol[0] == "0" and len(symbol) in (4, 5)
+
+
+def _hk_code(symbol: str) -> str:
+    """Normalize to the 4-digit Yahoo form ('00700'/'0700.HK' -> '0700')."""
+    digits = symbol.upper().removesuffix(".HK").lstrip("0") or "0"
+    return digits.zfill(4)
+
+
+def _hk_akshare_code(symbol: str) -> str:
+    """akshare HK endpoints use the 5-digit zero-padded form ('00700')."""
+    return _hk_code(symbol).zfill(5)
 
 
 def _hist_df_to_dict(df: pd.DataFrame) -> dict:
@@ -204,10 +225,65 @@ async def _akshare_fetch(symbol: str) -> dict[str, Any] | None:
     try:
         if _is_chinese_symbol(symbol):
             return await _akshare_cn(symbol, ak)
+        if _is_hk_symbol(symbol):
+            return await _akshare_hk(symbol, ak)
         return await _akshare_us(symbol, ak)
     except Exception as e:
         logger.warning(f"[akshare] failed for {symbol}: {e}")
         return None
+
+
+async def _akshare_hk(symbol: str, ak: Any) -> dict[str, Any] | None:
+    """HK stock via akshare (East Money source — works from CN servers).
+
+    akshare's HK endpoints take the 5-digit zero-padded code ('00700').
+    """
+    def _get_hist():
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
+        return ak.stock_hk_hist(
+            symbol=_hk_akshare_code(symbol), period="daily",
+            start_date=start_date, end_date=end_date, adjust="qfq",
+        )
+
+    df = await asyncio.to_thread(_get_hist)
+    if df is None or df.empty:
+        return None
+
+    col_map = {"日期": "date", "开盘": "open", "收盘": "close", "最高": "high",
+               "最低": "low", "成交量": "volume"}
+    df = df.rename(columns=col_map)
+    dates = [str(d) for d in df["date"].tolist()]
+
+    closes = df["close"].tolist()
+    current = closes[-1] if closes else None
+    prev = closes[-2] if len(closes) > 1 else None
+    yahoo_symbol = _convert_to_yahoo_symbol(symbol)
+
+    return {
+        "market_data": {
+            yahoo_symbol: {
+                "symbol": symbol,
+                "current_price": current,
+                "previous_close": prev,
+                "change": current - prev if current and prev else None,
+                "change_percent": ((current - prev) / prev * 100) if current and prev else None,
+                "volume": df["volume"].iloc[-1] if "volume" in df else None,
+                "as_of": dates[-1] if dates else None,
+                "historical_data": {
+                    "dates": dates,
+                    "open": df["open"].tolist(),
+                    "high": df["high"].tolist(),
+                    "low": df["low"].tolist(),
+                    "close": closes,
+                    "volume": df["volume"].tolist() if "volume" in df else [],
+                },
+            }
+        },
+        "financial_data": {},
+        "news_data": [],
+        "provider": "akshare-hk",
+    }
 
 
 async def _akshare_us(symbol: str, ak: Any) -> dict[str, Any] | None:
@@ -844,6 +920,15 @@ async def fetch_historical(
             def hist_fn():
                 return ak.stock_zh_a_hist(
                     symbol=symbol,
+                    period="daily",
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust="qfq",
+                )
+        elif _is_hk_symbol(symbol):
+            def hist_fn():
+                return ak.stock_hk_hist(
+                    symbol=_hk_akshare_code(symbol),
                     period="daily",
                     start_date=start_date,
                     end_date=end_date,

@@ -39,6 +39,57 @@ from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Per-symbol fetch failure memo: once the provider chain has failed REPEAT
+# times for a symbol (within TTL), later calls short-circuit WITHOUT hitting
+# any provider — the ReAct loop's retry bursts otherwise burn quota and never
+# succeed. The instructive error tells the LLM to stop retrying and degrade.
+_FETCH_FAILURE_TTL_SECONDS = 300
+_FETCH_FAILURE_LIMIT = 2
+_fetch_failures: dict[str, tuple[int, float]] = {}
+
+
+def _record_fetch_failure(symbol: str) -> int:
+    import time
+
+    now = time.monotonic()
+    count, first_at = _fetch_failures.get(symbol, (0, now))
+    if now - first_at > _FETCH_FAILURE_TTL_SECONDS:
+        count, first_at = 0, now
+    count += 1
+    _fetch_failures[symbol] = (count, first_at)
+    return count
+
+
+def _reset_fetch_failures(symbol: str) -> None:
+    _fetch_failures.pop(symbol, None)
+
+
+def _fetch_failures_exceeded(symbol: str) -> bool:
+    import time
+
+    entry = _fetch_failures.get(symbol)
+    if not entry:
+        return False
+    count, first_at = entry
+    if time.monotonic() - first_at > _FETCH_FAILURE_TTL_SECONDS:
+        return False
+    return count >= _FETCH_FAILURE_LIMIT
+
+def data_unavailable_error(symbol: str) -> dict[str, Any]:
+    """Instructive error that steers the LLM out of retry loops."""
+    count = _fetch_failures.get(symbol, (0, 0.0))[0]
+    return {
+        "error": (
+            f"数据源已确认无法获取 {symbol}（本轮已失败 {count} 次，短期内重试不会成功，"
+            f"请勿再调用任何数据获取工具）。请直接调用 generate_report 生成报告，"
+            f"并在报告中明确说明该标的数据不可用。"
+        ),
+        "symbol": symbol,
+        "data_available": False,
+    }
+
+
+
 
 async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
     """Fetch stock data and split into components.
@@ -50,16 +101,24 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
     market block from the series (current price = last close): history is the
     critical data, the snapshot is enrichment.
     """
+    if _fetch_failures_exceeded(symbol):
+        return data_unavailable_error(symbol)
+
     data = await fetch_stock_data(symbol)
 
     if not data:
+        failures = _record_fetch_failure(symbol)
+        if failures >= _FETCH_FAILURE_LIMIT:
+            return data_unavailable_error(symbol)
         # Snapshot chain exhausted — history alone can still power the analysis.
         try:
             hist = await fetch_historical(symbol, period="3y")
         except Exception as e:
             logger.warning(f"[auto_tools] historical fallback failed for {symbol}: {e}")
-            return None
+            _record_fetch_failure(symbol)
+            return data_unavailable_error(symbol)
         if isinstance(hist, dict) and hist.get("dates") and "error" not in hist:
+            _reset_fetch_failures(symbol)
             closes = hist.get("close") or []
             last_close = closes[-1] if closes else None
             prev_close = closes[-2] if len(closes) > 1 else None
@@ -93,6 +152,7 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
             }
         return None
 
+    _reset_fetch_failures(symbol)
     market = data.get("market_data", {}) or {}
     hist_block = market.get("historical_data") or {}
 
@@ -102,6 +162,7 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
         try:
             hist = await fetch_historical(symbol, period="3y")
             if isinstance(hist, dict) and hist.get("dates") and "error" not in hist:
+                _reset_fetch_failures(symbol)
                 market["historical_data"] = {
                     "dates": hist["dates"],
                     "open": hist.get("open", []),
@@ -140,12 +201,15 @@ async def analyze_technical(symbol: str) -> dict[str, Any]:
     """
     data = await _fetch_and_split(symbol)
     if not data:
-        return {"error": f"Could not fetch data for {symbol}"}
+        return data_unavailable_error(symbol)
+    if data.get("data_available") is False:
+        return data
 
     market = data["market_data"].get(symbol, {})
     hist = market.get("historical_data")
     if not hist:
-        return {"error": f"No historical data for {symbol}"}
+        _record_fetch_failure(symbol)
+        return data_unavailable_error(symbol)
 
     try:
         df = _to_dataframe(hist)
@@ -183,7 +247,9 @@ async def analyze_fundamental(symbol: str) -> dict[str, Any]:
     """
     data = await _fetch_and_split(symbol)
     if not data:
-        return {"error": f"Could not fetch data for {symbol}"}
+        return data_unavailable_error(symbol)
+    if data.get("data_available") is False:
+        return data
 
     financial = data["financial_data"].get(symbol, {})
     mkt = data["market_data"].get(symbol, {})
@@ -219,7 +285,9 @@ async def analyze_valuation(symbol: str) -> dict[str, Any]:
     """
     data = await _fetch_and_split(symbol)
     if not data:
-        return {"error": f"Could not fetch data for {symbol}"}
+        return data_unavailable_error(symbol)
+    if data.get("data_available") is False:
+        return data
 
     financial = data["financial_data"].get(symbol, {})
     mkt = data["market_data"].get(symbol, {})
@@ -269,7 +337,9 @@ async def analyze_sentiment(symbol: str) -> dict[str, Any]:
     """
     data = await _fetch_and_split(symbol)
     if not data:
-        return {"error": f"Could not fetch data for {symbol}"}
+        return data_unavailable_error(symbol)
+    if data.get("data_available") is False:
+        return data
 
     news_data = data["news_data"]
     if not news_data:
@@ -346,7 +416,9 @@ async def assess_risk(symbol: str) -> dict[str, Any]:
 
     data = await _fetch_and_split(symbol)
     if not data:
-        return {"error": f"Could not fetch data for {symbol}"}
+        return data_unavailable_error(symbol)
+    if data.get("data_available") is False:
+        return data
 
     market = data["market_data"].get(symbol, {})
     hist = market.get("historical_data", {})
@@ -400,9 +472,12 @@ async def get_stock_overview(symbol: str) -> dict[str, Any]:
     sector, market cap, 52-week range. Use this to fill in the
     market_summary section of a report.
     """
+    if _fetch_failures_exceeded(symbol):
+        return data_unavailable_error(symbol)
     data = await fetch_stock_data(symbol)
     if not data:
-        return {"error": f"Could not fetch data for {symbol}"}
+        return data_unavailable_error(symbol) if _record_fetch_failure(symbol) >= _FETCH_FAILURE_LIMIT else {"error": f"Could not fetch data for {symbol}"}
+    _reset_fetch_failures(symbol)
     m = data.get("market_data", {})
     return {
         "symbol": symbol,
