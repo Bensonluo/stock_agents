@@ -11,6 +11,7 @@ The endpoint supports filtering by thread_id for multi-tenant scenarios.
 
 import asyncio
 import json
+import time
 from collections import deque
 from datetime import datetime
 from typing import Any, Literal
@@ -97,7 +98,7 @@ class WebSocketRateLimiter:
             True if message is allowed, False if rate limit exceeded
         """
         async with self._lock:
-            now = asyncio.get_event_loop().time()
+            now = time.monotonic()
 
             # Remove timestamps outside the window
             while self._timestamps and now - self._timestamps[0] > RATE_LIMIT_WINDOW:
@@ -118,7 +119,7 @@ class WebSocketRateLimiter:
             Number of messages that can still be sent
         """
         async with self._lock:
-            now = asyncio.get_event_loop().time()
+            now = time.monotonic()
 
             # Clean old timestamps
             while self._timestamps and now - self._timestamps[0] > RATE_LIMIT_WINDOW:

@@ -1,6 +1,7 @@
 """Timeout control for preventing long-running operations."""
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -130,12 +131,12 @@ class TimeLimiter:
         operation_name = name or func.__name__
         stats = self.get_stats(operation_name)
 
-        start_time = asyncio.get_event_loop().time()
+        start_time = time.monotonic()
 
         try:
             result = await asyncio.wait_for(func(*args, **kwargs), timeout=timeout)
 
-            execution_time = asyncio.get_event_loop().time() - start_time
+            execution_time = time.monotonic() - start_time
             stats.record_completion(execution_time, TimeoutResult.COMPLETED)
 
             logger.debug(f"Operation '{operation_name}' completed in {execution_time:.2f}s")
@@ -143,7 +144,7 @@ class TimeLimiter:
             return result
 
         except TimeoutError:
-            execution_time = asyncio.get_event_loop().time() - start_time
+            execution_time = time.monotonic() - start_time
             stats.record_completion(execution_time, TimeoutResult.TIMEOUT)
 
             logger.warning(
@@ -154,7 +155,7 @@ class TimeLimiter:
             raise
 
         except Exception as e:
-            execution_time = asyncio.get_event_loop().time() - start_time
+            execution_time = time.monotonic() - start_time
             stats.record_completion(execution_time, TimeoutResult.ERROR)
 
             logger.error(f"Operation '{operation_name}' failed after {execution_time:.2f}s: {e}")
@@ -196,7 +197,6 @@ class TimeLimiter:
 
         def target():
             nonlocal result, error, execution_time
-            import time
 
             start = time.time()
             try:

@@ -19,7 +19,12 @@ from app.agents import (
     TechnicalAnalysisAgent,
 )
 from app.monitoring import get_connection_manager, get_monitor
-from app.monitoring.workflow_status import add_log, init_workflow, update_agent_status
+from app.monitoring.workflow_status import (
+    add_log,
+    get_workflow_state,
+    init_workflow,
+    update_agent_status,
+)
 from app.orchestration.checkpoint import PostgresCheckpointManager
 from app.orchestration.state import (
     AgentState,
@@ -501,6 +506,12 @@ class MultiAgentOrchestrator:
             "agent_status": {agent_name: "running"},
         }
 
+        # Record status BEFORE broadcasting so the event carries the full set
+        # of agents running in this superstep (parallel fan-out display).
+        update_agent_status(thread_id, agent_name, "running")
+        add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
+        running_snapshot = (get_workflow_state(thread_id) or {}).get("running_agents", [])
+
         # Broadcast and monitor start
         monitor = get_monitor()
         symbols = state.get("symbols", [])
@@ -512,6 +523,7 @@ class MultiAgentOrchestrator:
                 thread_id=thread_id,
                 status="running",
                 step=step,
+                metadata={"running_agents": running_snapshot},
             )
         monitor.on_agent_start(agent_name, state)
 
@@ -523,9 +535,6 @@ class MultiAgentOrchestrator:
             message=f"Starting {agent_name} for symbols: {symbols}",
             data={"symbols": symbols},
         )
-
-        update_agent_status(thread_id, agent_name, "running")
-        add_log(thread_id, agent_name, "info", f"Starting {agent_name}")
 
         start_time = time.time()
 
@@ -582,6 +591,11 @@ class MultiAgentOrchestrator:
                     status="completed",
                     step=step,
                     execution_time=execution_time,
+                    metadata={
+                        "running_agents": (get_workflow_state(thread_id) or {}).get(
+                            "running_agents", []
+                        )
+                    },
                 )
             monitor.on_agent_success(agent_name, execution_time, thread_id=thread_id)
 
@@ -627,6 +641,11 @@ class MultiAgentOrchestrator:
                     step=step,
                     execution_time=execution_time,
                     error=str(e),
+                    metadata={
+                        "running_agents": (get_workflow_state(thread_id) or {}).get(
+                            "running_agents", []
+                        )
+                    },
                 )
             monitor.on_agent_failure(
                 agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id

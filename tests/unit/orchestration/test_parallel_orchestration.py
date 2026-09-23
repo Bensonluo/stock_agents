@@ -189,3 +189,52 @@ def test_data_collection_failure_routes_to_error_handler() -> None:
     assert result["error_summary"]["total_errors"] == 3
     assert result["execution_metadata"]["had_errors"] is True
     assert "report" not in result or result.get("report") in (None, {})
+
+
+def test_agent_events_carry_running_agents_metadata() -> None:
+    """agent_start/agent_success broadcasts include the fan-out running set."""
+    from app.monitoring import get_monitor, workflow_status
+
+    events: list[dict] = []
+
+    class _FakeBroadcast:
+        async def broadcast_agent_event(self, **kwargs) -> None:
+            events.append(kwargs)
+
+        async def broadcast_workflow_complete(self, **kwargs) -> None:
+            pass
+
+    monitor = get_monitor()
+    original_bm = monitor.broadcast_manager
+    monitor.broadcast_manager = _FakeBroadcast()
+    workflow_status.reset()
+    try:
+        orch = _build_orchestrator()
+        result = _invoke(orch, thread_id="t-broadcast")
+        assert result["agent_status"]["report_generation"] == "completed"
+
+        starts = [e for e in events if e.get("event_type") == "agent_start"]
+        parallel = [
+            e
+            for e in starts
+            if e["agent_name"]
+            in ("technical_analysis", "sentiment_analysis", "fundamental_analysis")
+        ]
+        assert parallel, "no analysis agent_start events captured"
+
+        # every analysis start carries the running set including itself
+        for e in parallel:
+            assert e["agent_name"] in e["metadata"]["running_agents"]
+
+        # the staggered starts must observe the fan-out: at least one event
+        # sees another analysis agent already in flight
+        assert any(len(e["metadata"]["running_agents"]) >= 2 for e in parallel), [
+            e["metadata"]["running_agents"] for e in parallel
+        ]
+
+        # success events carry the post-completion snapshot (list field present)
+        successes = [e for e in events if e.get("event_type") == "agent_success"]
+        assert successes and all("running_agents" in e["metadata"] for e in successes)
+    finally:
+        monitor.broadcast_manager = original_bm
+        workflow_status.reset()

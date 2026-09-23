@@ -18,9 +18,10 @@ class AgentStatus(BaseModel):
 
 class WorkflowStatusResponse(BaseModel):
     thread_id: str
-    status: str  # pending, running, completed, failed
+    status: str  # pending, running, completed, partial (degraded), failed
     agents: dict[str, AgentStatus]
     current_agent: str | None = None
+    running_agents: list[str] = []  # full fan-out set during parallel stages
     progress: float
     created_at: str
     updated_at: str
