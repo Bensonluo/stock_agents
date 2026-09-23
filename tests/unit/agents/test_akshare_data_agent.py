@@ -1,0 +1,145 @@
+"""AkShareDataAgent fetch economics and column mapping.
+
+The spot table (stock_zh_a_spot_em) is the ENTIRE A-share market (~5000
+rows) in one response; these tests pin the one-round-trip-per-run contract
+and the 涨跌额/涨跌幅 column mapping, with graceful degradation when the
+table fetch fails.
+"""
+
+from __future__ import annotations
+
+import sys
+import types
+from typing import Any
+
+import pandas as pd
+import pytest
+
+from app.agents.data_agent import AkShareDataAgent
+
+pytestmark = pytest.mark.asyncio
+
+_SPOT_COLUMNS = (
+    "代码",
+    "最新价",
+    "涨跌额",
+    "涨跌幅",
+    "成交量",
+    "成交额",
+    "振幅",
+    "最高",
+    "最低",
+    "今开",
+    "昨收",
+)
+
+_SPOT_ROWS = [
+    ("600519", 1650.0, 19.5, 1.2, 25_000, 4.1e9, 2.1, 1660.0, 1635.0, 1640.0, 1630.5),
+    ("000001", 10.5, 0.2, 1.9, 900_000, 9.4e8, 1.4, 10.6, 10.3, 10.4, 10.3),
+    ("300750", 210.0, -4.0, -1.9, 60_000, 1.3e9, 2.8, 216.0, 209.0, 214.0, 214.0),
+]
+
+_FINANCIAL_COLUMNS = (
+    "净资产收益率",
+    "总资产净利率",
+    "销售毛利率",
+    "销售净利率",
+    "资产负债率",
+    "流动比率",
+    "速动比率",
+)
+
+
+class _FakeAk:
+    """Stands in for the akshare module; counts network round-trips."""
+
+    def __init__(self, *, spot_error: Exception | None = None):
+        self.spot_calls = 0
+        self.financial_calls: list[str] = []
+        self._spot_error = spot_error
+
+    def stock_zh_a_spot_em(self) -> pd.DataFrame:
+        self.spot_calls += 1
+        if self._spot_error is not None:
+            raise self._spot_error
+        return pd.DataFrame([dict(zip(_SPOT_COLUMNS, row)) for row in _SPOT_ROWS])
+
+    def stock_financial_analysis_indicator(self, symbol: str) -> pd.DataFrame:
+        self.financial_calls.append(symbol)
+        values = (31.0, 19.0, 91.0, 49.0, 21.0, 4.2, 3.9)
+        return pd.DataFrame([dict(zip(_FINANCIAL_COLUMNS, values))])
+
+
+def _install_fake_ak(monkeypatch: pytest.MonkeyPatch, fake: _FakeAk) -> None:
+    """Route the agent's `import akshare as ak` to the fake."""
+    module = types.ModuleType("akshare")
+    module.stock_zh_a_spot_em = fake.stock_zh_a_spot_em  # type: ignore[attr-defined]
+    module.stock_financial_analysis_indicator = (  # type: ignore[attr-defined]
+        fake.stock_financial_analysis_indicator
+    )
+    monkeypatch.setitem(sys.modules, "akshare", module)
+
+
+async def _run(monkeypatch: pytest.MonkeyPatch, symbols: list[str], **fake_kwargs: Any):
+    fake = _FakeAk(**fake_kwargs)
+    _install_fake_ak(monkeypatch, fake)
+    agent = AkShareDataAgent("akshare_data")
+    agent.llm = None
+    result = await agent.execute({"symbols": symbols})
+    return fake, result
+
+
+class TestSpotTableFetchEconomics:
+    async def test_spot_table_fetched_once_for_multiple_symbols(self, monkeypatch):
+        """N CN symbols must mean ONE spot-table round-trip, not N."""
+        fake, result = await _run(monkeypatch, ["600519", "000001", "300750"])
+
+        assert fake.spot_calls == 1
+        assert set(result["market_data"]) == {"600519", "000001", "300750"}
+        assert set(result["financial_data"]) == {"600519", "000001", "300750"}
+
+    async def test_non_cn_symbols_are_skipped(self, monkeypatch):
+        fake, result = await _run(monkeypatch, ["AAPL", "600519"])
+
+        assert "AAPL" not in result["market_data"]
+        assert "600519" in result["market_data"]
+        assert fake.financial_calls == ["600519"]
+
+    async def test_symbol_missing_from_table_has_no_market_row(self, monkeypatch):
+        _, result = await _run(monkeypatch, ["600519", "999999"])
+
+        assert "999999" not in result["market_data"]
+        assert "600519" in result["market_data"]
+        assert "999999" in result["financial_data"]  # financials are a separate feed
+
+    async def test_spot_fetch_failure_degrades_but_financials_survive(self, monkeypatch):
+        """Spot table down != agent down: financial feed still collected."""
+        fake, result = await _run(
+            monkeypatch, ["600519", "000001"], spot_error=RuntimeError("eastmoney down")
+        )
+
+        assert fake.spot_calls == 1
+        assert result["market_data"] == {}
+        assert set(result["financial_data"]) == {"600519", "000001"}
+
+
+class TestColumnMapping:
+    async def test_change_is_absolute_amount_not_percent(self, monkeypatch):
+        """`change` must come from 涨跌额 (absolute), not re-read 涨跌幅."""
+        _, result = await _run(monkeypatch, ["600519"])
+        mkt = result["market_data"]["600519"]
+
+        assert mkt["change"] == 19.5
+        assert mkt["change_percent"] == 1.2
+
+    async def test_market_row_shape(self, monkeypatch):
+        _, result = await _run(monkeypatch, ["300750"])
+        mkt = result["market_data"]["300750"]
+
+        assert mkt["symbol"] == "300750"
+        assert mkt["current_price"] == 210.0
+        assert mkt["previous_close"] == 214.0
+        assert mkt["open"] == 214.0
+        assert mkt["high"] == 216.0
+        assert mkt["low"] == 209.0
+        assert mkt["timestamp"]  # stamped for downstream staleness checks

@@ -249,10 +249,22 @@ def _sync_fetch_news(yahoo_symbol: str, symbol: str) -> list[dict[str, Any]]:
     return articles
 
 
-def _sync_fetch_akshare_stock_info(symbol: str, ak) -> dict[str, Any] | None:
-    """Synchronous AkShare stock info fetch — runs in thread pool."""
-    df = ak.stock_zh_a_spot_em()
-    stock_row = df[df["代码"] == symbol]
+def _sync_fetch_akshare_spot_table(ak):
+    """Fetch the full A-share spot table — ONE network round-trip per run.
+
+    The East Money spot table covers the entire A-share market (~5000
+    rows), so it must be fetched once in the agent and sliced per symbol;
+    fetching it per symbol re-downloads the whole market N times.
+    """
+    return ak.stock_zh_a_spot_em()
+
+
+def _sync_fetch_akshare_stock_info(symbol: str, spot_df) -> dict[str, Any] | None:
+    """Slice one symbol's row out of the pre-fetched spot table."""
+    if spot_df is None:
+        return None
+
+    stock_row = spot_df[spot_df["代码"] == symbol]
 
     if stock_row.empty:
         return None
@@ -261,7 +273,7 @@ def _sync_fetch_akshare_stock_info(symbol: str, ak) -> dict[str, Any] | None:
     return {
         "symbol": symbol,
         "current_price": row.get("最新价"),
-        "change": row.get("涨跌幅", 0),
+        "change": row.get("涨跌额", 0),
         "change_percent": row.get("涨跌幅", 0),
         "volume": row.get("成交量"),
         "amount": row.get("成交额"),
@@ -546,48 +558,55 @@ class AkShareDataAgent(BaseAgent):
 
         try:
             import akshare as ak
-
-            market_data = {}
-            financial_data = {}
-
-            for symbol in cn_symbols:
-                # Fetch stock info
-                stock_info = await self._fetch_akshare_stock_info(symbol, ak)
-                if stock_info:
-                    market_data[symbol] = stock_info
-
-                # Fetch financial data
-                stock_financials = await self._fetch_akshare_financials(symbol, ak)
-                if stock_financials:
-                    financial_data[symbol] = stock_financials
-
-            logger.info(f"Collected AkShare data for {len(market_data)} symbols")
-
-            # Return only the partial state (fields we modify)
-            return {
-                "market_data": market_data,
-                "financial_data": financial_data,
-            }
-
         except ImportError:
             logger.warning("AkShare not installed, skipping Chinese stock data")
             return {"market_data": {}, "financial_data": {}}
-        except Exception as e:
-            logger.error(f"Error collecting AkShare data: {e}")
-            return {"market_data": {}, "financial_data": {}}
 
-    async def _fetch_akshare_stock_info(self, symbol: str, ak) -> dict[str, Any] | None:
-        """Fetch Chinese stock info using AkShare.
+        market_data = {}
+        financial_data = {}
+
+        # One spot-table round-trip for ALL symbols; slices are local.
+        spot_df = await self._fetch_akshare_spot_table(ak)
+
+        for symbol in cn_symbols:
+            # Fetch stock info
+            stock_info = await self._fetch_akshare_stock_info(symbol, spot_df)
+            if stock_info:
+                market_data[symbol] = stock_info
+
+            # Fetch financial data
+            stock_financials = await self._fetch_akshare_financials(symbol, ak)
+            if stock_financials:
+                financial_data[symbol] = stock_financials
+
+        logger.info(f"Collected AkShare data for {len(market_data)} symbols")
+
+        # Return only the partial state (fields we modify)
+        return {
+            "market_data": market_data,
+            "financial_data": financial_data,
+        }
+
+    async def _fetch_akshare_spot_table(self, ak):
+        """Fetch the shared spot table; None when the source is unreachable."""
+        try:
+            return await asyncio.to_thread(_sync_fetch_akshare_spot_table, ak)
+        except Exception as e:
+            logger.error(f"Error fetching AkShare spot table: {e}")
+            return None
+
+    async def _fetch_akshare_stock_info(self, symbol: str, spot_df) -> dict[str, Any] | None:
+        """Slice one symbol's market row out of the pre-fetched spot table.
 
         Args:
             symbol: Stock symbol (6 digits)
-            ak: AkShare module
+            spot_df: Full A-share spot table (or None when fetch failed)
 
         Returns:
             Dictionary containing stock data
         """
         try:
-            return await asyncio.to_thread(_sync_fetch_akshare_stock_info, symbol, ak)
+            return await asyncio.to_thread(_sync_fetch_akshare_stock_info, symbol, spot_df)
         except Exception as e:
             logger.error(f"Error fetching AkShare data for {symbol}: {e}")
             return None

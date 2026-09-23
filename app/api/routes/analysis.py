@@ -152,7 +152,7 @@ async def analyze_stocks(
         thread_id,
         {
             "status": "running",
-            "request": request.dict(),
+            "request": request.model_dump(),
             "started_at": datetime.now(),
         },
     )
@@ -282,7 +282,7 @@ async def analyze_stocks_sync(request: StockAnalysisRequest) -> AnalysisResultRe
             thread_id,
             {
                 "status": "completed",
-                "request": request.dict(),
+                "request": request.model_dump(),
                 "result": result,
                 "started_at": datetime.now(),
                 "completed_at": datetime.now(),
