@@ -1,14 +1,26 @@
 """Sentiment analysis agent for news and social sentiment."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 from app.agents.base import StatelessAgent
 from app.analysis.sentiment import calculate_overall, calculate_trend, empty_sentiment, score_news
 from app.orchestration.state import AgentState
+from app.utils.llm_json import ainvoke_json
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class _SentimentResult(BaseModel):
+    """Contract for the LLM sentiment payload (validated on both paths)."""
+
+    overall_sentiment: Literal["positive", "negative", "neutral"]
+    confidence: int = Field(default=50, ge=0, le=100)
+    key_factors: list[str] = Field(default_factory=list)
+    summary: str = ""
 
 
 class SentimentAnalysisAgent(StatelessAgent):
@@ -39,7 +51,9 @@ class SentimentAnalysisAgent(StatelessAgent):
             logger.warning("No data available for sentiment analysis")
             return {}
 
-        logger.info(f"Analyzing sentiment for {len(symbols)} symbols with {len(news_data)} news items")
+        logger.info(
+            f"Analyzing sentiment for {len(symbols)} symbols with {len(news_data)} news items"
+        )
 
         results = {}
 
@@ -53,7 +67,11 @@ class SentimentAnalysisAgent(StatelessAgent):
 
                 # Include if symbol is in related_symbols or if original_symbol matches
                 # Also include news for the first symbol as fallback if we have limited news
-                if symbol in related or original == symbol or (i == 0 and not symbol_news and len(news_data) > 0):
+                if (
+                    symbol in related
+                    or original == symbol
+                    or (i == 0 and not symbol_news and len(news_data) > 0)
+                ):
                     symbol_news.append(n)
 
             if not symbol_news:
@@ -74,7 +92,9 @@ class SentimentAnalysisAgent(StatelessAgent):
         return {
             "sentiment_by_symbol": results,
             "overall_sentiment": self._calculate_overall_sentiment(results),
-            "overall": self._calculate_overall_sentiment(results),  # Add 'overall' key for frontend compatibility
+            "overall": self._calculate_overall_sentiment(
+                results
+            ),  # Add 'overall' key for frontend compatibility
             "timestamp": datetime.now().isoformat(),
         }
 
@@ -93,46 +113,38 @@ class SentimentAnalysisAgent(StatelessAgent):
             LLM analysis results
         """
         try:
-            # Prepare news summary
-            news_text = "\n".join([
-                f"- {n.get('title', '')}: {n.get('summary', n.get('title', ''))[:200]}"
-                for n in news[:5]
-            ])
+            news_text = "\n".join(
+                [
+                    f"- {n.get('title', '')}: {n.get('summary', n.get('title', ''))[:200]}"
+                    for n in news[:5]
+                ]
+            )
 
-            prompt = f"""Analyze the sentiment for {symbol} based on these recent news headlines:
+            parsed = await ainvoke_json(
+                self.llm,
+                system=(
+                    "You are a financial news sentiment analyst. "
+                    "Respond only with JSON matching the schema: overall_sentiment "
+                    '(one of "positive"/"negative"/"neutral"), confidence (0-100), '
+                    "key_factors (list of short strings), summary (1-2 sentences)."
+                ),
+                user=f"Analyze the sentiment for {symbol} based on these recent news headlines:\n\n{news_text}",
+                schema=_SentimentResult,
+            )
+            if parsed is not None:
+                return parsed
 
-{news_text}
-
-Provide a JSON response with:
-- overall_sentiment: "positive", "negative", or "neutral"
-- confidence: score from 0-100
-- key_factors: list of main factors influencing sentiment
-- summary: brief 1-2 sentence summary
-
-Respond only with valid JSON."""
-
-            response = await self.invoke_llm(prompt)
-
-            # Try to parse JSON from response
-            import json
-            try:
-                # Extract JSON from response
-                start = response.find("{")
-                end = response.rfind("}") + 1
-                if start >= 0 and end > start:
-                    json_str = response[start:end]
-                    return json.loads(json_str)
-            except json.JSONDecodeError:
-                pass
-
-            # Fallback: simple text analysis
+            # Degradation: no LLM verdict survives validation — deterministic
+            # scoring remains the source of truth, this block is supplementary.
+            logger.warning(f"LLM sentiment for {symbol} unusable; using neutral fallback")
             return {
                 "overall_sentiment": "neutral",
                 "confidence": 50,
-                "summary": response[:200],
+                "key_factors": [],
+                "summary": "",
             }
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - degrade by design
             logger.error(f"LLM sentiment analysis failed: {e}")
             return {}
 

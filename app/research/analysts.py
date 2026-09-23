@@ -19,6 +19,7 @@ import asyncio
 import json
 from typing import Any
 
+from app.utils.llm_json import ainvoke_json
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -74,7 +75,10 @@ async def _request_panel(synthesis: dict[str, Any], llm: Any) -> dict[str, dict[
     for symbol, entry in synthesis["per_symbol"].items():
         debate = entry.get("debate") or {}
         refs = sorted(
-            {point["evidence_ref"] for point in (debate.get("bull_points") + debate.get("bear_points", []))}
+            {
+                point["evidence_ref"]
+                for point in (debate.get("bull_points") + debate.get("bear_points", []))
+            }
         )
         payloads[symbol] = {
             "facts": {
@@ -89,18 +93,16 @@ async def _request_panel(synthesis: dict[str, Any], llm: Any) -> dict[str, dict[
             "allowed_refs": refs or ["deterministic_synthesis"],
         }
 
-    from langchain_core.messages import HumanMessage, SystemMessage
-
-    response = await llm.ainvoke(
-        [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=json.dumps(payloads, ensure_ascii=False, default=str))]
+    parsed = await ainvoke_json(
+        llm,
+        system=_SYSTEM_PROMPT,
+        user=json.dumps(payloads, ensure_ascii=False, default=str),
     )
-    return _validate_panel(getattr(response, "content", ""), payloads)
+    return _validate_panel(parsed, payloads)
 
 
-def _validate_panel(content: Any, payloads: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Parse and structurally validate the panel output; bad parts are dropped."""
-    text = _as_text(content)
-    parsed = _extract_json(text)
+def _validate_panel(parsed: Any, payloads: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Structurally validate the panel payload; bad parts are dropped."""
     if not isinstance(parsed, dict) or not isinstance(parsed.get("symbols"), dict):
         return {}
 
@@ -122,12 +124,16 @@ def _validate_panel(content: Any, payloads: dict[str, Any]) -> dict[str, dict[st
                 block["pm"] = {
                     "thesis": pm["thesis"][:800],
                     "horizon": str(pm.get("horizon", ""))[:80],
-                    "conditions": [str(c)[:200] for c in (pm.get("conditions") or []) if str(c).strip()][:6],
+                    "conditions": [
+                        str(c)[:200] for c in (pm.get("conditions") or []) if str(c).strip()
+                    ][:6],
                     "invalidation": str(pm.get("invalidation", ""))[:400],
                     "committee_verdict": committee_verdict,
                 }
             else:
-                logger.warning(f"PM conclusion for {symbol} dropped: committee verdict not restated")
+                logger.warning(
+                    f"PM conclusion for {symbol} dropped: committee verdict not restated"
+                )
 
         if block:
             validated[symbol] = block
@@ -145,24 +151,3 @@ def _clean_cited_view(view: Any, allowed_refs: set[str]) -> dict[str, Any] | Non
     if not cites:
         return None
     return {"view": text.strip()[:600], "cites": cites}
-
-
-def _as_text(content: Any) -> str:
-    if isinstance(content, (list, tuple)):
-        return "".join(str(part) for part in content)
-    return str(content or "")
-
-
-def _extract_json(text: str) -> Any:
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        return None
-    try:
-        return json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
-        return None

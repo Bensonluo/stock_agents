@@ -18,6 +18,7 @@ import asyncio
 import json
 from typing import Any
 
+from app.utils.llm_json import ainvoke_json
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -31,8 +32,8 @@ _SYSTEM_PROMPT = (
     "你的任务是把它们写成简明的叙述,规则如下:"
     "1) 严禁引入列表之外的新数字或新事实;2) 每段叙述必须至少引用一条给定的论点及其证据来源;"
     "3) pm_comment 必须尊重委员会裁决与条件,不得建议超出裁决的方向;"
-    "4) 只输出 JSON,形如 {\"symbols\": {\"<symbol>\": {\"bull_narrative\": str, "
-    "\"bear_narrative\": str, \"pm_comment\": str}}},不要输出其他文字。"
+    '4) 只输出 JSON,形如 {"symbols": {"<symbol>": {"bull_narrative": str, '
+    '"bear_narrative": str, "pm_comment": str}}},不要输出其他文字。'
 )
 
 
@@ -47,9 +48,7 @@ async def narrate_synthesis(
         return synthesis
 
     try:
-        narratives = await asyncio.wait_for(
-            _request_narratives(synthesis, llm), timeout=timeout
-        )
+        narratives = await asyncio.wait_for(_request_narratives(synthesis, llm), timeout=timeout)
     except (TimeoutError, Exception) as e:  # noqa: BLE001 - degrade by design
         logger.warning(f"LLM narration unavailable, using deterministic synthesis: {e}")
         return synthesis
@@ -69,39 +68,19 @@ async def narrate_synthesis(
 async def _request_narratives(synthesis: dict[str, Any], llm: Any) -> dict[str, Any]:
     """Ask the LLM once for all symbols; returns {symbol: {...}} or {}."""
     user_payload = json.dumps(
-        {"audit_verdict": (synthesis.get("audit") or {}).get("verdict"), "symbols": synthesis["per_symbol"]},
+        {
+            "audit_verdict": (synthesis.get("audit") or {}).get("verdict"),
+            "symbols": synthesis["per_symbol"],
+        },
         ensure_ascii=False,
         default=str,
     )
-    from langchain_core.messages import HumanMessage, SystemMessage
-
-    response = await llm.ainvoke(
-        [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=user_payload)]
-    )
-    return _parse_narratives(getattr(response, "content", ""), set(synthesis["per_symbol"]))
+    parsed = await ainvoke_json(llm, system=_SYSTEM_PROMPT, user=user_payload)
+    return _parse_narratives(parsed, set(synthesis["per_symbol"]))
 
 
-def _parse_narratives(content: Any, known_symbols: set[str]) -> dict[str, Any]:
-    """Parse the model output; anything unparseable yields {} (degradation)."""
-    if isinstance(content, (list, tuple)):
-        content = "".join(str(part) for part in content)
-    text = str(content or "").strip()
-    if not text:
-        return {}
-
-    # Tolerate markdown fences around the JSON block.
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        return {}
-    try:
-        parsed = json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
-        return {}
-
+def _parse_narratives(parsed: Any, known_symbols: set[str]) -> dict[str, Any]:
+    """Validate the parsed payload; anything unparseable yields {} (degradation)."""
     symbols = parsed.get("symbols") if isinstance(parsed, dict) else None
     if not isinstance(symbols, dict):
         return {}
