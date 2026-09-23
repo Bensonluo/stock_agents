@@ -17,6 +17,7 @@ from app.react_agent.state import ReActState, create_initial_react_state
 from app.research import synthesize
 from app.services.report_service import derive_recommendation
 from app.tools import get_all_tools, get_tool, register_all_tools
+from app.utils.llm_json import extract_json
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -142,9 +143,13 @@ async def tool_execute_node(state: ReActState) -> dict[str, Any]:
             tool_result_messages.append(
                 ToolMessage(content=error_msg, tool_call_id=tool_id, name=tool_name)
             )
-            errors.append({
-                "agent": "react_agent", "error_type": "ToolNotFound", "message": error_msg,
-            })
+            errors.append(
+                {
+                    "agent": "react_agent",
+                    "error_type": "ToolNotFound",
+                    "message": error_msg,
+                }
+            )
             continue
 
         try:
@@ -154,9 +159,13 @@ async def tool_execute_node(state: ReActState) -> dict[str, Any]:
             tool_result_messages.append(
                 ToolMessage(content=error_msg, tool_call_id=tool_id, name=tool_name)
             )
-            errors.append({
-                "agent": "react_agent", "error_type": "ToolExecutionError", "message": error_msg,
-            })
+            errors.append(
+                {
+                    "agent": "react_agent",
+                    "error_type": "ToolExecutionError",
+                    "message": error_msg,
+                }
+            )
             continue
 
         tool_result_messages.append(
@@ -217,12 +226,10 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
     fetch = tr.get("fetch_stock_data", {})
     if isinstance(fetch, dict) and fetch:
         market_data = {
-            sym: (r.get("market_data") or {})
-            for sym, r in fetch.items() if isinstance(r, dict)
+            sym: (r.get("market_data") or {}) for sym, r in fetch.items() if isinstance(r, dict)
         }
         financial_data = {
-            sym: (r.get("financial_data") or {})
-            for sym, r in fetch.items() if isinstance(r, dict)
+            sym: (r.get("financial_data") or {}) for sym, r in fetch.items() if isinstance(r, dict)
         }
         if market_data:
             data["market_data"] = market_data
@@ -268,11 +275,14 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
     if isinstance(sent_bucket, dict) and sent_bucket:
         data["sentiment_analysis"] = {
             "sentiment_by_symbol": {
-                sym: r.get("sentiment", {})
-                for sym, r in sent_bucket.items() if isinstance(r, dict)
+                sym: r.get("sentiment", {}) for sym, r in sent_bucket.items() if isinstance(r, dict)
             },
             "overall_sentiment": next(
-                (r.get("overall_sentiment", {}) for r in sent_bucket.values() if isinstance(r, dict)),
+                (
+                    r.get("overall_sentiment", {})
+                    for r in sent_bucket.values()
+                    if isinstance(r, dict)
+                ),
                 {},
             ),
         }
@@ -289,18 +299,14 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
     risk_bucket = data.get("risk_assessment") or {}
     technical_bucket = data.get("technical_analysis") or {}
     fundamental_bucket = data.get("fundamental_analysis") or {}
-    sentiment_bucket = (data.get("sentiment_analysis") or {}).get(
-        "sentiment_by_symbol", {}
-    )
+    sentiment_bucket = (data.get("sentiment_analysis") or {}).get("sentiment_by_symbol", {})
     synthesis_by_symbol = (data.get("research_synthesis") or {}).get("per_symbol", {})
     decisions: dict[str, dict] = {}
 
     for sym in symbols:
         risk = risk_bucket.get(sym) if isinstance(risk_bucket, dict) else {}
         technical = technical_bucket.get(sym) if isinstance(technical_bucket, dict) else {}
-        fundamental = (
-            fundamental_bucket.get(sym) if isinstance(fundamental_bucket, dict) else {}
-        )
+        fundamental = fundamental_bucket.get(sym) if isinstance(fundamental_bucket, dict) else {}
         sentiment = sentiment_bucket.get(sym) if isinstance(sentiment_bucket, dict) else {}
         risk = risk if isinstance(risk, dict) else {}
         recommendation = derive_recommendation(
@@ -326,7 +332,7 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
                 action = "hold"
             position_size = 0.0
             confidence = min(confidence, 0.5)
-        elif verdict == "limit" and isinstance(position_cap, (int, float)):
+        elif verdict == "limit" and isinstance(position_cap, int | float):
             position_size = min(position_size, float(position_cap))
 
         decisions[sym] = {
@@ -370,21 +376,8 @@ def observe_node(state: ReActState) -> dict[str, Any]:
                 if not isinstance(report, dict):
                     return {"final_answer": str(msg.content)[:2000]}
                 try:
-                    summary = report.get("executive_summary", "")
-                    title = report.get("title", "Analysis Report")
-                    sections = report.get("sections", {})
-
-                    # Build a markdown report
-                    parts = [f"# {title}\n"]
-                    if summary:
-                        parts.append(f"## Executive Summary\n\n{summary}\n")
-                    for section_name, section_data in sections.items():
-                        label = section_name.replace("_", " ").title()
-                        parts.append(f"## {label}\n")
-                        parts.append(f"```json\n{json.dumps(section_data, indent=2, ensure_ascii=False, default=str)}\n```\n")
-
                     return {
-                        "final_answer": "\n".join(parts),
+                        "final_answer": _report_to_markdown(report),
                         "report": report,
                     }
                 except Exception:
@@ -393,6 +386,45 @@ def observe_node(state: ReActState) -> dict[str, Any]:
                         "report": report,
                     }
     return {}
+
+
+def _report_to_markdown(report: dict[str, Any]) -> str:
+    """Render a structured report payload as the markdown final answer."""
+    summary = report.get("executive_summary", "")
+    title = report.get("title", "Analysis Report")
+    sections = report.get("sections", {})
+
+    parts = [f"# {title}\n"]
+    if summary:
+        parts.append(f"## Executive Summary\n\n{summary}\n")
+    for section_name, section_data in sections.items():
+        label = section_name.replace("_", " ").title()
+        parts.append(f"## {label}\n")
+        parts.append(
+            f"```json\n{json.dumps(section_data, indent=2, ensure_ascii=False, default=str)}\n```\n"
+        )
+    return "\n".join(parts)
+
+
+def _salvage_inline_report(answer: str) -> dict[str, Any] | None:
+    """Recover a report payload the model emitted inline instead of via generate_report.
+
+    The contract says "call generate_report", but when the model skips it and
+    writes the report JSON (or a Python dict literal) directly as its final
+    message, promote that to a structured report here rather than leaving a
+    bare string for the API layer to patch up.
+    """
+    if not isinstance(answer, str) or ("{" not in answer and "[" not in answer):
+        return None
+    salvaged = extract_json(answer)
+    if not isinstance(salvaged, dict):
+        try:
+            salvaged = ast.literal_eval(answer)  # legacy Python-literal shape
+        except (ValueError, SyntaxError):
+            return None
+    if not isinstance(salvaged, dict) or not isinstance(salvaged.get("sections"), dict):
+        return None
+    return salvaged
 
 
 def reflect_node(state: ReActState) -> dict[str, Any]:
@@ -430,7 +462,7 @@ def reflect_node(state: ReActState) -> dict[str, Any]:
         from collections import Counter
 
         counts = Counter(tool_calls)
-        top, top_n = (counts.most_common(1)[0] if counts else (None, 0))
+        top, top_n = counts.most_common(1)[0] if counts else (None, 0)
         if top_n >= 3:
             force_finish_reason = f"{top[0]} called with identical arguments {top_n} times"
 
@@ -451,15 +483,20 @@ def reflect_node(state: ReActState) -> dict[str, Any]:
     cost = state.get("accumulated_cost", 0)
     if cost >= settings.agent_cost_limit:
         logger.info(f"Cost limit (${cost}) reached, finishing")
-        return {"final_answer": f"Analysis stopped due to cost limit (${cost}). Partial results available."}
+        return {
+            "final_answer": f"Analysis stopped due to cost limit (${cost}). Partial results available."
+        }
 
     # State-aware progression: drive the LLM through analysis → report → finish.
     # We never need to re-run the same tool. The previous "iteration < 3" and
     # "unique_tools_used < 3" heuristics caused each tool to be called multiple
     # times — see commit 1850c81.
     analysis_tools = {
-        "analyze_technical", "analyze_fundamental", "analyze_sentiment",
-        "assess_risk", "calculate_position_size",
+        "analyze_technical",
+        "analyze_fundamental",
+        "analyze_sentiment",
+        "assess_risk",
+        "calculate_position_size",
     }
     tools_set = set(tools_used)
     report_called = "generate_report" in tools_set
@@ -528,7 +565,9 @@ def _truncate_messages_for_reflection(messages: list) -> list:
         if isinstance(msg, ToolMessage):
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
             summary = content[:300] + "..." if len(content) > 300 else content
-            truncated.append(ToolMessage(content=summary, tool_call_id=msg.tool_call_id, name=msg.name))
+            truncated.append(
+                ToolMessage(content=summary, tool_call_id=msg.tool_call_id, name=msg.name)
+            )
         else:
             truncated.append(msg)
     return truncated
@@ -541,7 +580,10 @@ def _truncate_messages_for_reasoning(messages: list, max_chars: int = 20000) -> 
     only truncates older ones starting from the beginning.
     """
     result = list(messages)
-    total = sum(len(m.content) if hasattr(m, "content") and isinstance(m.content, str) else 0 for m in result)
+    total = sum(
+        len(m.content) if hasattr(m, "content") and isinstance(m.content, str) else 0
+        for m in result
+    )
     if total <= max_chars:
         return result
     # Truncate oldest tool results first, keep the latest ones intact
@@ -551,7 +593,9 @@ def _truncate_messages_for_reasoning(messages: list, max_chars: int = 20000) -> 
         m = result[i]
         if isinstance(m, ToolMessage) and len(m.content) > 500:
             old_len = len(m.content)
-            result[i] = ToolMessage(content=m.content[:500] + "...[truncated]", tool_call_id=m.tool_call_id, name=m.name)
+            result[i] = ToolMessage(
+                content=m.content[:500] + "...[truncated]", tool_call_id=m.tool_call_id, name=m.name
+            )
             total -= old_len - 500
     return result
 
@@ -610,9 +654,22 @@ class ReActAgent:
         if not answer:
             answer = "Analysis completed but no conclusion was generated."
 
+        # Salvage path: the model skipped generate_report and emitted the report
+        # payload inline. Promote it to a structured report so both the answer
+        # (markdown) and the report dict match the generate_report path's shape.
+        report = final_state.get("report")
+        if report is None and isinstance(answer, str):
+            salvaged = _salvage_inline_report(answer)
+            if salvaged is not None:
+                try:
+                    answer = _report_to_markdown(salvaged)
+                    report = salvaged
+                except Exception:  # noqa: BLE001 - keep the raw answer on render failure
+                    report = None
+
         return {
             "answer": answer,
-            "report": final_state.get("report"),
+            "report": report,
             "iterations": final_state.get("iteration", 0),
             "tools_used": final_state.get("tools_used", []),
             "cost": final_state.get("accumulated_cost", 0),

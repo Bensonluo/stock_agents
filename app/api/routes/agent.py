@@ -14,6 +14,7 @@ from app.react_agent.react_agent import ReActAgent
 from app.services.report_service import ReportService
 from app.storage.database import AnalysisRecord, get_database
 from app.tools.data.fetcher import fetch_stock_data
+from app.utils.llm_json import extract_json
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -28,9 +29,12 @@ try:
     _db = get_database()
     _stale = _db.list_records(limit=50, status="running")
     for _r in _stale:
-        _db.update_status(_r.thread_id, "failed",
-                          result=json.dumps({"answer": "Analysis interrupted by server restart"}),
-                          execution_time=0)
+        _db.update_status(
+            _r.thread_id,
+            "failed",
+            result=json.dumps({"answer": "Analysis interrupted by server restart"}),
+            execution_time=0,
+        )
         logger.info(f"Marked stale running record as failed: {_r.thread_id}")
 except Exception:
     pass
@@ -112,20 +116,24 @@ async def get_progress(thread_id: str):
 
 
 async def _enrich_overview(answer: Any, symbols: list[str]) -> Any:
-    """Server-side: patch the LLM's `answer` so overview.market_summary has
-    real company_name / current_price / sector. The LLM often leaves these
-    fields as None even though get_stock_overview returns the data, so we
+    """Server-side: patch a legacy inline `answer` so overview.market_summary has
+    real company_name / current_price / sector. The LLM often left these
+    fields as None even though get_stock_overview returned the data, so we
     fetch the data ourselves and overwrite.
 
-    The LLM emits a Python dict literal (single-quote, unquoted keys) rather
-    than JSON, so we parse with ast.literal_eval and re-serialise the same way.
+    Newer runs carry the structured report separately and the answer is
+    markdown; this only fires for answers that still embed the payload —
+    JSON via the shared extractor first, then the legacy Python dict literal
+    (single-quote, unquoted keys) that older models emitted.
     """
     if not isinstance(answer, str) or not answer.strip():
         return answer
-    try:
-        parsed = ast.literal_eval(answer)
-    except Exception:
-        return answer  # not a Python literal; leave as-is
+    parsed = extract_json(answer)
+    if not isinstance(parsed, dict):
+        try:
+            parsed = ast.literal_eval(answer)
+        except Exception:
+            return answer  # not a parseable payload; leave as-is
     if not isinstance(parsed, dict):
         return answer
 
@@ -181,6 +189,23 @@ def _detect_lang(text: str) -> str:
     return ReportService.detect_lang(text)
 
 
+def _symbols_from_answer(answer: Any) -> list[str]:
+    """Best-effort symbol list from an inline answer payload (legacy path)."""
+    if not isinstance(answer, str):
+        return []
+    parsed = extract_json(answer)
+    if not isinstance(parsed, dict):
+        try:
+            parsed = ast.literal_eval(answer)
+        except Exception:
+            return []
+    if isinstance(parsed, dict):
+        meta = parsed.get("metadata")
+        if isinstance(meta, dict):
+            return [s for s in meta.get("symbols", []) if isinstance(s, str)]
+    return []
+
+
 def _build_executive_summary(parsed: dict, query: str, symbols: list[str]) -> str:
     """Server-side rebuild of executive_summary via the shared ReportService
     (same implementation the pipeline and the report tool use)."""
@@ -196,13 +221,13 @@ async def get_result(thread_id: str):
     result = _results.get(thread_id)
     if result:
         answer = result.get("answer", "")
-        symbols = (result.get("metadata") or {}).get("symbols") if isinstance(result.get("metadata"), dict) else None
-        if not symbols and isinstance(answer, str):
-            try:
-                parsed = ast.literal_eval(answer)
-                symbols = (parsed.get("metadata") or {}).get("symbols", []) if isinstance(parsed, dict) else []
-            except Exception:
-                symbols = []
+        symbols = (
+            (result.get("metadata") or {}).get("symbols")
+            if isinstance(result.get("metadata"), dict)
+            else None
+        )
+        if not symbols:
+            symbols = _symbols_from_answer(answer)
         if symbols:
             answer = await _enrich_overview(answer, symbols)
             result = {**result, "answer": answer}
@@ -215,13 +240,13 @@ async def get_result(thread_id: str):
         if record and record.result:
             stored = json.loads(record.result)
             answer = stored.get("answer", "")
-            symbols = (stored.get("metadata") or {}).get("symbols", []) if isinstance(stored.get("metadata"), dict) else []
-            if not symbols and isinstance(answer, str):
-                try:
-                    parsed = ast.literal_eval(answer)
-                    symbols = (parsed.get("metadata") or {}).get("symbols", []) if isinstance(parsed, dict) else []
-                except Exception:
-                    symbols = []
+            symbols = (
+                (stored.get("metadata") or {}).get("symbols", [])
+                if isinstance(stored.get("metadata"), dict)
+                else []
+            )
+            if not symbols:
+                symbols = _symbols_from_answer(answer)
             if symbols:
                 answer = await _enrich_overview(answer, symbols)
             return ResultResponse(
@@ -266,13 +291,15 @@ def _save_to_db(thread_id: str, query: str, symbols: list[str], result: dict, st
                 execution_time=0,
             )
         else:
-            db.create_record(AnalysisRecord(
-                thread_id=thread_id,
-                symbols=json.dumps(symbols),
-                query=query,
-                status=status,
-                result=json.dumps(result_data, default=str),
-            ))
+            db.create_record(
+                AnalysisRecord(
+                    thread_id=thread_id,
+                    symbols=json.dumps(symbols),
+                    query=query,
+                    status=status,
+                    result=json.dumps(result_data, default=str),
+                )
+            )
     except Exception as e:
         logger.warning(f"Failed to save to DB for {thread_id}: {e}")
 

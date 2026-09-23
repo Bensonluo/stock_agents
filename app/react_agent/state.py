@@ -1,6 +1,6 @@
 """ReAct agent state management."""
 
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any
 
 from langchain_core.messages import BaseMessage
 from typing_extensions import TypedDict
@@ -37,19 +37,19 @@ class ReActState(TypedDict):
 
     # Original AgentState fields (backward compatibility)
     query: str
-    symbols: List[str]
-    thread_id: Optional[str]
+    symbols: list[str]
+    thread_id: str | None
     market_data: dict
     financial_data: dict
-    news_data: List[dict]
+    news_data: list[dict]
     technical_analysis: dict
     fundamental_analysis: dict
     sentiment_analysis: dict
     risk_assessment: dict
     decision: dict
-    report: Optional[dict]
-    agent_outputs: Annotated[List[dict], add_items]
-    errors: Annotated[List[dict], add_items]
+    report: dict | None
+    agent_outputs: Annotated[list[dict], add_items]
+    errors: Annotated[list[dict], add_items]
     retry_count: int
     agent_status: dict
     execution_metadata: dict
@@ -60,13 +60,13 @@ class ReActState(TypedDict):
     parallel_execution: bool
 
     # ReAct fields
-    messages: Annotated[List[BaseMessage], add_messages]
+    messages: Annotated[list[BaseMessage], add_messages]
     iteration: int
     max_iterations: int
-    tools_used: Annotated[List[str], add_items]
-    tool_call_history: Annotated[List[dict], add_items]
+    tools_used: Annotated[list[str], add_items]
+    tool_call_history: Annotated[list[dict], add_items]
     tool_results: Annotated[dict, merge_dicts]
-    final_answer: Optional[str]
+    final_answer: str | None
     accumulated_cost: float
     accumulated_tokens: dict
 
@@ -75,7 +75,7 @@ def create_initial_react_state(
     query: str,
     symbols: list[str],
     thread_id: str,
-    max_iterations: Optional[int] = None,
+    max_iterations: int | None = None,
 ) -> dict[str, Any]:
     from app.react_agent.prompts import PROMPT_VERSION
 
