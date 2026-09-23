@@ -47,8 +47,11 @@ def _load(file_name: str, module_name: str) -> ModuleType:
                 sys.modules[name] = original
 
 
-def _synthetic_state() -> dict[str, Any]:
-    rng = np.random.default_rng(5)
+def _synthetic_state(symbol: str = "TEST", seed: int = 5) -> dict[str, Any]:
+    """Build a synthetic seed state. Defaults reproduce the historical single
+    symbol fixture exactly; symbol/seed let eval scenarios compose multi-symbol
+    states with independent price paths."""
+    rng = np.random.default_rng(seed)
     days = 800
     closes = [150.0]
     for _ in range(days - 1):
@@ -65,13 +68,13 @@ def _synthetic_state() -> dict[str, Any]:
     benchmark = {**history, "close": [c * 0.92 for c in closes]}
 
     market = {
-        "symbol": "TEST",
+        "symbol": symbol,
         "current_price": closes[-1],
         "change": 1.2,
         "change_percent": 0.8,
         "volume": 1_000_000,
         "market_cap": 2.5e12,
-        "company_name": "Flow Test Inc",
+        "company_name": f"Flow Test {symbol} Inc",
         "sector": "Technology",
         "as_of": dates[-1],
         "historical_data": history,
@@ -109,15 +112,15 @@ def _synthetic_state() -> dict[str, Any]:
         {
             "title": "Strong profit beat and record growth",
             "summary": "surge in demand",
-            "related_symbols": ["TEST"],
+            "related_symbols": [symbol],
         },
-        {"title": "Neutral product announcement", "summary": "", "related_symbols": ["TEST"]},
+        {"title": "Neutral product announcement", "summary": "", "related_symbols": [symbol]},
     ]
     return {
-        "query": "Analyze TEST",
-        "symbols": ["TEST"],
-        "market_data": {"TEST": market},
-        "financial_data": {"TEST": financial},
+        "query": f"Analyze {symbol}",
+        "symbols": [symbol],
+        "market_data": {symbol: market},
+        "financial_data": {symbol: financial},
         "news_data": news,
     }
 

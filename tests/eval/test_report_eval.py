@@ -87,6 +87,39 @@ class TestScenarioEvals:
         result = _grade(state, report)
         assert result.passed, result.summary()
 
+    async def test_multi_symbol_mixed_regimes(self):
+        """3-symbol fan-out: uptrend + flat + deep drawdown in one run.
+
+        Exercises the per-symbol paths inside every agent plus the rubric's
+        cross-symbol coverage checks (decisions/evidence must cover all 3)."""
+        symbols = ("UPTREND", "FLATCO", "DRAWDN")
+        state = _synthetic_state("UPTREND", seed=5)
+        for sym, seed in (("FLATCO", 6), ("DRAWDN", 7)):
+            extra = _synthetic_state(sym, seed=seed)
+            state["market_data"][sym] = extra["market_data"][sym]
+            state["financial_data"][sym] = extra["financial_data"][sym]
+            state["news_data"].extend(extra["news_data"])
+
+        flat = state["market_data"]["FLATCO"]["historical_data"]
+        for key in ("open", "high", "low", "close"):
+            flat[key] = [150.0] * len(flat["dates"])
+
+        down = state["market_data"]["DRAWDN"]["historical_data"]
+        days = len(down["dates"])
+        closes = [max(1.0, 200.0 * (0.995**i)) for i in range(days)]
+        down["close"] = closes
+        down["open"] = [closes[0]] + closes[:-1]
+        down["high"] = [c * 1.005 for c in closes]
+        down["low"] = [c * 0.995 for c in closes]
+
+        state["symbols"] = list(symbols)
+        state["query"] = "Analyze " + ", ".join(symbols)
+
+        state, report = await _run_pipeline(state)
+        result = _grade(state, report)
+        assert result.passed, result.summary()
+        assert set(state["decision"]["decisions"]) == set(symbols)
+
 
 class TestRubricUnit:
     async def test_bad_report_fails_with_breakdown(self):
