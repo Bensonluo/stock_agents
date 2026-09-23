@@ -74,9 +74,23 @@ class DecisionMakingAgent(StatelessAgent):
                     results[symbol] = decision
             except Exception as e:
                 logger.error(f"Error making decision for {symbol}: {e}")
-                import traceback
-
-                traceback.print_exc()
+                # Conservative fallback: a dropped symbol means NO
+                # recommendation at all — hold with zero confidence keeps
+                # the report schema and symbol coverage intact.
+                results[symbol] = {
+                    "symbol": symbol,
+                    "action": "hold",
+                    "confidence": 0.0,
+                    "score": 0.0,
+                    "component_scores": {},
+                    "position_size": {
+                        "percentage_of_portfolio": 0,
+                        "sizing_rationale": "Decision engine error; no position",
+                    },
+                    "price_targets": {},
+                    "rationale": f"Decision engine error ({type(e).__name__}); defaulted to hold",
+                    "warnings": [],
+                }
 
         # Use LLM for final decision synthesis if available
         llm_summary = None
@@ -223,8 +237,11 @@ class DecisionMakingAgent(StatelessAgent):
         else:
             base_size = 5
 
-        # Cap by risk recommendation
-        max_from_risk = risk_rec.get("max_position_size", 10)
+        # Cap by risk recommendation. Degraded risk payloads can carry an
+        # explicit None — .get's default only fires when the key is absent.
+        max_from_risk = risk_rec.get("max_position_size")
+        if not isinstance(max_from_risk, int | float):
+            max_from_risk = 10
         final_size = min(base_size, max_from_risk)
 
         return {

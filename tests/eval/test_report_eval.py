@@ -120,6 +120,48 @@ class TestScenarioEvals:
         assert result.passed, result.summary()
         assert set(state["decision"]["decisions"]) == set(symbols)
 
+    async def test_ashare_akshare_shaped_data_degrades_gracefully(self):
+        """CN symbols arrive via AkShare with a much thinner payload: no
+        historical_data/benchmark, renamed financial metrics (net_margin,
+        debt_to_asset), no income statement or cash flow. The pipeline must
+        still produce a schema-compliant report covering both symbols."""
+        state = _synthetic_state("TEST", seed=5)
+        cn = "600519"
+        state["symbols"] = ["TEST", cn]
+        state["query"] = f"Analyze TEST, {cn}"
+        state["market_data"][cn] = {
+            "symbol": cn,
+            "current_price": 1650.0,
+            "change": 1.2,
+            "change_percent": 1.2,
+            "volume": 2_500_000,
+            "amount": 4.1e9,
+            "amplitude": 2.1,
+            "high": 1660.0,
+            "low": 1635.0,
+            "open": 1640.0,
+            "previous_close": 1630.0,
+            "timestamp": "2026-09-24T10:00:00",
+        }
+        state["financial_data"][cn] = {
+            "symbol": cn,
+            "metrics": {
+                "roe": 0.31,
+                "roa": 0.19,
+                "gross_margin": 0.91,
+                "net_margin": 0.49,
+                "debt_to_asset": 0.21,
+                "current_ratio": 4.2,
+                "quick_ratio": 3.9,
+            },
+            "timestamp": "2026-09-24T10:00:00",
+        }
+
+        state, report = await _run_pipeline(state)
+        result = _grade(state, report)
+        assert result.passed, result.summary()
+        assert cn in state["decision"]["decisions"]
+
 
 class TestRubricUnit:
     async def test_bad_report_fails_with_breakdown(self):

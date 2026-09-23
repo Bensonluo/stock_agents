@@ -230,7 +230,8 @@ class ReportService:
     def _evidence_index(cls, c: dict[str, Any]) -> dict[str, Any]:
         """Every traceable number, grouped by symbol, for the evidence drawer."""
         index: dict[str, Any] = {}
-        for symbol, analysis in c["technical_analysis"].items():
+        for symbol in c["symbols"]:
+            analysis = c["technical_analysis"].get(symbol) or {}
             records = list(analysis.get("evidence") or [])
             records += list((analysis.get("weekly_sma") or {}).get("evidence") or [])
             records += list(
@@ -243,8 +244,18 @@ class ReportService:
                 ).get("evidence")
                 or []
             )
-            if records:
-                index[symbol] = records
+            if not records:
+                # Degraded symbols (e.g. thin AkShare A-share payloads with no
+                # historical data) can lack analysis output entirely; surface
+                # an explicit availability record so the drawer still covers
+                # every requested symbol instead of dropping it silently.
+                records = [
+                    {
+                        "source": "data_availability",
+                        "note": "no analyzable market data; decision degraded",
+                    }
+                ]
+            index[symbol] = records
         return index
 
     @classmethod
