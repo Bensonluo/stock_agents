@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver, Checkpoint, CheckpointMetadata
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -49,7 +49,7 @@ class PostgresCheckpointManager:
     - Concurrent-safe state management
 
     The custom SQL save/load methods are durable. The saver returned to
-    LangGraph is still a ``MemorySaver`` until a compatible SQL saver is wired.
+    LangGraph is still an in-memory saver until a compatible SQL saver is wired.
 
     Core learning: Understanding how state persistence enables
     fault tolerance and recovery in distributed systems.
@@ -70,7 +70,7 @@ class PostgresCheckpointManager:
         Base.metadata.create_all(self.engine)
 
         # LangGraph checkpoint saver (in-memory for now, can be replaced with PostgreSQL)
-        self.checkpoint_saver = MemorySaver()
+        self.checkpoint_saver = InMemorySaver()
 
     def save_checkpoint(
         self,
@@ -360,7 +360,7 @@ class InMemoryCheckpointManager:
         """Initialize the in-memory checkpoint manager."""
         self.checkpoints: dict[str, dict[str, Checkpoint]] = {}
         self.states: dict[str, dict[str, AgentState]] = {}
-        self.checkpoint_saver = MemorySaver()
+        self.checkpoint_saver = InMemorySaver()
 
     def save_checkpoint(
         self,
