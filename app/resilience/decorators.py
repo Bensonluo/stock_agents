@@ -2,7 +2,8 @@
 
 import asyncio
 import functools
-from typing import Any, Callable, Optional, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from app.resilience.circuit_breaker import (
     get_circuit_breaker_registry,
@@ -17,9 +18,9 @@ T = TypeVar("T")
 
 
 def fault_tolerant(
-    name: Optional[str] = None,
+    name: str | None = None,
     max_retries: int = 3,
-    timeout: Optional[float] = None,
+    timeout: float | None = None,
     circuit_breaker: bool = True,
 ):
     """Decorator that adds comprehensive fault tolerance to a function.
@@ -138,6 +139,7 @@ def fault_tolerant(
 
     return decorator
 
+
 def with_retry(
     max_attempts: int = 3,
     strategy: str = "exponential_backoff",
@@ -181,9 +183,7 @@ def with_retry(
                 base_delay=base_delay,
             )
 
-            return retry_manager.execute_with_retry_sync(
-                func, *args, config=retry_config, **kwargs
-            )
+            return retry_manager.execute_with_retry_sync(func, *args, config=retry_config, **kwargs)
 
         if asyncio.iscoroutinefunction(func):
             return async_wrapper
@@ -195,7 +195,7 @@ def with_retry(
 
 def with_timeout(
     timeout_seconds: float,
-    name: Optional[str] = None,
+    name: str | None = None,
 ):
     """Decorator that adds timeout protection to a function.
 
@@ -241,7 +241,7 @@ def with_timeout(
 def with_circuit_breaker(
     failure_threshold: int = 5,
     recovery_timeout: int = 60,
-    name: Optional[str] = None,
+    name: str | None = None,
 ):
     """Decorator that adds circuit breaker protection to a function.
 

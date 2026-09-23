@@ -10,7 +10,6 @@
 
 import json
 import logging
-from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -23,11 +22,13 @@ router = APIRouter()
 
 # ============ 响应模型 ============
 
+
 class HistoryListItem(BaseModel):
     """历史记录列表项"""
+
     id: int
     thread_id: str
-    symbols: List[str]
+    symbols: list[str]
     query: str
     status: str
     created_at: str
@@ -40,9 +41,10 @@ class HistoryListItem(BaseModel):
 
 class HistoryDetail(BaseModel):
     """历史记录详情"""
+
     id: int
     thread_id: str
-    symbols: List[str]
+    symbols: list[str]
     query: str
     status: str
     result: dict
@@ -53,7 +55,8 @@ class HistoryDetail(BaseModel):
 
 class HistoryListResponse(BaseModel):
     """历史记录列表响应"""
-    items: List[HistoryListItem]
+
+    items: list[HistoryListItem]
     total: int
     page: int
     page_size: int
@@ -62,6 +65,7 @@ class HistoryListResponse(BaseModel):
 
 class HistoryStatsResponse(BaseModel):
     """历史统计响应"""
+
     total_analyses: int
     completed: int
     failed: int
@@ -70,6 +74,7 @@ class HistoryStatsResponse(BaseModel):
 
 
 # ============ 辅助函数 ============
+
 
 def record_to_list_item(record: AnalysisRecord) -> HistoryListItem:
     """将数据库记录转换为列表项"""
@@ -86,7 +91,7 @@ def record_to_list_item(record: AnalysisRecord) -> HistoryListItem:
         status=record.status,
         created_at=record.created_at,
         updated_at=record.updated_at,
-        execution_time=record.execution_time or 0.0
+        execution_time=record.execution_time or 0.0,
     )
 
 
@@ -111,17 +116,18 @@ def record_to_detail(record: AnalysisRecord) -> HistoryDetail:
         result=result,
         created_at=record.created_at,
         updated_at=record.updated_at,
-        execution_time=record.execution_time or 0.0
+        execution_time=record.execution_time or 0.0,
     )
 
 
 # ============ API 端点 ============
 
+
 @router.get("", response_model=HistoryListResponse)
 async def list_history(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
-    status: Optional[str] = Query(None, description="状态过滤"),
+    status: str | None = Query(None, description="状态过滤"),
 ):
     """
     获取分析历史记录列表
@@ -155,7 +161,7 @@ async def list_history(
         total=total,
         page=page,
         page_size=page_size,
-        has_more=(offset + len(items)) < total
+        has_more=(offset + len(items)) < total,
     )
 
 
@@ -176,7 +182,7 @@ async def get_history_stats():
         completed=db.count_records(status="completed"),
         failed=db.count_records(status="failed"),
         pending=db.count_records(status="pending"),
-        running=db.count_records(status="running")
+        running=db.count_records(status="running"),
     )
 
 
@@ -203,11 +209,7 @@ async def search_history(
 
     logger.info(f"[History API] 搜索到 {len(items)} 条记录")
 
-    return {
-        "items": items,
-        "keyword": keyword,
-        "count": len(items)
-    }
+    return {"items": items, "keyword": keyword, "count": len(items)}
 
 
 @router.get("/{thread_id}")
@@ -256,8 +258,4 @@ async def delete_history(thread_id: str):
 
     logger.info(f"[History API] 删除成功: thread_id={thread_id}")
 
-    return {
-        "success": True,
-        "message": "记录已删除",
-        "thread_id": thread_id
-    }
+    return {"success": True, "message": "记录已删除", "thread_id": thread_id}

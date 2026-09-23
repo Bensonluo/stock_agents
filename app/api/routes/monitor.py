@@ -1,7 +1,6 @@
 """简化的监控 API - 使用轮询方式"""
 
 from datetime import datetime
-from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -9,30 +8,34 @@ from pydantic import BaseModel
 router = APIRouter()
 
 # 全局状态存储
-_workflow_states: Dict[str, Dict] = {}
-_agent_logs: Dict[str, List[Dict]] = {}
+_workflow_states: dict[str, dict] = {}
+_agent_logs: dict[str, list[dict]] = {}
+
 
 class AgentStatus(BaseModel):
     name: str
     status: str  # pending, running, completed, failed
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
-    error: Optional[str] = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    error: str | None = None
+
 
 class WorkflowStatusResponse(BaseModel):
     thread_id: str
     status: str  # pending, running, completed, failed
-    agents: Dict[str, AgentStatus]
-    current_agent: Optional[str] = None
+    agents: dict[str, AgentStatus]
+    current_agent: str | None = None
     progress: float = 0.0
     created_at: str
     updated_at: str
+
 
 class LogEntry(BaseModel):
     timestamp: str
     agent: str
     level: str
     message: str
+
 
 # 初始化工作流状态
 def init_workflow(thread_id: str):
@@ -44,7 +47,7 @@ def init_workflow(thread_id: str):
         "sentiment_analysis",
         "risk_assessment",
         "decision_making",
-        "report_generation"
+        "report_generation",
     ]
 
     _workflow_states[thread_id] = {
@@ -54,9 +57,10 @@ def init_workflow(thread_id: str):
         "current_agent": None,
         "progress": 0.0,
         "created_at": datetime.now().isoformat(),
-        "updated_at": datetime.now().isoformat()
+        "updated_at": datetime.now().isoformat(),
     }
     _agent_logs[thread_id] = []
+
 
 # 更新智能体状态
 def update_agent_status(thread_id: str, agent: str, status: str, error: str = None):
@@ -68,9 +72,13 @@ def update_agent_status(thread_id: str, agent: str, status: str, error: str = No
     state["agents"][agent] = {
         "name": agent,
         "status": status,
-        "started_at": datetime.now().isoformat() if status == "running" else state["agents"][agent].get("started_at"),
+        "started_at": (
+            datetime.now().isoformat()
+            if status == "running"
+            else state["agents"][agent].get("started_at")
+        ),
         "completed_at": datetime.now().isoformat() if status in ["completed", "failed"] else None,
-        "error": error
+        "error": error,
     }
     state["current_agent"] = agent if status == "running" else None
     state["updated_at"] = datetime.now().isoformat()
@@ -87,22 +95,26 @@ def update_agent_status(thread_id: str, agent: str, status: str, error: str = No
     elif any(a["status"] == "failed" for a in state["agents"].values()):
         state["status"] = "failed"
 
+
 # 添加日志
 def add_log(thread_id: str, agent: str, level: str, message: str):
     """添加日志条目"""
     if thread_id not in _agent_logs:
         _agent_logs[thread_id] = []
 
-    _agent_logs[thread_id].append({
-        "timestamp": datetime.now().isoformat(),
-        "agent": agent,
-        "level": level,
-        "message": message
-    })
+    _agent_logs[thread_id].append(
+        {
+            "timestamp": datetime.now().isoformat(),
+            "agent": agent,
+            "level": level,
+            "message": message,
+        }
+    )
 
     # 保留最近 200 条
     if len(_agent_logs[thread_id]) > 200:
         _agent_logs[thread_id] = _agent_logs[thread_id][-200:]
+
 
 @router.get("/workflow/{thread_id}", response_model=WorkflowStatusResponse)
 async def get_workflow_status(thread_id: str):
@@ -111,6 +123,7 @@ async def get_workflow_status(thread_id: str):
         raise HTTPException(status_code=404, detail="Workflow not found")
 
     return _workflow_states[thread_id]
+
 
 @router.get("/workflow/{thread_id}/logs")
 async def get_workflow_logs(thread_id: str, limit: int = 50):
@@ -121,6 +134,7 @@ async def get_workflow_logs(thread_id: str, limit: int = 50):
     logs = _agent_logs[thread_id][-limit:]
     return {"logs": logs, "count": len(logs)}
 
+
 @router.get("/workflows")
 async def list_workflows():
     """列出所有工作流"""
@@ -130,11 +144,12 @@ async def list_workflows():
                 "thread_id": tid,
                 "status": state["status"],
                 "progress": state["progress"],
-                "updated_at": state["updated_at"]
+                "updated_at": state["updated_at"],
             }
             for tid, state in _workflow_states.items()
         ]
     }
+
 
 # 导出辅助函数
 __all__ = ["router", "init_workflow", "update_agent_status", "add_log"]

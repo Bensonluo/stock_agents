@@ -181,8 +181,14 @@ class TestLegacyRunEndpoint:
         body = response.json()
         # The legacy response model fields must all be present and numeric.
         for key in (
-            "final_value", "total_return", "total_return_pct", "annual_return",
-            "sharpe_ratio", "max_drawdown", "win_rate", "total_trades",
+            "final_value",
+            "total_return",
+            "total_return_pct",
+            "annual_return",
+            "sharpe_ratio",
+            "max_drawdown",
+            "win_rate",
+            "total_trades",
             "equity",
         ):
             assert key in body

@@ -24,7 +24,11 @@ MIN_BETA_OBSERVATIONS = 20
 VOL_REGIME_WINDOW = 20
 
 # Market shock scenarios for stress estimates (fractional moves).
-MARKET_SHOCKS: dict[str, float] = {"market_-5pct": -0.05, "market_-10pct": -0.10, "market_-20pct": -0.20}
+MARKET_SHOCKS: dict[str, float] = {
+    "market_-5pct": -0.05,
+    "market_-10pct": -0.10,
+    "market_-20pct": -0.20,
+}
 
 
 def to_returns(closes: list[float] | np.ndarray) -> np.ndarray:
@@ -195,9 +199,7 @@ def stress_scenarios(beta: float | None) -> dict[str, Any]:
         return {"status": "insufficient_data", "scenarios": {}}
     return {
         "status": "available",
-        "scenarios": {
-            name: round(beta * shock, 4) for name, shock in MARKET_SHOCKS.items()
-        },
+        "scenarios": {name: round(beta * shock, 4) for name, shock in MARKET_SHOCKS.items()},
     }
 
 
@@ -258,10 +260,34 @@ def risk_evidence(
         return evidence
 
     specs = (
-        ("volatility_annualized", "volatility_annualized", "ratio", "std(daily_returns) * sqrt(252)", {}),
-        ("beta", "beta", "ratio", "cov(r_stock, r_benchmark) / var(r_benchmark)", {"estimator": "ols"}),
-        ("cvar_95", "cvar_95", "ratio", "mean(returns <= quantile(returns, 0.05))", {"level": 0.95}),
-        ("sortino", "sortino", "ratio", "(mean(r) / downside_deviation(r)) * sqrt(252)", {"target": 0.0}),
+        (
+            "volatility_annualized",
+            "volatility_annualized",
+            "ratio",
+            "std(daily_returns) * sqrt(252)",
+            {},
+        ),
+        (
+            "beta",
+            "beta",
+            "ratio",
+            "cov(r_stock, r_benchmark) / var(r_benchmark)",
+            {"estimator": "ols"},
+        ),
+        (
+            "cvar_95",
+            "cvar_95",
+            "ratio",
+            "mean(returns <= quantile(returns, 0.05))",
+            {"level": 0.95},
+        ),
+        (
+            "sortino",
+            "sortino",
+            "ratio",
+            "(mean(r) / downside_deviation(r)) * sqrt(252)",
+            {"target": 0.0},
+        ),
     )
     for key, name, unit, formula, params in specs:
         value = metrics.get(key)

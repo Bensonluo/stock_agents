@@ -34,7 +34,8 @@ def analyze_sentiment(news_data: list, symbols: list[str]) -> dict[str, Any]:
 
     for symbol in symbols:
         symbol_news = [
-            n for n in news_data
+            n
+            for n in news_data
             if symbol in n.get("related_symbols", []) or n.get("original_symbol") == symbol
         ]
         results[symbol] = score_news(symbol_news) if symbol_news else empty_sentiment()

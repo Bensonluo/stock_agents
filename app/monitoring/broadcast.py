@@ -3,7 +3,7 @@
 import json
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 from fastapi import WebSocket
 
@@ -27,16 +27,16 @@ class ConnectionManager:
     def __init__(self):
         """Initialize the connection manager."""
         # thread_id -> set of WebSocket connections
-        self._thread_subscribers: Dict[str, Set[WebSocket]] = defaultdict(set)
+        self._thread_subscribers: dict[str, set[WebSocket]] = defaultdict(set)
         # All connections (for global broadcasts)
-        self._all_connections: Set[WebSocket] = set()
+        self._all_connections: set[WebSocket] = set()
         # WebSocket -> thread_ids mapping (for cleanup)
-        self._connection_threads: Dict[WebSocket, Set[str]] = defaultdict(set)
+        self._connection_threads: dict[WebSocket, set[str]] = defaultdict(set)
 
     async def connect(
         self,
         websocket: WebSocket,
-        thread_id: Optional[str] = None,
+        thread_id: str | None = None,
     ) -> None:
         """Connect a new WebSocket client.
 
@@ -52,10 +52,7 @@ class ConnectionManager:
             self._thread_subscribers[thread_id].add(websocket)
             self._connection_threads[websocket].add(thread_id)
 
-        logger.debug(
-            f"WebSocket connected: {id(websocket)}, "
-            f"thread_id: {thread_id or 'all'}"
-        )
+        logger.debug(f"WebSocket connected: {id(websocket)}, " f"thread_id: {thread_id or 'all'}")
 
     async def disconnect(self, websocket: WebSocket) -> None:
         """Disconnect a WebSocket client.
@@ -106,8 +103,8 @@ class ConnectionManager:
 
     async def broadcast(
         self,
-        message: Dict[str, Any],
-        thread_id: Optional[str] = None,
+        message: dict[str, Any],
+        thread_id: str | None = None,
     ) -> None:
         """Broadcast a message to connected clients.
 
@@ -147,9 +144,9 @@ class ConnectionManager:
         thread_id: str,
         status: str,
         step: int,
-        execution_time: Optional[float] = None,
-        error: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        execution_time: float | None = None,
+        error: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Broadcast an agent lifecycle event.
 
@@ -189,7 +186,7 @@ class ConnectionManager:
         execution_time: float,
         success: bool,
         total_steps: int,
-        error: Optional[str] = None,
+        error: str | None = None,
     ) -> None:
         """Broadcast workflow completion event.
 
@@ -216,7 +213,7 @@ class ConnectionManager:
         # so monitoring page can see all workflow completions
         await self.broadcast(message, None)
 
-    def get_connection_count(self, thread_id: Optional[str] = None) -> int:
+    def get_connection_count(self, thread_id: str | None = None) -> int:
         """Get the number of active connections.
 
         Args:
@@ -231,7 +228,7 @@ class ConnectionManager:
 
 
 # Global connection manager instance
-_connection_manager: Optional[ConnectionManager] = None
+_connection_manager: ConnectionManager | None = None
 
 
 def get_connection_manager() -> ConnectionManager:

@@ -79,9 +79,17 @@ def _synthetic_state() -> dict[str, Any]:
     }
     financial = {
         "metrics": {
-            "roe": 0.19, "roa": 0.08, "profit_margin": 0.21, "operating_margin": 0.26,
-            "pe_ratio": 19.0, "pb_ratio": 3.1, "ps_ratio": 3.9, "trailing_eps": 6.2,
-            "debt_to_equity": 0.7, "current_ratio": 1.7, "revenue_growth": 0.13,
+            "roe": 0.19,
+            "roa": 0.08,
+            "profit_margin": 0.21,
+            "operating_margin": 0.26,
+            "pe_ratio": 19.0,
+            "pb_ratio": 3.1,
+            "ps_ratio": 3.9,
+            "trailing_eps": 6.2,
+            "debt_to_equity": 0.7,
+            "current_ratio": 1.7,
+            "revenue_growth": 0.13,
             "earnings_growth": 0.09,
         },
         "income_statement": {
@@ -98,10 +106,12 @@ def _synthetic_state() -> dict[str, Any]:
         },
     }
     news = [
-        {"title": "Strong profit beat and record growth", "summary": "surge in demand",
-         "related_symbols": ["TEST"]},
-        {"title": "Neutral product announcement", "summary": "",
-         "related_symbols": ["TEST"]},
+        {
+            "title": "Strong profit beat and record growth",
+            "summary": "surge in demand",
+            "related_symbols": ["TEST"],
+        },
+        {"title": "Neutral product announcement", "summary": "", "related_symbols": ["TEST"]},
     ]
     return {
         "query": "Analyze TEST",
@@ -167,9 +177,14 @@ def test_pipeline_produces_complete_json_safe_report() -> None:
     # --- report-level assertions ---
     sections = report["sections"]
     for key in (
-        "overview", "technical_analysis", "fundamental_analysis",
-        "sentiment_analysis", "risk_analysis", "recommendations",
-        "research_synthesis", "evidence_index",
+        "overview",
+        "technical_analysis",
+        "fundamental_analysis",
+        "sentiment_analysis",
+        "risk_analysis",
+        "recommendations",
+        "research_synthesis",
+        "evidence_index",
     ):
         assert key in sections, f"missing report section {key}"
     assert sections["evidence_index"]["TEST"], "evidence drawer has no records"

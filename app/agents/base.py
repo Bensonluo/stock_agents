@@ -1,7 +1,7 @@
 """Base agent class for all agents in the system."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 
@@ -33,11 +33,11 @@ class BaseAgent(ABC):
     def __init__(
         self,
         name: str,
-        llm: Optional[BaseChatModel] = None,
-        monitor: Optional[AgentMonitor] = None,
-        circuit_breaker_registry: Optional[CircuitBreakerRegistry] = None,
-        time_limiter: Optional[TimeLimiter] = None,
-        timeout: Optional[int] = None,
+        llm: BaseChatModel | None = None,
+        monitor: AgentMonitor | None = None,
+        circuit_breaker_registry: CircuitBreakerRegistry | None = None,
+        time_limiter: TimeLimiter | None = None,
+        timeout: int | None = None,
     ):
         """Initialize the base agent.
 
@@ -59,6 +59,7 @@ class BaseAgent(ABC):
 
         # Configuration
         from app.config import settings
+
         self.timeout = timeout or settings.timeout_per_agent
         self.max_retries = settings.max_retries
 
@@ -108,6 +109,7 @@ class BaseAgent(ABC):
 
             # Add error to state
             from app.orchestration.state import add_error
+
             state = add_error(
                 state,
                 self.name,
@@ -174,6 +176,7 @@ class BaseAgent(ABC):
 
                 # Add error to state
                 from app.orchestration.state import add_error
+
                 state = add_error(
                     state,
                     self.name,
@@ -204,7 +207,7 @@ class BaseAgent(ABC):
         ]
         return error_type in retryable_errors
 
-    def _extract_result_summary(self, state: AgentState) -> Dict[str, Any]:
+    def _extract_result_summary(self, state: AgentState) -> dict[str, Any]:
         """Extract a summary of results from the state.
 
         Args:
@@ -265,7 +268,7 @@ class BaseAgent(ABC):
 
         return response.content
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get the current status of this agent.
 
         Returns:
@@ -274,9 +277,7 @@ class BaseAgent(ABC):
         return {
             "name": self.name,
             "health": self.monitor.get_agent_health(self.name),
-            "circuit_breaker_state": self.circuit_breaker_registry.get(
-                self.name
-            ).get_state().value,
+            "circuit_breaker_state": self.circuit_breaker_registry.get(self.name).get_state().value,
         }
 
 
@@ -288,7 +289,7 @@ class StatelessAgent(BaseAgent):
     """
 
     @abstractmethod
-    async def process(self, state: AgentState) -> Dict[str, Any]:
+    async def process(self, state: AgentState) -> dict[str, Any]:
         """Process the state and return results.
 
         Args:

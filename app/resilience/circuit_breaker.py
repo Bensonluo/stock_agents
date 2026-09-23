@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.utils.logging import get_logger
 
@@ -36,7 +36,7 @@ class CallResult:
     success: bool
     timestamp: datetime
     latency: float = 0.0
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -48,9 +48,9 @@ class CircuitBreakerStats:
     total_calls: int = 0
     successful_calls: int = 0
     failed_calls: int = 0
-    last_failure_time: Optional[datetime] = None
-    last_state_change: Optional[datetime] = None
-    recent_results: List[CallResult] = field(default_factory=list)
+    last_failure_time: datetime | None = None
+    last_state_change: datetime | None = None
+    recent_results: list[CallResult] = field(default_factory=list)
     opened_count: int = 0  # Number of times circuit has opened
 
     def failure_rate(self) -> float:
@@ -86,7 +86,7 @@ class CircuitBreaker:
     Core learning: Understanding fault tolerance patterns for distributed systems.
     """
 
-    def __init__(self, name: str, config: Optional[CircuitBreakerConfig] = None):
+    def __init__(self, name: str, config: CircuitBreakerConfig | None = None):
         """Initialize the circuit breaker.
 
         Args:
@@ -151,7 +151,7 @@ class CircuitBreaker:
 
         logger.debug(f"Circuit breaker '{self.name}' recorded success")
 
-    def record_failure(self, error: Optional[str] = None) -> None:
+    def record_failure(self, error: str | None = None) -> None:
         """Record a failed call.
 
         Args:
@@ -174,7 +174,8 @@ class CircuitBreaker:
         elif self.stats.state == CircuitState.CLOSED:
             # Check if we've exceeded the failure threshold
             recent_failures = sum(
-                1 for r in self.stats.recent_results[-self.config.failure_threshold :]
+                1
+                for r in self.stats.recent_results[-self.config.failure_threshold :]
                 if not r.success
             )
             if recent_failures >= self.config.failure_threshold:
@@ -199,7 +200,7 @@ class CircuitBreaker:
         self.is_open()  # This triggers state transition if needed
         return self.stats.state
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get circuit breaker statistics.
 
         Returns:
@@ -213,14 +214,10 @@ class CircuitBreaker:
             "failed_calls": self.stats.failed_calls,
             "failure_rate": self.stats.failure_rate(),
             "last_failure_time": (
-                self.stats.last_failure_time.isoformat()
-                if self.stats.last_failure_time
-                else None
+                self.stats.last_failure_time.isoformat() if self.stats.last_failure_time else None
             ),
             "last_state_change": (
-                self.stats.last_state_change.isoformat()
-                if self.stats.last_state_change
-                else None
+                self.stats.last_state_change.isoformat() if self.stats.last_state_change else None
             ),
             "opened_count": self.stats.opened_count,
             "config": {
@@ -259,13 +256,13 @@ class CircuitBreakerRegistry:
     different agents or services.
     """
 
-    def __init__(self, default_config: Optional[CircuitBreakerConfig] = None):
+    def __init__(self, default_config: CircuitBreakerConfig | None = None):
         """Initialize the registry.
 
         Args:
             default_config: Default configuration for new circuit breakers
         """
-        self.circuit_breakers: Dict[str, CircuitBreaker] = {}
+        self.circuit_breakers: dict[str, CircuitBreaker] = {}
         self.default_config = default_config or CircuitBreakerConfig()
 
     def get(self, name: str) -> CircuitBreaker:
@@ -278,9 +275,7 @@ class CircuitBreakerRegistry:
             CircuitBreaker instance
         """
         if name not in self.circuit_breakers:
-            self.circuit_breakers[name] = CircuitBreaker(
-                name=name, config=self.default_config
-            )
+            self.circuit_breakers[name] = CircuitBreaker(name=name, config=self.default_config)
         return self.circuit_breakers[name]
 
     def is_open(self, name: str) -> bool:
@@ -314,7 +309,7 @@ class CircuitBreakerRegistry:
         """
         self.get(name).record_success(latency)
 
-    def record_failure(self, name: str, error: Optional[str] = None) -> None:
+    def record_failure(self, name: str, error: str | None = None) -> None:
         """Record a failed call.
 
         Args:
@@ -323,17 +318,15 @@ class CircuitBreakerRegistry:
         """
         self.get(name).record_failure(error)
 
-    def get_all_stats(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_stats(self) -> dict[str, dict[str, Any]]:
         """Get statistics for all circuit breakers.
 
         Returns:
             Dictionary mapping names to statistics
         """
-        return {
-            name: cb.get_stats() for name, cb in self.circuit_breakers.items()
-        }
+        return {name: cb.get_stats() for name, cb in self.circuit_breakers.items()}
 
-    def get_open_circuits(self) -> List[str]:
+    def get_open_circuits(self) -> list[str]:
         """Get list of circuit breakers that are currently open.
 
         Returns:
@@ -345,7 +338,7 @@ class CircuitBreakerRegistry:
             if cb.get_state() == CircuitState.OPEN
         ]
 
-    def reset(self, name: Optional[str] = None) -> None:
+    def reset(self, name: str | None = None) -> None:
         """Reset one or all circuit breakers.
 
         Args:
@@ -369,7 +362,7 @@ class CircuitBreakerRegistry:
 
 
 # Global circuit breaker registry
-_circuit_breaker_registry: Optional[CircuitBreakerRegistry] = None
+_circuit_breaker_registry: CircuitBreakerRegistry | None = None
 
 
 def get_circuit_breaker_registry() -> CircuitBreakerRegistry:

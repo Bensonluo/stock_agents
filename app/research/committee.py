@@ -37,7 +37,10 @@ def committee_review(
     if critical_flags:
         return _decision(
             "veto",
-            [f"Critical fundamental red flag: {flag.get('detail') or flag.get('code')}" for flag in critical_flags],
+            [
+                f"Critical fundamental red flag: {flag.get('detail') or flag.get('code')}"
+                for flag in critical_flags
+            ],
         )
 
     risk = risk or {}
@@ -57,10 +60,10 @@ def committee_review(
     if risk_level == "very_high":
         return _decision("veto", ["Risk level is very_high."])
 
-    if risk_level == "high" or (isinstance(shock_20, (int, float)) and shock_20 <= -0.30):
+    if risk_level == "high" or (isinstance(shock_20, int | float) and shock_20 <= -0.30):
         conditions.append("Position capped at 5% of portfolio.")
         conditions.append("A stop-loss is mandatory.")
-        if isinstance(suggested, (int, float)):
+        if isinstance(suggested, int | float):
             conditions.append(f"Engine suggested {suggested}% — capped by committee.")
         return _decision("limit", conditions)
 
@@ -68,7 +71,9 @@ def committee_review(
         conditions.append("Size within suggested limit; monitor volatility percentile.")
         return _decision("approve", conditions, position_cap_pct=suggested)
 
-    conditions.append("Low measured risk does NOT itself justify a position; direction must come from valuation/momentum evidence.")
+    conditions.append(
+        "Low measured risk does NOT itself justify a position; direction must come from valuation/momentum evidence."
+    )
     return _decision("approve", conditions, position_cap_pct=suggested)
 
 

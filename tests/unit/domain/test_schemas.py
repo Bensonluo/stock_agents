@@ -82,9 +82,7 @@ class TestMetricEvidence:
         assert evidence.as_of_date == date(2026, 8, 26)
 
     def test_missing_data_is_explicit_not_neutral(self) -> None:
-        evidence = MetricEvidence(
-            **_evidence(value=None, quality=MetricQuality.INSUFFICIENT_DATA)
-        )
+        evidence = MetricEvidence(**_evidence(value=None, quality=MetricQuality.INSUFFICIENT_DATA))
 
         assert evidence.value is None
         assert evidence.quality is MetricQuality.INSUFFICIENT_DATA
@@ -130,7 +128,11 @@ class TestDataQuality:
 
     def test_critical_issue_blocks_conclusions(self) -> None:
         quality = self._quality(
-            issues=[QualityIssue(code="look_ahead", severity=IssueSeverity.CRITICAL, subject="AAPL.prices")]
+            issues=[
+                QualityIssue(
+                    code="look_ahead", severity=IssueSeverity.CRITICAL, subject="AAPL.prices"
+                )
+            ]
         )
 
         assert quality.verdict is QualityGateVerdict.INSUFFICIENT

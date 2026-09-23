@@ -113,7 +113,9 @@ class TestStressAndPortfolio:
 
     def test_concentration_hhi(self) -> None:
         assert concentration_hhi({"A": 1.0}) == pytest.approx(1.0)
-        assert concentration_hhi({"A": 0.25, "B": 0.25, "C": 0.25, "D": 0.25}) == pytest.approx(0.25)
+        assert concentration_hhi({"A": 0.25, "B": 0.25, "C": 0.25, "D": 0.25}) == pytest.approx(
+            0.25
+        )
         assert concentration_hhi({"A": 0.0}) is None
 
 
@@ -142,7 +144,14 @@ class TestToolIntegration:
 
     def test_assess_risk_without_benchmark_marks_relative_metrics_missing(self) -> None:
         result = assess_risk.invoke(
-            {"market_data": {"TEST": {"symbol": "TEST", "historical_data": _history(np.linspace(-0.01, 0.02, 60))}}}
+            {
+                "market_data": {
+                    "TEST": {
+                        "symbol": "TEST",
+                        "historical_data": _history(np.linspace(-0.01, 0.02, 60)),
+                    }
+                }
+            }
         )["TEST"]
 
         assert result["metrics"]["beta_status"] == "insufficient_data"

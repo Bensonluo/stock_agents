@@ -164,7 +164,7 @@ class TestAgentMetrics:
         metrics.record_execution(success=True, execution_time=1.0)
         metrics.record_execution(success=False, execution_time=1.0)
 
-        assert metrics.calculate_success_rate() == 2/3
+        assert metrics.calculate_success_rate() == 2 / 3
 
     def test_calculate_health_score(self):
         """Test health score calculation."""

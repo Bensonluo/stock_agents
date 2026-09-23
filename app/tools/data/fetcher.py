@@ -195,17 +195,24 @@ async def _yfinance_fetch(symbol: str) -> dict[str, Any] | None:
                     content = item.get("content", {})
                     title = content.get("title") or item.get("title")
                     if title:
-                        news_data.append({
-                            "title": title,
-                            "summary": content.get("summary") or item.get("summary"),
-                            "source": (content.get("provider") or {}).get("displayName") or item.get("publisher"),
-                        })
+                        news_data.append(
+                            {
+                                "title": title,
+                                "summary": content.get("summary") or item.get("summary"),
+                                "source": (content.get("provider") or {}).get("displayName")
+                                or item.get("publisher"),
+                            }
+                        )
             except Exception:
                 pass
 
             if market_data.get("current_price") or financial_data["metrics"].get("pe_ratio"):
                 logger.info(f"[yfinance] OK for {symbol}")
-                return {"market_data": market_data, "financial_data": financial_data, "news_data": news_data}
+                return {
+                    "market_data": market_data,
+                    "financial_data": financial_data,
+                    "news_data": news_data,
+                }
 
         except Exception as e:
             logger.warning(f"[yfinance] attempt {attempt+1} failed for {symbol}: {e}")
@@ -297,7 +304,14 @@ async def _tencent_hk_fetch(symbol: str) -> dict[str, Any] | None:
     if not klines and not quote:
         return None
 
-    hist: dict[str, list] = {"dates": [], "open": [], "high": [], "low": [], "close": [], "volume": []}
+    hist: dict[str, list] = {
+        "dates": [],
+        "open": [],
+        "high": [],
+        "low": [],
+        "close": [],
+        "volume": [],
+    }
     for row in klines:
         if len(row) < 6:
             continue
@@ -309,7 +323,9 @@ async def _tencent_hk_fetch(symbol: str) -> dict[str, Any] | None:
         hist["volume"].append(float(row[5]))
 
     price = (quote or {}).get("price") or (hist["close"][-1] if hist["close"] else None)
-    prev = (quote or {}).get("prev_close") or (hist["close"][-2] if len(hist["close"]) > 1 else None)
+    prev = (quote or {}).get("prev_close") or (
+        hist["close"][-2] if len(hist["close"]) > 1 else None
+    )
     yahoo_symbol = _convert_to_yahoo_symbol(symbol)
 
     return {
@@ -321,7 +337,8 @@ async def _tencent_hk_fetch(symbol: str) -> dict[str, Any] | None:
                 "previous_close": prev,
                 "change": price - prev if price and prev else None,
                 "change_percent": ((price - prev) / prev * 100) if price and prev else None,
-                "volume": (quote or {}).get("volume") or (hist["volume"][-1] if hist["volume"] else None),
+                "volume": (quote or {}).get("volume")
+                or (hist["volume"][-1] if hist["volume"] else None),
                 "as_of": hist["dates"][-1] if hist["dates"] else None,
                 "historical_data": hist,
             }
@@ -375,13 +392,18 @@ def _eastmoney_klines_to_hist(klines: list[str]) -> dict[str, list]:
         lows.append(float(parts[4]))
         volumes.append(float(parts[5]))
     return {
-        "dates": dates, "open": opens, "high": highs, "low": lows,
-        "close": closes, "volume": volumes,
+        "dates": dates,
+        "open": opens,
+        "high": highs,
+        "low": lows,
+        "close": closes,
+        "volume": volumes,
     }
 
 
 async def _eastmoney_hk_fetch(symbol: str) -> dict[str, Any] | None:
     """HK snapshot + history via direct East Money scrape (CN-friendly)."""
+
     def _get():
         end = datetime.now().strftime("%Y%m%d")
         beg = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
@@ -427,16 +449,25 @@ async def _akshare_hk(symbol: str, ak: Any) -> dict[str, Any] | None:
         end_date = datetime.now().strftime("%Y%m%d")
         start_date = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
         return ak.stock_hk_hist(
-            symbol=_hk_akshare_code(symbol), period="daily",
-            start_date=start_date, end_date=end_date, adjust="qfq",
+            symbol=_hk_akshare_code(symbol),
+            period="daily",
+            start_date=start_date,
+            end_date=end_date,
+            adjust="qfq",
         )
 
     df = await asyncio.to_thread(_get_hist)
     if df is None or df.empty:
         return None
 
-    col_map = {"日期": "date", "开盘": "open", "收盘": "close", "最高": "high",
-               "最低": "low", "成交量": "volume"}
+    col_map = {
+        "日期": "date",
+        "开盘": "open",
+        "收盘": "close",
+        "最高": "high",
+        "最低": "low",
+        "成交量": "volume",
+    }
     df = df.rename(columns=col_map)
     dates = [str(d) for d in df["date"].tolist()]
 
@@ -473,19 +504,29 @@ async def _akshare_hk(symbol: str, ak: Any) -> dict[str, Any] | None:
 
 async def _akshare_us(symbol: str, ak: Any) -> dict[str, Any] | None:
     """US stock via akshare."""
+
     # Get historical data
     def _get_hist():
         end_date = datetime.now().strftime("%Y%m%d")
         start_date = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
-        return ak.stock_us_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
+        return ak.stock_us_hist(
+            symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq"
+        )
 
     df = await asyncio.to_thread(_get_hist)
     if df is None or df.empty:
         return None
 
     # Rename columns to English
-    col_map = {"日期": "date", "开盘": "open", "收盘": "close", "最高": "high", "最低": "low",
-               "成交量": "volume", "涨跌幅": "change_pct"}
+    col_map = {
+        "日期": "date",
+        "开盘": "open",
+        "收盘": "close",
+        "最高": "high",
+        "最低": "low",
+        "成交量": "volume",
+        "涨跌幅": "change_pct",
+    }
     df = df.rename(columns=col_map)
 
     closes = df["close"].tolist()
@@ -512,8 +553,10 @@ async def _akshare_us(symbol: str, ak: Any) -> dict[str, Any] | None:
     # Try to get valuation data from baidu
     valuation = {}
     try:
+
         def _get_val():
             return ak.stock_us_valuation_baidu(symbol=symbol, indicator="总市值", period="近一年")
+
         val_df = await asyncio.to_thread(_get_val)
         if val_df is not None and not val_df.empty:
             latest = val_df.iloc[-1]
@@ -529,17 +572,27 @@ async def _akshare_us(symbol: str, ak: Any) -> dict[str, Any] | None:
 
 async def _akshare_cn(symbol: str, ak: Any) -> dict[str, Any] | None:
     """Chinese A-share via akshare."""
+
     def _get_hist():
         end_date = datetime.now().strftime("%Y%m%d")
         start_date = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
-        return ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
+        return ak.stock_zh_a_hist(
+            symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq"
+        )
 
     df = await asyncio.to_thread(_get_hist)
     if df is None or df.empty:
         return None
 
-    col_map = {"日期": "date", "开盘": "open", "收盘": "close", "最高": "high", "最低": "low",
-               "成交量": "volume", "涨跌幅": "change_pct"}
+    col_map = {
+        "日期": "date",
+        "开盘": "open",
+        "收盘": "close",
+        "最高": "high",
+        "最低": "low",
+        "成交量": "volume",
+        "涨跌幅": "change_pct",
+    }
     df = df.rename(columns=col_map)
 
     closes = df["close"].tolist()
@@ -685,17 +738,25 @@ async def _finnhub_fetch(symbol: str) -> dict[str, Any] | None:
     def _snapshot():
         quote = _finnhub_get("/quote", {"symbol": symbol}) or {}
         profile = _finnhub_get("/stock/profile2", {"symbol": symbol}) or {}
-        metric = (_finnhub_get("/stock/metric", {"symbol": symbol, "metric": "all"}) or {}).get("metric", {})
+        metric = (_finnhub_get("/stock/metric", {"symbol": symbol, "metric": "all"}) or {}).get(
+            "metric", {}
+        )
         return quote, profile, metric
 
     def _news():
         today = datetime.now()
         week_ago = today - timedelta(days=7)
-        return _finnhub_get("/company-news", {
-            "symbol": symbol,
-            "from": week_ago.strftime("%Y-%m-%d"),
-            "to": today.strftime("%Y-%m-%d"),
-        }) or []
+        return (
+            _finnhub_get(
+                "/company-news",
+                {
+                    "symbol": symbol,
+                    "from": week_ago.strftime("%Y-%m-%d"),
+                    "to": today.strftime("%Y-%m-%d"),
+                },
+            )
+            or []
+        )
 
     (snapshot, news) = await asyncio.gather(
         asyncio.to_thread(_snapshot),
@@ -742,9 +803,7 @@ async def _finnhub_fetch(symbol: str) -> dict[str, Any] | None:
             "pe_ratio": metric.get("peBasicExtraTTM"),
             "roe": _percentage_to_ratio(metric.get("roeTTM")),
             "roa": _percentage_to_ratio(metric.get("roaTTM")),
-            "dividend_yield": _percentage_to_ratio(
-                metric.get("dividendYieldIndicatedAnnual")
-            ),
+            "dividend_yield": _percentage_to_ratio(metric.get("dividendYieldIndicatedAnnual")),
             "10d_avg_volume": metric.get("10DayAverageTradingVolume"),
             "52_week_high": metric.get("52WeekHigh"),
             "52_week_low": metric.get("52WeekLow"),
@@ -759,13 +818,15 @@ async def _finnhub_fetch(symbol: str) -> dict[str, Any] | None:
     news_data = []
     if isinstance(news, list):
         for item in news[:10]:
-            news_data.append({
-                "title": item.get("headline"),
-                "summary": item.get("summary"),
-                "source": item.get("source"),
-                "datetime": item.get("datetime"),
-                "url": item.get("url"),
-            })
+            news_data.append(
+                {
+                    "title": item.get("headline"),
+                    "summary": item.get("summary"),
+                    "source": item.get("source"),
+                    "datetime": item.get("datetime"),
+                    "url": item.get("url"),
+                }
+            )
 
     logger.info(f"[finnhub] OK for {symbol}")
     return {"market_data": market_data, "financial_data": financial_data, "news_data": news_data}
@@ -784,16 +845,22 @@ async def _finnhub_historical(symbol: str, period: str) -> dict[str, Any] | None
     start_ts = end_ts - days * 24 * 3600
 
     def _get():
-        return _finnhub_get("/stock/candle", {
-            "symbol": symbol, "resolution": "D",
-            "from": start_ts, "to": end_ts,
-        })
+        return _finnhub_get(
+            "/stock/candle",
+            {
+                "symbol": symbol,
+                "resolution": "D",
+                "from": start_ts,
+                "to": end_ts,
+            },
+        )
 
     data = await asyncio.to_thread(_get)
     if not isinstance(data, dict) or data.get("s") != "ok" or not data.get("t"):
         return None
     return {
-        "symbol": symbol, "period": period,
+        "symbol": symbol,
+        "period": period,
         "dates": [datetime.fromtimestamp(t).strftime("%Y-%m-%d") for t in data["t"]],
         "open": data.get("o", []),
         "high": data.get("h", []),
@@ -834,7 +901,9 @@ def _alphavantage_get(params: dict[str, Any]) -> dict[str, Any] | None:
         if not isinstance(data, dict):
             return None
         if any(k in data for k in ("Note", "Information", "Error Message", "error")):
-            logger.warning(f"[alphavantage] {data.get('Note') or data.get('Information') or data.get('Error Message') or data.get('error')}")
+            logger.warning(
+                f"[alphavantage] {data.get('Note') or data.get('Information') or data.get('Error Message') or data.get('error')}"
+            )
             _AV_COOLDOWN_UNTIL = time.monotonic() + 60
             return None
         return data
@@ -864,11 +933,13 @@ async def _alphavantage_historical(symbol: str, period: str) -> dict[str, Any] |
         return None
 
     def _get():
-        return _alphavantage_get({
-            "function": "TIME_SERIES_DAILY",
-            "symbol": symbol,
-            "outputsize": "compact",  # 100 days; full is premium-only
-        })
+        return _alphavantage_get(
+            {
+                "function": "TIME_SERIES_DAILY",
+                "symbol": symbol,
+                "outputsize": "compact",  # 100 days; full is premium-only
+            }
+        )
 
     data = await asyncio.to_thread(_get)
     if not data:
@@ -903,9 +974,14 @@ async def _alphavantage_historical(symbol: str, period: str) -> dict[str, Any] |
 
     logger.info(f"[alphavantage] OK for {symbol} ({len(dates)} days)")
     return {
-        "symbol": symbol, "period": period,
-        "dates": dates, "open": opens, "high": highs,
-        "low": lows, "close": closes, "volume": volumes,
+        "symbol": symbol,
+        "period": period,
+        "dates": dates,
+        "open": opens,
+        "high": highs,
+        "low": lows,
+        "close": closes,
+        "volume": volumes,
     }
 
 
@@ -927,7 +1003,9 @@ async def _alphavantage_fetch(symbol: str) -> dict[str, Any] | None:
     yahoo_symbol = _convert_to_yahoo_symbol(symbol)
     current = float(price)
     previous = float(quote["08. previous close"]) if quote.get("08. previous close") else None
-    latest_day = str(quote.get("07. latest trading day") or quote.get("07. latest day") or "") or None
+    latest_day = (
+        str(quote.get("07. latest trading day") or quote.get("07. latest day") or "") or None
+    )
 
     return {
         "market_data": {
@@ -936,7 +1014,11 @@ async def _alphavantage_fetch(symbol: str) -> dict[str, Any] | None:
                 "current_price": current,
                 "previous_close": previous,
                 "change": current - previous if previous else None,
-                "change_percent": float(quote["10. change percent"].rstrip("%")) if quote.get("10. change percent") else None,
+                "change_percent": (
+                    float(quote["10. change percent"].rstrip("%"))
+                    if quote.get("10. change percent")
+                    else None
+                ),
                 "volume": int(quote["06. volume"]) if quote.get("06. volume") else None,
                 "as_of": latest_day,
                 "historical_data": {},
@@ -952,19 +1034,15 @@ async def _stooq_fetch(symbol: str) -> dict[str, Any] | None:
     """Fetch via Stooq.com free CSV download."""
     try:
         stooq_symbol = symbol.lower().replace(".", "-")
-        start_date = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime(
-            "%Y%m%d"
-        )
+        start_date = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
         end_date = datetime.now().strftime("%Y%m%d")
-        url = (
-            f"https://stooq.com/q/d/l/?s={stooq_symbol}"
-            f"&d1={start_date}&d2={end_date}&i=d"
-        )
+        url = f"https://stooq.com/q/d/l/?s={stooq_symbol}" f"&d1={start_date}&d2={end_date}&i=d"
 
         def _get():
             r = requests.get(url, timeout=15)
             r.raise_for_status()
             from io import StringIO
+
             df = pd.read_csv(StringIO(r.text))
             return df
 
@@ -1077,9 +1155,7 @@ async def fetch_stock_data(symbol: str) -> dict[str, Any] | None:
     return None
 
 
-async def fetch_historical(
-    symbol: str, period: str = DEFAULT_HISTORY_PERIOD
-) -> dict[str, Any]:
+async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) -> dict[str, Any]:
     """Fetch historical prices with fallback."""
     cache_key = f"hist_{symbol}_{period}"
     cached = _cache_get(cache_key)
@@ -1098,10 +1174,13 @@ async def fetch_historical(
         df = await asyncio.to_thread(_sync)
         if not df.empty:
             result = {
-                "symbol": symbol, "period": period,
+                "symbol": symbol,
+                "period": period,
                 "dates": [d.strftime("%Y-%m-%d") for d in df.index],
-                "open": df["Open"].tolist(), "high": df["High"].tolist(),
-                "low": df["Low"].tolist(), "close": df["Close"].tolist(),
+                "open": df["Open"].tolist(),
+                "high": df["High"].tolist(),
+                "low": df["Low"].tolist(),
+                "close": df["Close"].tolist(),
                 "volume": df["Volume"].tolist(),
             }
             _cache_set(cache_key, result, ttl=60)
@@ -1153,7 +1232,8 @@ async def fetch_historical(
             if klines:
                 hist = _eastmoney_klines_to_hist(klines)
                 result = {
-                    "symbol": symbol, "period": period,
+                    "symbol": symbol,
+                    "period": period,
                     **{k: v for k, v in hist.items()},
                 }
                 _cache_set(cache_key, result, ttl=60)
@@ -1170,6 +1250,7 @@ async def fetch_historical(
         start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
 
         if _is_chinese_symbol(symbol):
+
             def hist_fn():
                 return ak.stock_zh_a_hist(
                     symbol=symbol,
@@ -1178,7 +1259,9 @@ async def fetch_historical(
                     end_date=end_date,
                     adjust="qfq",
                 )
+
         elif _is_hk_symbol(symbol):
+
             def hist_fn():
                 return ak.stock_hk_hist(
                     symbol=_hk_akshare_code(symbol),
@@ -1187,7 +1270,9 @@ async def fetch_historical(
                     end_date=end_date,
                     adjust="qfq",
                 )
+
         else:
+
             def hist_fn():
                 return ak.stock_us_hist(
                     symbol=symbol,
@@ -1199,13 +1284,23 @@ async def fetch_historical(
 
         df = await asyncio.to_thread(hist_fn)
         if df is not None and not df.empty:
-            col_map = {"日期": "date", "开盘": "open", "收盘": "close", "最高": "high", "最低": "low", "成交量": "volume"}
+            col_map = {
+                "日期": "date",
+                "开盘": "open",
+                "收盘": "close",
+                "最高": "high",
+                "最低": "low",
+                "成交量": "volume",
+            }
             df = df.rename(columns=col_map)
             result = {
-                "symbol": symbol, "period": period,
+                "symbol": symbol,
+                "period": period,
                 "dates": [str(d) for d in df["date"].tolist()],
-                "open": df["open"].tolist(), "high": df["high"].tolist(),
-                "low": df["low"].tolist(), "close": df["close"].tolist(),
+                "open": df["open"].tolist(),
+                "high": df["high"].tolist(),
+                "low": df["low"].tolist(),
+                "close": df["close"].tolist(),
                 "volume": df["volume"].tolist() if "volume" in df else [],
             }
             _cache_set(cache_key, result, ttl=60)
@@ -1215,9 +1310,12 @@ async def fetch_historical(
 
     # Direct Yahoo API
     try:
+
         def _get():
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}"
-            r = requests.get(url, params={"range": period, "interval": "1d"}, headers=_YAHOO_HEADERS, timeout=15)
+            r = requests.get(
+                url, params={"range": period, "interval": "1d"}, headers=_YAHOO_HEADERS, timeout=15
+            )
             r.raise_for_status()
             return r.json()
 
@@ -1226,12 +1324,20 @@ async def fetch_historical(
         if result_list:
             quotes = result_list[0].get("indicators", {}).get("quote", [{}])[0]
             timestamps = result_list[0].get("timestamp", [])
-            dates = [datetime.fromtimestamp(t).strftime("%Y-%m-%d") for t in timestamps] if timestamps else []
+            dates = (
+                [datetime.fromtimestamp(t).strftime("%Y-%m-%d") for t in timestamps]
+                if timestamps
+                else []
+            )
             if dates:
                 result = {
-                    "symbol": symbol, "period": period, "dates": dates,
-                    "open": quotes.get("open", []), "high": quotes.get("high", []),
-                    "low": quotes.get("low", []), "close": quotes.get("close", []),
+                    "symbol": symbol,
+                    "period": period,
+                    "dates": dates,
+                    "open": quotes.get("open", []),
+                    "high": quotes.get("high", []),
+                    "low": quotes.get("low", []),
+                    "close": quotes.get("close", []),
                     "volume": quotes.get("volume", []),
                 }
                 _cache_set(cache_key, result, ttl=60)
@@ -1259,7 +1365,8 @@ async def fetch_historical(
         df = await asyncio.to_thread(_stooq_hist)
         if df is not None and not df.empty and "Close" in df.columns:
             result = {
-                "symbol": symbol, "period": period,
+                "symbol": symbol,
+                "period": period,
                 "dates": [str(d) for d in df["Date"].tolist()],
                 "open": df["Open"].tolist() if "Open" in df else [],
                 "high": df["High"].tolist() if "High" in df else [],

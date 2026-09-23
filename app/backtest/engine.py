@@ -138,9 +138,10 @@ def _target_position(data: pd.DataFrame, strategy: str, params: dict[str, Any]) 
         return state
 
     if strategy == "macd_strategy":
-        macd_line = close.ewm(span=int(params["fast_period"]), adjust=False).mean() - close.ewm(
-            span=int(params["slow_period"]), adjust=False
-        ).mean()
+        macd_line = (
+            close.ewm(span=int(params["fast_period"]), adjust=False).mean()
+            - close.ewm(span=int(params["slow_period"]), adjust=False).mean()
+        )
         signal_line = macd_line.ewm(span=int(params["signal_period"]), adjust=False).mean()
         state = (macd_line > signal_line).astype(float)
         # MACD needs slow+signal bars before it means anything.

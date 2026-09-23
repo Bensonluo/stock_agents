@@ -12,7 +12,7 @@ Core functionality:
 """
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -43,7 +43,7 @@ class ConnectionManager:
     def __init__(self) -> None:
         """Initialize the connection manager."""
         # Dict mapping thread_id to WebSocket connection
-        self._connections: Dict[str, WebSocket] = {}
+        self._connections: dict[str, WebSocket] = {}
         # Lock for thread-safe access to connections
         self._lock: asyncio.Lock = asyncio.Lock()
 
@@ -74,11 +74,10 @@ class ConnectionManager:
 
         connection_count = len(self._connections)
         logger.info(
-            f"WebSocket connected: thread_id={thread_id}, "
-            f"active_connections={connection_count}"
+            f"WebSocket connected: thread_id={thread_id}, " f"active_connections={connection_count}"
         )
 
-    async def disconnect(self, websocket: WebSocket, thread_id: Optional[str] = None) -> None:
+    async def disconnect(self, websocket: WebSocket, thread_id: str | None = None) -> None:
         """Remove a WebSocket connection from active connections.
 
         Args:
@@ -113,7 +112,7 @@ class ConnectionManager:
     async def send_to_thread(
         self,
         thread_id: str,
-        message: Dict[str, Any],
+        message: dict[str, Any],
     ) -> bool:
         """Send a message to a specific thread/client.
 
@@ -147,8 +146,8 @@ class ConnectionManager:
 
     async def broadcast(
         self,
-        message: Dict[str, Any],
-        exclude_thread_id: Optional[str] = None,
+        message: dict[str, Any],
+        exclude_thread_id: str | None = None,
     ) -> int:
         """Broadcast a message to all connected clients.
 
@@ -164,7 +163,7 @@ class ConnectionManager:
             connections = list(self._connections.items())
 
         sent_count = 0
-        failed_connections: List[str] = []
+        failed_connections: list[str] = []
 
         for thread_id, websocket in connections:
             # Skip excluded thread
@@ -204,7 +203,7 @@ class ConnectionManager:
         async with self._lock:
             return len(self._connections)
 
-    async def get_active_thread_ids(self) -> List[str]:
+    async def get_active_thread_ids(self) -> list[str]:
         """Get list of all active thread IDs.
 
         Returns:
@@ -253,7 +252,7 @@ class ConnectionManager:
 
 
 # Global connection manager instance
-_manager: Optional[ConnectionManager] = None
+_manager: ConnectionManager | None = None
 
 
 def get_manager() -> ConnectionManager:

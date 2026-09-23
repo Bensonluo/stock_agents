@@ -82,8 +82,8 @@ def _plain(value: Any) -> Any:
         return {key: _plain(item) for key, item in value.items()}
     if hasattr(value, "isoformat"):
         return value.isoformat()
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_plain(item) for item in value]
-    if value is not None and not isinstance(value, (str, int, float, bool)):
+    if value is not None and not isinstance(value, str | int | float | bool):
         return json.loads(json.dumps(value, default=str))
     return value

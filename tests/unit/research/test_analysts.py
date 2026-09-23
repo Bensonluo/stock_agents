@@ -25,7 +25,10 @@ def _synthesis() -> dict:
             "market_data": {"AAPL": {"as_of": date.today().isoformat()}},
             "technical_analysis": {"AAPL": _technical()},
             "fundamental_analysis": {
-                "AAPL": {"overall_score": {"score": 70}, "quality": {"status": "available", "red_flags": []}}
+                "AAPL": {
+                    "overall_score": {"score": 70},
+                    "quality": {"status": "available", "red_flags": []},
+                }
             },
             "risk_assessment": {"AAPL": {"risk_level": "medium", "metrics": {}}},
         }
@@ -51,9 +54,18 @@ class TestAnalystPanel:
     def test_valid_panel_attaches_roles_and_pm(self) -> None:
         panel = {
             "AAPL": {
-                "technical": {"view": "Trend intact.", "cites": ["technical_analysis.signals+weekly_sma"]},
-                "fundamental": {"view": "Quality fine.", "cites": ["technical_analysis.signals+weekly_sma"]},
-                "valuation": {"view": "Range wide.", "cites": ["technical_analysis.signals+weekly_sma"]},
+                "technical": {
+                    "view": "Trend intact.",
+                    "cites": ["technical_analysis.signals+weekly_sma"],
+                },
+                "fundamental": {
+                    "view": "Quality fine.",
+                    "cites": ["technical_analysis.signals+weekly_sma"],
+                },
+                "valuation": {
+                    "view": "Range wide.",
+                    "cites": ["technical_analysis.signals+weekly_sma"],
+                },
                 "event": {"view": "None due.", "cites": ["technical_analysis.signals+weekly_sma"]},
                 "pm": {
                     "thesis": "Hold with discipline.",
@@ -76,7 +88,10 @@ class TestAnalystPanel:
         panel = {
             "AAPL": {
                 "technical": {"view": "Made-up source.", "cites": ["fabricated_ref"]},
-                "fundamental": {"view": "Fine.", "cites": ["technical_analysis.signals+weekly_sma"]},
+                "fundamental": {
+                    "view": "Fine.",
+                    "cites": ["technical_analysis.signals+weekly_sma"],
+                },
             }
         }
 

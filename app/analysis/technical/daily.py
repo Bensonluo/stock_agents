@@ -75,9 +75,9 @@ def calculate_indicators(df: pd.DataFrame) -> dict[str, Any]:
         "upper": round(upper, 6),
         "middle": round(float(sma_20.iloc[-1]), 6),
         "lower": round(lower, 6),
-        "width": round((upper - lower) / float(sma_20.iloc[-1]), 6)
-        if sma_20.iloc[-1] > 0
-        else None,
+        "width": (
+            round((upper - lower) / float(sma_20.iloc[-1]), 6) if sma_20.iloc[-1] > 0 else None
+        ),
     }
 
     atr = _atr(df, period=14)
@@ -308,14 +308,18 @@ def analyze_daily(
     return {
         "symbol": symbol,
         "status": "available",
-        "current_price": current_price if current_price is not None else float(df["close"].iloc[-1]),
+        "current_price": (
+            current_price if current_price is not None else float(df["close"].iloc[-1])
+        ),
         "as_of": as_of.isoformat(),
         "indicators": indicators,
         "signals": signals,
         "support": support,
         "resistance": resistance,
         "sentiment": sentiment,
-        "evidence": _key_evidence(df, indicators, symbol=symbol, currency=currency, source=source, as_of=as_of),
+        "evidence": _key_evidence(
+            df, indicators, symbol=symbol, currency=currency, source=source, as_of=as_of
+        ),
     }
 
 

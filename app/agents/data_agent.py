@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 import yfinance as yf
@@ -21,7 +21,7 @@ _yfinance_semaphore = asyncio.Semaphore(5)
 from app.tools.data.fetcher import DEFAULT_HISTORY_DAYS, fetch_stock_data  # noqa: E402
 
 
-def _yfinance_debt_to_equity_ratio(value: Any) -> Optional[float]:
+def _yfinance_debt_to_equity_ratio(value: Any) -> float | None:
     """Convert yfinance's percentage-valued debtToEquity to a decimal ratio."""
     if value is None:
         return None
@@ -93,7 +93,7 @@ def detect_symbol_type(symbol: str) -> str:
     return "unknown"
 
 
-def _sync_fetch_market_data(yahoo_symbol: str, symbol: str, hist_converter) -> Dict[str, Any]:
+def _sync_fetch_market_data(yahoo_symbol: str, symbol: str, hist_converter) -> dict[str, Any]:
     """Synchronous yfinance market data fetch — runs in thread pool."""
     ticker = yf.Ticker(yahoo_symbol)
     info = ticker.info
@@ -143,7 +143,7 @@ def _sync_fetch_market_data(yahoo_symbol: str, symbol: str, hist_converter) -> D
     }
 
 
-def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -> Dict[str, Any]:
+def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -> dict[str, Any]:
     """Synchronous yfinance financial data fetch — runs in thread pool."""
     ticker = yf.Ticker(yahoo_symbol)
 
@@ -203,7 +203,7 @@ def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -
     }
 
 
-def _sync_fetch_news(yahoo_symbol: str, symbol: str) -> List[Dict[str, Any]]:
+def _sync_fetch_news(yahoo_symbol: str, symbol: str) -> list[dict[str, Any]]:
     """Synchronous yfinance news fetch — runs in thread pool."""
     ticker = yf.Ticker(yahoo_symbol)
     news = ticker.news
@@ -234,20 +234,22 @@ def _sync_fetch_news(yahoo_symbol: str, symbol: str) -> List[Dict[str, Any]]:
             related.append(yahoo_symbol)
 
         if title:
-            articles.append({
-                "title": title,
-                "link": link,
-                "published": published,
-                "source": source,
-                "summary": summary,
-                "related_symbols": related,
-                "original_symbol": symbol,
-            })
+            articles.append(
+                {
+                    "title": title,
+                    "link": link,
+                    "published": published,
+                    "source": source,
+                    "summary": summary,
+                    "related_symbols": related,
+                    "original_symbol": symbol,
+                }
+            )
 
     return articles
 
 
-def _sync_fetch_akshare_stock_info(symbol: str, ak) -> Optional[Dict[str, Any]]:
+def _sync_fetch_akshare_stock_info(symbol: str, ak) -> dict[str, Any] | None:
     """Synchronous AkShare stock info fetch — runs in thread pool."""
     df = ak.stock_zh_a_spot_em()
     stock_row = df[df["代码"] == symbol]
@@ -272,7 +274,7 @@ def _sync_fetch_akshare_stock_info(symbol: str, ak) -> Optional[Dict[str, Any]]:
     }
 
 
-def _sync_fetch_akshare_financials(symbol: str, ak) -> Optional[Dict[str, Any]]:
+def _sync_fetch_akshare_financials(symbol: str, ak) -> dict[str, Any] | None:
     """Synchronous AkShare financials fetch — runs in thread pool."""
     df = ak.stock_financial_analysis_indicator(symbol=symbol)
 
@@ -309,7 +311,7 @@ class DataCollectionAgent(BaseAgent):
     - AkShare: Can be added for Chinese market data
     """
 
-    async def execute(self, state: AgentState) -> Dict[str, Any]:
+    async def execute(self, state: AgentState) -> dict[str, Any]:
         """Execute the data collection agent.
 
         Args:
@@ -326,10 +328,7 @@ class DataCollectionAgent(BaseAgent):
         logger.info(f"Collecting data for {len(symbols)} symbols: {symbols}")
 
         # Collect data concurrently for all symbols
-        tasks = [
-            self._collect_symbol_data(symbol)
-            for symbol in symbols
-        ]
+        tasks = [self._collect_symbol_data(symbol) for symbol in symbols]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -349,8 +348,7 @@ class DataCollectionAgent(BaseAgent):
                 news_data.extend(result.get("news_data", []))
 
         logger.info(
-            f"Collected data for {len(market_data)} symbols, "
-            f"{len(news_data)} news items"
+            f"Collected data for {len(market_data)} symbols, " f"{len(news_data)} news items"
         )
 
         # Return only the partial state (fields we modify)
@@ -360,7 +358,7 @@ class DataCollectionAgent(BaseAgent):
             "news_data": news_data[-100:],  # Keep last 100 news items
         }
 
-    async def _collect_symbol_data(self, symbol: str) -> Dict[str, Any]:
+    async def _collect_symbol_data(self, symbol: str) -> dict[str, Any]:
         """Collect all data for a single symbol.
 
         Args:
@@ -389,7 +387,7 @@ class DataCollectionAgent(BaseAgent):
             logger.error(f"Error collecting data for {symbol}: {e}")
             raise
 
-    async def _fetch_market_data(self, symbol: str) -> Dict[str, Any]:
+    async def _fetch_market_data(self, symbol: str) -> dict[str, Any]:
         """Fetch market data for a symbol.
 
         Primary path is the direct yfinance snapshot; when it yields nothing
@@ -416,7 +414,9 @@ class DataCollectionAgent(BaseAgent):
                 fallback = await fetch_stock_data(symbol)
                 market = (fallback or {}).get("market_data", {}).get(symbol) or {}
                 if market.get("historical_data"):
-                    logger.info(f"[data_agent] provider-chain fallback supplied market data for {symbol}")
+                    logger.info(
+                        f"[data_agent] provider-chain fallback supplied market data for {symbol}"
+                    )
                     return {**market, "symbol": symbol}
 
             return result
@@ -425,7 +425,7 @@ class DataCollectionAgent(BaseAgent):
             logger.error(f"Error fetching market data for {symbol}: {e}")
             return {}
 
-    async def _fetch_financial_data(self, symbol: str) -> Dict[str, Any]:
+    async def _fetch_financial_data(self, symbol: str) -> dict[str, Any]:
         """Fetch financial data for a symbol.
 
         Args:
@@ -439,7 +439,10 @@ class DataCollectionAgent(BaseAgent):
 
             async with _yfinance_semaphore:
                 result = await asyncio.to_thread(
-                    _sync_fetch_financial_data, yahoo_symbol, symbol, self._financial_statement_to_dict
+                    _sync_fetch_financial_data,
+                    yahoo_symbol,
+                    symbol,
+                    self._financial_statement_to_dict,
                 )
             return result
 
@@ -447,7 +450,7 @@ class DataCollectionAgent(BaseAgent):
             logger.error(f"Error fetching financial data for {symbol}: {e}")
             return {}
 
-    async def _fetch_news(self, symbol: str) -> List[Dict[str, Any]]:
+    async def _fetch_news(self, symbol: str) -> list[dict[str, Any]]:
         """Fetch news for a symbol.
 
         Args:
@@ -469,7 +472,7 @@ class DataCollectionAgent(BaseAgent):
             logger.error(f"Error fetching news for {symbol}: {e}")
             return []
 
-    def _historical_data_to_dict(self, df: pd.DataFrame) -> Dict[str, Any]:
+    def _historical_data_to_dict(self, df: pd.DataFrame) -> dict[str, Any]:
         """Convert historical price DataFrame to dictionary.
 
         Args:
@@ -490,7 +493,7 @@ class DataCollectionAgent(BaseAgent):
             "volume": df["Volume"].tolist(),
         }
 
-    def _financial_statement_to_dict(self, df: pd.DataFrame) -> Dict[str, Any]:
+    def _financial_statement_to_dict(self, df: pd.DataFrame) -> dict[str, Any]:
         """Convert financial statement DataFrame to dictionary.
 
         Args:
@@ -521,7 +524,7 @@ class AkShareDataAgent(BaseAgent):
     AkShare provides comprehensive Chinese market data for free.
     """
 
-    async def execute(self, state: AgentState) -> Dict[str, Any]:
+    async def execute(self, state: AgentState) -> dict[str, Any]:
         """Execute the AkShare data collection agent.
 
         Args:
@@ -573,9 +576,7 @@ class AkShareDataAgent(BaseAgent):
             logger.error(f"Error collecting AkShare data: {e}")
             return {"market_data": {}, "financial_data": {}}
 
-    async def _fetch_akshare_stock_info(
-        self, symbol: str, ak
-    ) -> Optional[Dict[str, Any]]:
+    async def _fetch_akshare_stock_info(self, symbol: str, ak) -> dict[str, Any] | None:
         """Fetch Chinese stock info using AkShare.
 
         Args:
@@ -586,16 +587,12 @@ class AkShareDataAgent(BaseAgent):
             Dictionary containing stock data
         """
         try:
-            return await asyncio.to_thread(
-                _sync_fetch_akshare_stock_info, symbol, ak
-            )
+            return await asyncio.to_thread(_sync_fetch_akshare_stock_info, symbol, ak)
         except Exception as e:
             logger.error(f"Error fetching AkShare data for {symbol}: {e}")
             return None
 
-    async def _fetch_akshare_financials(
-        self, symbol: str, ak
-    ) -> Optional[Dict[str, Any]]:
+    async def _fetch_akshare_financials(self, symbol: str, ak) -> dict[str, Any] | None:
         """Fetch Chinese stock financials using AkShare.
 
         Args:
@@ -606,9 +603,7 @@ class AkShareDataAgent(BaseAgent):
             Dictionary containing financial data
         """
         try:
-            return await asyncio.to_thread(
-                _sync_fetch_akshare_financials, symbol, ak
-            )
+            return await asyncio.to_thread(_sync_fetch_akshare_financials, symbol, ak)
         except Exception as e:
             logger.error(f"Error fetching AkShare financials for {symbol}: {e}")
             return None

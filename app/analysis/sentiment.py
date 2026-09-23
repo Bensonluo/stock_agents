@@ -10,20 +10,63 @@ from __future__ import annotations
 from typing import Any
 
 POSITIVE_WORDS = {
-    "up", "rise", "gain", "growth", "strong", "beat", "top", "best",
-    "surge", "rally", "bull", "buy", "outperform", "upgrade", "profit",
-    "record", "high", "breakthrough", "expansion", "dividend", "success",
+    "up",
+    "rise",
+    "gain",
+    "growth",
+    "strong",
+    "beat",
+    "top",
+    "best",
+    "surge",
+    "rally",
+    "bull",
+    "buy",
+    "outperform",
+    "upgrade",
+    "profit",
+    "record",
+    "high",
+    "breakthrough",
+    "expansion",
+    "dividend",
+    "success",
 }
 
 NEGATIVE_WORDS = {
-    "down", "fall", "drop", "loss", "weak", "miss", "bottom", "worst",
-    "plunge", "crash", "bear", "sell", "underperform", "downgrade", "debt",
-    "low", "cut", "reduction", "layoff", "lawsuit", "fraud", "risk",
+    "down",
+    "fall",
+    "drop",
+    "loss",
+    "weak",
+    "miss",
+    "bottom",
+    "worst",
+    "plunge",
+    "crash",
+    "bear",
+    "sell",
+    "underperform",
+    "downgrade",
+    "debt",
+    "low",
+    "cut",
+    "reduction",
+    "layoff",
+    "lawsuit",
+    "fraud",
+    "risk",
 }
 
 
 def empty_sentiment() -> dict[str, Any]:
-    return {"sentiment": "neutral", "score": 0, "article_count": 0, "recent_scores": [], "trend": "no_data"}
+    return {
+        "sentiment": "neutral",
+        "score": 0,
+        "article_count": 0,
+        "recent_scores": [],
+        "trend": "no_data",
+    }
 
 
 def score_news(news: list[dict[str, Any]]) -> dict[str, Any]:
@@ -42,7 +85,9 @@ def score_news(news: list[dict[str, Any]]) -> dict[str, Any]:
             analyzed_count += 1
             recent_scores.append(score)
 
-    normalized = max(-100, min(100, (total_score / analyzed_count) * 20)) if analyzed_count > 0 else 0
+    normalized = (
+        max(-100, min(100, (total_score / analyzed_count) * 20)) if analyzed_count > 0 else 0
+    )
     if normalized >= 40:
         sentiment = "very_positive"
     elif normalized >= 15:

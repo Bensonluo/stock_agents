@@ -310,15 +310,17 @@ async def handle_client_message(
         if "min_severity" in data:
             subscription.min_severity = data["min_severity"]
 
-        await websocket.send_json({
-            "type": "subscription_updated",
-            "timestamp": datetime.now().isoformat(),
-            "data": {
-                "agent_names": list(subscription.agent_names),
-                "event_types": list(subscription.event_types),
-                "min_severity": subscription.min_severity,
-            },
-        })
+        await websocket.send_json(
+            {
+                "type": "subscription_updated",
+                "timestamp": datetime.now().isoformat(),
+                "data": {
+                    "agent_names": list(subscription.agent_names),
+                    "event_types": list(subscription.event_types),
+                    "min_severity": subscription.min_severity,
+                },
+            }
+        )
         logger.debug(f"Updated subscription: {subscription}")
 
     elif message_type == "unsubscribe":
@@ -327,10 +329,12 @@ async def handle_client_message(
         subscription.event_types = set()
         subscription.min_severity = "low"
 
-        await websocket.send_json({
-            "type": "subscription_cleared",
-            "timestamp": datetime.now().isoformat(),
-        })
+        await websocket.send_json(
+            {
+                "type": "subscription_cleared",
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
         logger.debug("Cleared subscription filters")
 
     elif message_type == "set_filters":
@@ -339,22 +343,26 @@ async def handle_client_message(
         subscription.agent_names = set(data.get("agent_names", []))
         subscription.event_types = set(data.get("event_types", []))
 
-        await websocket.send_json({
-            "type": "filters_updated",
-            "timestamp": datetime.now().isoformat(),
-            "data": {
-                "agent_names": list(subscription.agent_names),
-                "event_types": list(subscription.event_types),
-            },
-        })
+        await websocket.send_json(
+            {
+                "type": "filters_updated",
+                "timestamp": datetime.now().isoformat(),
+                "data": {
+                    "agent_names": list(subscription.agent_names),
+                    "event_types": list(subscription.event_types),
+                },
+            }
+        )
         logger.debug(f"Updated filters: {subscription}")
 
     elif message_type == "ping":
         # Respond to ping with pong
-        await websocket.send_json({
-            "type": "pong",
-            "timestamp": datetime.now().isoformat(),
-        })
+        await websocket.send_json(
+            {
+                "type": "pong",
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
 
     else:
         logger.warning(f"Unknown message type: {message_type}")
@@ -455,9 +463,7 @@ async def websocket_monitoring_endpoint(
     try:
         # Security: Check IP connection limit before accepting
         if not await _can_accept_ip(client_ip):
-            logger.warning(
-                f"Connection rejected: IP limit exceeded for {client_ip}"
-            )
+            logger.warning(f"Connection rejected: IP limit exceeded for {client_ip}")
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
@@ -484,9 +490,7 @@ async def websocket_monitoring_endpoint(
         await send_initial_state(websocket, client_thread_id)
 
         # Start heartbeat task
-        heartbeat_task = asyncio.create_task(
-            heartbeat_loop(websocket, client_thread_id)
-        )
+        heartbeat_task = asyncio.create_task(heartbeat_loop(websocket, client_thread_id))
 
         # Main message loop
         while True:
@@ -495,7 +499,7 @@ async def websocket_monitoring_endpoint(
                 raw_message = await websocket.receive_text()
 
                 # Security: Validate message size before processing
-                message_size = len(raw_message.encode('utf-8'))
+                message_size = len(raw_message.encode("utf-8"))
                 if message_size > MAX_MESSAGE_SIZE:
                     logger.warning(
                         f"Message rejected: size {message_size} exceeds limit "
@@ -510,9 +514,7 @@ async def websocket_monitoring_endpoint(
 
                 # Security: Rate limiting check
                 if not await rate_limiter.check_limit():
-                    logger.warning(
-                        f"Rate limit exceeded for connection_id={connection_id}"
-                    )
+                    logger.warning(f"Rate limit exceeded for connection_id={connection_id}")
                     await _send_error_response(
                         websocket,
                         "Rate limit exceeded. Please slow down.",
@@ -535,9 +537,7 @@ async def websocket_monitoring_endpoint(
                     client_message = ClientMessage(**message_dict)
                     message = client_message.model_dump()
                 except ValidationError as e:
-                    logger.warning(
-                        f"Message validation failed: {e.errors()}"
-                    )
+                    logger.warning(f"Message validation failed: {e.errors()}")
                     await _send_error_response(
                         websocket,
                         "Invalid message format",
@@ -552,9 +552,7 @@ async def websocket_monitoring_endpoint(
                     await send_system_update(websocket)
 
             except WebSocketDisconnect:
-                logger.info(
-                    f"WebSocket disconnected by client: connection_id={connection_id}"
-                )
+                logger.info(f"WebSocket disconnected by client: connection_id={connection_id}")
                 break
 
             except Exception as e:

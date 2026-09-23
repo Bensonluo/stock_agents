@@ -41,7 +41,13 @@ class TestBullBearDebate:
         packet = {
             "technical_analysis": _technical(),
             "fundamental_analysis": _fundamental(
-                red_flags=[{"code": "negative_cfo_positive_ni", "severity": "critical", "detail": "Profit without cash."}]
+                red_flags=[
+                    {
+                        "code": "negative_cfo_positive_ni",
+                        "severity": "critical",
+                        "detail": "Profit without cash.",
+                    }
+                ]
             ),
         }
         debate = bull_bear_debate("FAKE", packet)
@@ -122,7 +128,13 @@ class TestEvidenceAuditor:
             "technical_analysis": {"FAKE": _technical(score=50)},
             "fundamental_analysis": {
                 "FAKE": _fundamental(
-                    red_flags=[{"code": "negative_equity", "severity": "critical", "detail": "Negative equity."}]
+                    red_flags=[
+                        {
+                            "code": "negative_equity",
+                            "severity": "critical",
+                            "detail": "Negative equity.",
+                        }
+                    ]
                 )
             },
             "sentiment_analysis": {"FAKE": {"score": 50}},
@@ -164,7 +176,11 @@ class TestRiskCommittee:
     def test_high_risk_limits_with_conditions_not_direction(self) -> None:
         decision = committee_review(
             "X",
-            risk={"risk_level": "high", "metrics": {}, "position_recommendation": {"max_position_size": 10}},
+            risk={
+                "risk_level": "high",
+                "metrics": {},
+                "position_recommendation": {"max_position_size": 10},
+            },
             quality=None,
             audit_verdict="pass",
         )
@@ -181,7 +197,11 @@ class TestRiskCommittee:
     def test_approval_states_that_low_risk_is_not_a_buy_signal(self) -> None:
         decision = committee_review(
             "X",
-            risk={"risk_level": "low", "metrics": {}, "position_recommendation": {"max_position_size": 20}},
+            risk={
+                "risk_level": "low",
+                "metrics": {},
+                "position_recommendation": {"max_position_size": 20},
+            },
             quality=None,
             audit_verdict="pass",
         )
@@ -242,9 +262,7 @@ class TestReportSynthesisSection:
                     "market_data": {"AAPL": {"as_of": date.today().isoformat()}},
                     "technical_analysis": {"AAPL": _technical()},
                     "fundamental_analysis": {"AAPL": _fundamental()},
-                    "risk_assessment": {
-                        "AAPL": {"risk_level": "medium", "metrics": {}}
-                    },
+                    "risk_assessment": {"AAPL": {"risk_level": "medium", "metrics": {}}},
                 }
             ),
         }
@@ -299,14 +317,26 @@ class TestNarrator:
 
                 return AIMessage(
                     content=json.dumps(
-                        {"symbols": {"AAPL": {"bull_narrative": "Up.", "bear_narrative": "Risk.", "pm_comment": "Ok."}}}
+                        {
+                            "symbols": {
+                                "AAPL": {
+                                    "bull_narrative": "Up.",
+                                    "bear_narrative": "Risk.",
+                                    "pm_comment": "Ok.",
+                                }
+                            }
+                        }
                     )
                 )
 
         result = asyncio.run(self._narrate(FakeLLM()))
 
         narrative = result["per_symbol"]["AAPL"]["narrative"]
-        assert narrative == {"bull_narrative": "Up.", "bear_narrative": "Risk.", "pm_comment": "Ok."}
+        assert narrative == {
+            "bull_narrative": "Up.",
+            "bear_narrative": "Risk.",
+            "pm_comment": "Ok.",
+        }
 
     def test_unparsable_llm_output_degrades(self) -> None:
         import asyncio
@@ -342,7 +372,12 @@ class TestNarrator:
 
                 return AIMessage(
                     content=json.dumps(
-                        {"symbols": {"HACK": {"bull_narrative": "injected"}, "AAPL": {"pm_comment": "fine."}}}
+                        {
+                            "symbols": {
+                                "HACK": {"bull_narrative": "injected"},
+                                "AAPL": {"pm_comment": "fine."},
+                            }
+                        }
                     )
                 )
 
@@ -390,7 +425,13 @@ class TestDataUnavailableVisibility:
             {
                 "query": "分析一下 AAPL",
                 "symbols": ["AAPL"],
-                "market_data": {"AAPL": {"current_price": 123.45, "company_name": "Apple", "as_of": "2026-08-27"}},
+                "market_data": {
+                    "AAPL": {
+                        "current_price": 123.45,
+                        "company_name": "Apple",
+                        "as_of": "2026-08-27",
+                    }
+                },
                 "technical_analysis": {"AAPL": _technical()},
                 "fundamental_analysis": {"AAPL": _fundamental()},
                 "risk_assessment": {"AAPL": {"risk_level": "medium", "metrics": {}}},

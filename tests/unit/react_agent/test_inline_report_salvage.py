@@ -19,9 +19,11 @@ class TestSalvageInlineReport:
 
     def test_python_literal_answer_is_salvaged(self):
         # Legacy model behavior: single quotes, unquoted-ish shape.
-        answer = "{'title': 'Test Report', 'executive_summary': 'It looks fine.', " \
-                 "'sections': {'overview': {'symbols_analyzed': ['TEST']}}, " \
-                 "'metadata': {'symbols': ['TEST']}}"
+        answer = (
+            "{'title': 'Test Report', 'executive_summary': 'It looks fine.', "
+            "'sections': {'overview': {'symbols_analyzed': ['TEST']}}, "
+            "'metadata': {'symbols': ['TEST']}}"
+        )
         assert _salvage_inline_report(answer) == _REPORT
 
     def test_markdown_answer_returns_none(self):

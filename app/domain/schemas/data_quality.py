@@ -101,10 +101,7 @@ class DataQuality(BaseModel):
         """
         if self.has_critical_issues:
             return QualityGateVerdict.INSUFFICIENT
-        if any(
-            self.coverage_for(symbol) < MIN_COVERAGE_FOR_CONCLUSIONS
-            for symbol in self.symbols
-        ):
+        if any(self.coverage_for(symbol) < MIN_COVERAGE_FOR_CONCLUSIONS for symbol in self.symbols):
             return QualityGateVerdict.INSUFFICIENT
         if any(issue.severity is IssueSeverity.WARNING for issue in self.issues):
             return QualityGateVerdict.DEGRADED

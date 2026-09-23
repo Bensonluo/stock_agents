@@ -14,9 +14,7 @@ from typing import Any
 STALE_AFTER_DAYS = 7
 
 
-def audit_packets(
-    data: dict[str, Any], *, today: date | None = None
-) -> dict[str, Any]:
+def audit_packets(data: dict[str, Any], *, today: date | None = None) -> dict[str, Any]:
     """Audit all symbol packets; returns findings and a gate verdict.
 
     Verdict semantics:
@@ -80,7 +78,9 @@ def audit_packets(
         _insufficient_findings(
             symbol, technical.get(symbol), fundamental.get(symbol), risk.get(symbol), insufficient
         )
-        _conflict_findings(symbol, technical.get(symbol), fundamental.get(symbol), sentiment.get(symbol), conflicts)
+        _conflict_findings(
+            symbol, technical.get(symbol), fundamental.get(symbol), sentiment.get(symbol), conflicts
+        )
 
     has_blocking = bool(stale) or any(c["severity"] == "critical" for c in conflicts)
     verdict = "blocked" if has_blocking else ("warnings" if (insufficient or conflicts) else "pass")
@@ -115,7 +115,11 @@ def _insufficient_findings(
     for subject, block in checks:
         status = block.get("status") if isinstance(block, dict) else None
         if block is None or status in ("insufficient_data", "error"):
-            detail = "no usable data block (missing or fetch failed)" if block is None else f"status={status}"
+            detail = (
+                "no usable data block (missing or fetch failed)"
+                if block is None
+                else f"status={status}"
+            )
             out.append({"symbol": symbol, "subject": subject, "detail": detail})
 
 

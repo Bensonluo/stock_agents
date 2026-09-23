@@ -75,6 +75,7 @@ def _fetch_failures_exceeded(symbol: str) -> bool:
         return False
     return count >= _FETCH_FAILURE_LIMIT
 
+
 def data_unavailable_error(symbol: str) -> dict[str, Any]:
     """Instructive error that steers the LLM out of retry loops."""
     count = _fetch_failures.get(symbol, (0, 0.0))[0]
@@ -87,8 +88,6 @@ def data_unavailable_error(symbol: str) -> dict[str, Any]:
         "symbol": symbol,
         "data_available": False,
     }
-
-
 
 
 async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
@@ -127,9 +126,11 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
                 "current_price": last_close,
                 "previous_close": prev_close,
                 "change": (last_close - prev_close) if last_close and prev_close else None,
-                "change_percent": ((last_close - prev_close) / prev_close * 100)
-                if last_close and prev_close
-                else None,
+                "change_percent": (
+                    ((last_close - prev_close) / prev_close * 100)
+                    if last_close and prev_close
+                    else None
+                ),
                 "volume": (hist.get("volume") or [None])[-1],
                 "as_of": (hist.get("dates") or [None])[-1],
                 "historical_data": {
@@ -316,11 +317,13 @@ def _financial_quality_view(symbol: str, financial: dict[str, Any]) -> dict[str,
         return {"status": "error", "reason": str(e)}
     return {
         "status": quality["status"],
-        "revenue_trend": {
-            "cagr": (quality.get("revenue_trend") or {}).get("cagr"),
-        }
-        if quality.get("revenue_trend")
-        else None,
+        "revenue_trend": (
+            {
+                "cagr": (quality.get("revenue_trend") or {}).get("cagr"),
+            }
+            if quality.get("revenue_trend")
+            else None
+        ),
         "cash_quality": quality.get("cash_quality"),
         "red_flags": quality.get("red_flags", []),
     }
@@ -343,12 +346,17 @@ async def analyze_sentiment(symbol: str) -> dict[str, Any]:
 
     news_data = data["news_data"]
     if not news_data:
-        return {"symbol": symbol, "sentiment_by_symbol": {symbol: _empty_sentiment()},
-                "overall_sentiment": {"sentiment": "neutral", "score": 0, "note": "No news available"}}
+        return {
+            "symbol": symbol,
+            "sentiment_by_symbol": {symbol: _empty_sentiment()},
+            "overall_sentiment": {"sentiment": "neutral", "score": 0, "note": "No news available"},
+        }
 
     symbol_news = [
-        n for n in news_data
-        if symbol in n.get("related_symbols", []) or n.get("original_symbol") == symbol
+        n
+        for n in news_data
+        if symbol in n.get("related_symbols", [])
+        or n.get("original_symbol") == symbol
         or symbol.lower() in (n.get("title", "") + n.get("summary", "")).lower()
     ]
     if not symbol_news:
@@ -357,7 +365,9 @@ async def analyze_sentiment(symbol: str) -> dict[str, Any]:
     total_score, analyzed, recent_scores = 0, 0, []
     for article in symbol_news:
         text = (article.get("title", "") + " " + article.get("summary", "")).lower()
-        score = sum(1 for w in POSITIVE_WORDS if w in text) - sum(1 for w in NEGATIVE_WORDS if w in text)
+        score = sum(1 for w in POSITIVE_WORDS if w in text) - sum(
+            1 for w in NEGATIVE_WORDS if w in text
+        )
         if score != 0:
             total_score += score
             analyzed += 1
@@ -476,7 +486,11 @@ async def get_stock_overview(symbol: str) -> dict[str, Any]:
         return data_unavailable_error(symbol)
     data = await fetch_stock_data(symbol)
     if not data:
-        return data_unavailable_error(symbol) if _record_fetch_failure(symbol) >= _FETCH_FAILURE_LIMIT else {"error": f"Could not fetch data for {symbol}"}
+        return (
+            data_unavailable_error(symbol)
+            if _record_fetch_failure(symbol) >= _FETCH_FAILURE_LIMIT
+            else {"error": f"Could not fetch data for {symbol}"}
+        )
     _reset_fetch_failures(symbol)
     m = data.get("market_data", {})
     return {

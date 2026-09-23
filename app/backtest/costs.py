@@ -60,6 +60,12 @@ class CostModel:
 
 
 # Presets per market (starting points, not advice; configurable per run).
-CN_STOCK = CostModel(commission_rate=0.0003, min_commission=5.0, stamp_tax=0.0005, transfer_fee=0.00001, slippage_rate=0.001)
+CN_STOCK = CostModel(
+    commission_rate=0.0003,
+    min_commission=5.0,
+    stamp_tax=0.0005,
+    transfer_fee=0.00001,
+    slippage_rate=0.001,
+)
 US_STOCK = CostModel(commission_rate=0.001, min_commission=0.0, slippage_rate=0.0005)
 ZERO = CostModel(commission_rate=0.0, slippage_rate=0.0)

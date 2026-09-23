@@ -182,9 +182,11 @@ def _sales_method(
 
     implied: dict[str, Any] = {}
     for scenario in SCENARIOS:
-        value = current_price * (1 + _clip_growth(growth + GROWTH_SHIFTS[scenario])) * MULTIPLE_FACTORS[
-            scenario
-        ]
+        value = (
+            current_price
+            * (1 + _clip_growth(growth + GROWTH_SHIFTS[scenario]))
+            * MULTIPLE_FACTORS[scenario]
+        )
         implied[scenario] = {
             "value": round(value, 4),
             "upside_pct": round((value / current_price - 1) * 100, 4),

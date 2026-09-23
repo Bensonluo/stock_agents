@@ -1,7 +1,7 @@
 """Report generation agent for creating investment research reports."""
 
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
 from app.agents.base import StatelessAgent
 from app.orchestration.state import AgentState
@@ -22,7 +22,7 @@ class ReportGenerationAgent(StatelessAgent):
     - Includes charts and visualizations
     """
 
-    async def process(self, state: AgentState) -> Dict[str, Any]:
+    async def process(self, state: AgentState) -> dict[str, Any]:
         """Process report generation.
 
         Args:
@@ -84,27 +84,19 @@ class ReportGenerationAgent(StatelessAgent):
 
         return report
 
-    def _generate_sections(self, data: Dict) -> Dict[str, Any]:
+    def _generate_sections(self, data: dict) -> dict[str, Any]:
         """Delegate to the shared ReportService."""
         return ReportService.build_sections(data)
 
-
-
-    def _generate_technical_section(self, data: Dict) -> Dict[str, Any]:
+    def _generate_technical_section(self, data: dict) -> dict[str, Any]:
         """Delegate to the shared ReportService."""
         return ReportService.build_sections(data)["technical_analysis"]
 
-
-
-
-
-    async def _generate_executive_summary(
-        self, data: Dict, sections: Dict
-    ) -> str:
+    async def _generate_executive_summary(self, data: dict, sections: dict) -> str:
         """Deterministic, i18n-aware summary from the shared ReportService."""
         return ReportService.executive_summary(data, sections)
 
-    async def _generate_llm_report(self, data: Dict) -> str:
+    async def _generate_llm_report(self, data: dict) -> str:
         """Generate LLM-powered report.
 
         Args:
@@ -150,7 +142,7 @@ Keep the report professional, concise, and actionable."""
             logger.error(f"LLM report generation failed: {e}")
             return ""
 
-    def _count_data_points(self, data: Dict) -> int:
+    def _count_data_points(self, data: dict) -> int:
         """Count total data points analyzed.
 
         Args:
@@ -164,5 +156,8 @@ Keep the report professional, concise, and actionable."""
         count += len(data.get("technical_analysis", {}))
         count += len(data.get("fundamental_analysis", {}))
         count += len(data.get("decisions", {}))
-        count += sum(len(v) for v in data.get("sentiment_analysis", {}).get("sentiment_by_symbol", {}).values())
+        count += sum(
+            len(v)
+            for v in data.get("sentiment_analysis", {}).get("sentiment_by_symbol", {}).values()
+        )
         return count

@@ -1,7 +1,5 @@
 """Monitoring and metrics endpoints."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Query
 
 from app.monitoring import AlertSeverity, get_monitor
@@ -25,7 +23,7 @@ async def get_system_health():
 
 
 @router.get("/metrics")
-async def get_metrics(agent_name: Optional[str] = None):
+async def get_metrics(agent_name: str | None = None):
     """Get agent metrics.
 
     Args:
@@ -40,8 +38,8 @@ async def get_metrics(agent_name: Optional[str] = None):
 
 @router.get("/events")
 async def get_events(
-    agent_name: Optional[str] = None,
-    event_type: Optional[str] = None,
+    agent_name: str | None = None,
+    event_type: str | None = None,
     limit: int = Query(100, ge=1, le=1000),
 ):
     """Get event log.
@@ -60,8 +58,8 @@ async def get_events(
 
 @router.get("/alerts")
 async def get_alerts(
-    severity: Optional[str] = None,
-    agent_name: Optional[str] = None,
+    severity: str | None = None,
+    agent_name: str | None = None,
     active_only: bool = True,
     limit: int = Query(50, ge=1, le=500),
 ):
@@ -122,7 +120,7 @@ async def get_open_circuits():
 
 
 @router.post("/circuit-breakers/reset")
-async def reset_circuit_breaker(name: Optional[str] = None):
+async def reset_circuit_breaker(name: str | None = None):
     """Reset one or all circuit breakers.
 
     Args:
@@ -154,7 +152,7 @@ async def get_retry_stats():
 
 @router.get("/retry/history")
 async def get_retry_history(
-    function_name: Optional[str] = None,
+    function_name: str | None = None,
     limit: int = Query(50, ge=1, le=500),
 ):
     """Get retry history.
@@ -208,8 +206,8 @@ async def reset_monitoring():
 @router.get("/agents/{agent_name}/logs")
 async def get_agent_logs(
     agent_name: str,
-    thread_id: Optional[str] = None,
-    level: Optional[str] = None,
+    thread_id: str | None = None,
+    level: str | None = None,
     limit: int = Query(100, ge=1, le=1000),
 ):
     """Get agent execution logs.
@@ -231,8 +229,7 @@ async def get_agent_logs(
     # Filter by thread_id if provided
     if thread_id:
         events = [
-            e for e in events
-            if e.get("data", {}).get("metadata", {}).get("thread_id") == thread_id
+            e for e in events if e.get("data", {}).get("metadata", {}).get("thread_id") == thread_id
         ]
 
     # Filter by level if provided
@@ -280,9 +277,10 @@ async def get_workflow_logs(
 
     # Filter by thread_id in data (direct or in metadata)
     workflow_events = [
-        e for e in all_events
-        if e.get("data", {}).get("thread_id") == thread_id or
-           e.get("data", {}).get("metadata", {}).get("thread_id") == thread_id
+        e
+        for e in all_events
+        if e.get("data", {}).get("thread_id") == thread_id
+        or e.get("data", {}).get("metadata", {}).get("thread_id") == thread_id
     ]
 
     # Apply limit

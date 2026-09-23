@@ -1,6 +1,5 @@
 """Unit tests for orchestration module."""
 
-
 from app.orchestration.state import (
     add_agent_output,
     add_error,

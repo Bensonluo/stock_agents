@@ -42,7 +42,7 @@ def _ohlc(days: int = 300, *, drift: float = 0.002, seed: int = 7) -> pd.DataFra
 def _no_nan(value) -> bool:
     if isinstance(value, dict):
         return all(_no_nan(v) for v in value.values())
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return all(_no_nan(v) for v in value)
     if isinstance(value, float):
         return not math.isnan(value)
@@ -99,7 +99,9 @@ class TestCosts:
         assert model.sell_cost(100_000.0) == pytest.approx(100.0)
 
     def test_cn_preset_carries_min_commission(self) -> None:
-        assert CN_STOCK.buy_cost(100.0) == pytest.approx(5.0 + 0.001)  # min commission + transfer fee
+        assert CN_STOCK.buy_cost(100.0) == pytest.approx(
+            5.0 + 0.001
+        )  # min commission + transfer fee
         assert CN_STOCK.buy_cost(1_000_000.0) == pytest.approx(300.0 + 10.0)
 
     def test_slippage_moves_fill_prices_adversarially(self) -> None:
@@ -117,9 +119,17 @@ class TestMetrics:
         result = run_backtest(_ohlc(drift=0.003), strategy="buy_and_hold", cost_model=ZERO)
 
         expected = {
-            "total_return", "cagr", "volatility_annualized", "sharpe", "sortino",
-            "calmar", "max_drawdown", "cvar_95_daily", "excess_vs_benchmark",
-            "total_cost", "cost_ratio",
+            "total_return",
+            "cagr",
+            "volatility_annualized",
+            "sharpe",
+            "sortino",
+            "calmar",
+            "max_drawdown",
+            "cvar_95_daily",
+            "excess_vs_benchmark",
+            "total_cost",
+            "cost_ratio",
         }
         missing = expected - set(result.metrics)
         assert not missing
@@ -203,8 +213,11 @@ class TestWalkForward:
     def test_invalid_window_sizes_rejected(self) -> None:
         with pytest.raises(ValueError):
             walk_forward(
-                _ohlc(), strategy="sma_crossover", param_grid={"sma_short": [5], "sma_long": [20]},
-                train_bars=0, test_bars=10,
+                _ohlc(),
+                strategy="sma_crossover",
+                param_grid={"sma_short": [5], "sma_long": [20]},
+                train_bars=0,
+                test_bars=10,
             )
 
 

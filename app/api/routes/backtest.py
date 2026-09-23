@@ -259,7 +259,8 @@ class V2BacktestRequest(BaseModel):
     end_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     initial_cash: float = Field(default=10000.0, ge=1000)
     market: Literal["us", "cn"] = Field(
-        default="us", description="Cost preset: 'us' (commission+slippage) or 'cn' (+stamp tax, min fee)"
+        default="us",
+        description="Cost preset: 'us' (commission+slippage) or 'cn' (+stamp tax, min fee)",
     )
     strategy_params: dict[str, float | int] = Field(
         default_factory=dict, description="Only the selected strategy's parameters"

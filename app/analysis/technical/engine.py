@@ -86,9 +86,7 @@ def weekly_sma_pack(
 
     weekly = resample_weekly(dates, close, volume)
     if len(weekly) < MIN_WEEKLY_BARS:
-        return _insufficient_pack(
-            symbol, as_of, reason=f"only {len(weekly)} weekly bars available"
-        )
+        return _insufficient_pack(symbol, as_of, reason=f"only {len(weekly)} weekly bars available")
 
     cutoff = as_of or weekly.index[-1].to_pydatetime().replace(tzinfo=UTC)
     last_close = float(weekly["close"].iloc[-1])

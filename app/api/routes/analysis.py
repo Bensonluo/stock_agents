@@ -2,7 +2,6 @@
 
 import uuid
 from datetime import datetime
-from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -34,14 +33,16 @@ class StockAnalysisRequest(BaseModel):
     )
 
     query: str = Field(..., description="User's analysis query", min_length=1)
-    symbols: List[str] = Field(..., description="List of stock symbols", min_length=1)
+    symbols: list[str] = Field(..., description="List of stock symbols", min_length=1)
     max_retries: int = Field(default=3, ge=0, le=10, description="Maximum retry attempts")
-    timeout_per_agent: int = Field(default=300, ge=10, le=600, description="Timeout per agent in seconds")
+    timeout_per_agent: int = Field(
+        default=300, ge=10, le=600, description="Timeout per agent in seconds"
+    )
     parallel_execution: bool = Field(default=True, description="Enable parallel execution")
 
     @field_validator("symbols")
     @classmethod
-    def validate_symbols(cls, symbols: List[str]) -> List[str]:
+    def validate_symbols(cls, symbols: list[str]) -> list[str]:
         """Validate stock symbols."""
         normalized = []
         for symbol in symbols:
@@ -67,14 +68,15 @@ class AnalysisResponse(BaseModel):
     thread_id: str
     status: str
     message: str
-    report_url: Optional[str] = None
+    report_url: str | None = None
+
 
 class WorkflowStatusResponse(BaseModel):
     """Response model for workflow status."""
 
     thread_id: str
     current_step: int
-    current_agent: Optional[str]
+    current_agent: str | None
     agent_status: dict
     has_errors: bool
     is_complete: bool
@@ -85,7 +87,7 @@ class AnalysisResultResponse(BaseModel):
 
     thread_id: str
     query: str
-    symbols: List[str]
+    symbols: list[str]
     technical_analysis: dict
     fundamental_analysis: dict
     sentiment_analysis: dict
@@ -350,7 +352,7 @@ async def _execute_workflow(thread_id: str, request: StockAnalysisRequest):
 async def _execute_workflow_impl(
     thread_id: str,
     query: str,
-    symbols: List[str],
+    symbols: list[str],
     max_retries: int,
     timeout_per_agent: int,
     parallel_execution: bool,
@@ -405,6 +407,8 @@ async def _execute_workflow_impl(
     workflow["current_step"] = result.get("current_step", 0)
     workflow["has_errors"] = False
 
-    logger.info(f"Updated workflows[{thread_id}] with agent_status: {workflows[thread_id].get('agent_status', {})}")
+    logger.info(
+        f"Updated workflows[{thread_id}] with agent_status: {workflows[thread_id].get('agent_status', {})}"
+    )
 
     return result

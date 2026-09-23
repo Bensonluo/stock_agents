@@ -66,7 +66,9 @@ class TestEarningsMethod:
 
 class TestSalesMethod:
     def test_loss_making_falls_back_to_sales_multiple(self) -> None:
-        result = scenario_valuation(**_earnings_kwargs(trailing_eps=-0.5, ps_ratio=10.0, revenue_growth=0.2))
+        result = scenario_valuation(
+            **_earnings_kwargs(trailing_eps=-0.5, ps_ratio=10.0, revenue_growth=0.2)
+        )
 
         assert "earnings_multiple" not in result["methods"]
         sales = result["methods"]["sales_multiple"]

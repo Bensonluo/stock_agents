@@ -1,7 +1,7 @@
 """Data validation utilities."""
 
 import re
-from typing import Any, Optional
+from typing import Any
 
 
 def validate_stock_symbol(symbol: str) -> bool:
@@ -32,8 +32,8 @@ def normalize_stock_symbol(symbol: str) -> str:
 
 
 def validate_date_range(
-    start_date: Optional[Any], end_date: Optional[Any]
-) -> tuple[Optional[Any], Optional[Any]]:
+    start_date: Any | None, end_date: Any | None
+) -> tuple[Any | None, Any | None]:
     """Validate date range."""
     if start_date is None and end_date is None:
         return None, None
@@ -93,9 +93,7 @@ def validate_pagination(
     return page, page_size
 
 
-def validate_sort_field(
-    field: str, allowed_fields: list[str], default: str = "created_at"
-) -> str:
+def validate_sort_field(field: str, allowed_fields: list[str], default: str = "created_at") -> str:
     """Validate sort field against allowed fields."""
     if field not in allowed_fields:
         return default

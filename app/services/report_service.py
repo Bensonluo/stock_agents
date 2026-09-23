@@ -162,7 +162,7 @@ class ReportService:
                 rating = "fair"
             # Insufficient data yields score=None — display it as such and
             # keep it OUT of the average instead of crashing on += None.
-            if isinstance(score, (int, float)):
+            if isinstance(score, int | float):
                 numeric_scores.append(float(score))
             else:
                 score = None
@@ -174,9 +174,7 @@ class ReportService:
                 "profitability": analysis.get("profitability", {}).get("rating", "N/A"),
                 "valuation": analysis.get("valuation", {}).get("rating", "N/A"),
                 "financial_health": analysis.get("financial_health", {}).get("rating", "N/A"),
-                "valuation_scenarios": compact_valuation_view(
-                    analysis.get("valuation_scenarios")
-                ),
+                "valuation_scenarios": compact_valuation_view(analysis.get("valuation_scenarios")),
                 "quality": compact_quality_view(analysis.get("quality")),
             }
 
@@ -207,7 +205,7 @@ class ReportService:
             metrics = analysis.get("metrics", {})
             position = analysis.get("position_recommendation", {})
             score = analysis.get("risk_score", 50)
-            if isinstance(score, (int, float)):
+            if isinstance(score, int | float):
                 scores.append(score)
             by_symbol[symbol] = {
                 "risk_level": analysis.get("risk_level", "medium"),
@@ -236,10 +234,13 @@ class ReportService:
             records = list(analysis.get("evidence") or [])
             records += list((analysis.get("weekly_sma") or {}).get("evidence") or [])
             records += list(
-                ((c["fundamental_analysis"].get(symbol) or {}).get("quality") or {}).get("evidence") or []
+                ((c["fundamental_analysis"].get(symbol) or {}).get("quality") or {}).get("evidence")
+                or []
             )
             records += list(
-                ((c["fundamental_analysis"].get(symbol) or {}).get("valuation_scenarios") or {}).get("evidence")
+                (
+                    (c["fundamental_analysis"].get(symbol) or {}).get("valuation_scenarios") or {}
+                ).get("evidence")
                 or []
             )
             if records:
@@ -301,7 +302,9 @@ class ReportService:
             summary["by_symbol"][symbol] = {
                 "action": action,
                 "confidence": decision.get("confidence"),
-                "position_size": (decision.get("position_size") or {}).get("percentage_of_portfolio"),
+                "position_size": (decision.get("position_size") or {}).get(
+                    "percentage_of_portfolio"
+                ),
                 "entry": (decision.get("price_targets") or {}).get("entry_zone"),
                 "stop_loss": (decision.get("price_targets") or {}).get("stop_loss"),
                 "take_profit": (decision.get("price_targets") or {}).get("take_profit"),
@@ -311,10 +314,10 @@ class ReportService:
                 summary["portfolio_actions"].append({"symbol": symbol, "action": action})
             elif "sell" in str(action):
                 summary["avoid"].append(symbol)
-            if isinstance(score, (int, float)) and score > best_score:
+            if isinstance(score, int | float) and score > best_score:
                 best_score = score
                 summary["top_pick"] = symbol
-            if isinstance(score, (int, float)) and score < worst_score:
+            if isinstance(score, int | float) and score < worst_score:
                 worst_score = score
         return summary
 
@@ -402,7 +405,9 @@ class ReportService:
             tech_usable = isinstance(tech_block, dict) and tech_block and "_error" not in tech_block
             if price is None and not tech_usable:
                 if lang == "zh":
-                    parts.append(f"⚠ {symbol}: 行情数据不可用,本次未能生成有效分析(以下为空数据回退,不构成建议)。")
+                    parts.append(
+                        f"⚠ {symbol}: 行情数据不可用,本次未能生成有效分析(以下为空数据回退,不构成建议)。"
+                    )
                 else:
                     parts.append(
                         f"⚠ {symbol}: market data unavailable — no valid analysis was produced "
@@ -410,11 +415,9 @@ class ReportService:
                     )
                 continue
 
-            price_str = f"${price:.2f}" if isinstance(price, (int, float)) else "N/A"
+            price_str = f"${price:.2f}" if isinstance(price, int | float) else "N/A"
             composite_str = (
-                f", {labels['composite']} {composite:.0f}/100"
-                if composite is not None
-                else ""
+                f", {labels['composite']} {composite:.0f}/100" if composite is not None else ""
             )
             if lang == "zh":
                 parts.append(
@@ -447,14 +450,32 @@ _RISK_LABELS_ZH = {
 
 _RECOMMEND_LABELS = {
     "en": {
-        "buy": "BUY", "add": "ADD", "hold": "HOLD", "reduce": "REDUCE", "sell": "SELL",
-        "verdict": "Recommendation", "composite": "composite score", "based_on": "based on",
-        "fund": "fundamental", "tech": "technical", "sent": "sentiment", "risk": "risk",
+        "buy": "BUY",
+        "add": "ADD",
+        "hold": "HOLD",
+        "reduce": "REDUCE",
+        "sell": "SELL",
+        "verdict": "Recommendation",
+        "composite": "composite score",
+        "based_on": "based on",
+        "fund": "fundamental",
+        "tech": "technical",
+        "sent": "sentiment",
+        "risk": "risk",
     },
     "zh": {
-        "buy": "买入", "add": "加仓", "hold": "持有", "reduce": "减仓", "sell": "卖出",
-        "verdict": "投资建议", "composite": "综合评分", "based_on": "基于",
-        "fund": "基本面", "tech": "技术面", "sent": "情绪", "risk": "风险",
+        "buy": "买入",
+        "add": "加仓",
+        "hold": "持有",
+        "reduce": "减仓",
+        "sell": "卖出",
+        "verdict": "投资建议",
+        "composite": "综合评分",
+        "based_on": "基于",
+        "fund": "基本面",
+        "tech": "技术面",
+        "sent": "情绪",
+        "risk": "风险",
     },
 }
 
@@ -472,7 +493,11 @@ def detect_lang(text: str) -> str:
 def _risk_to_score(risk_level: str) -> int:
     """Map risk level (low..very_high) to 0..100 (lower = safer)."""
     return {
-        "very_low": 10, "low": 30, "medium": 50, "high": 75, "very_high": 95,
+        "very_low": 10,
+        "low": 30,
+        "medium": 50,
+        "high": 75,
+        "very_high": 95,
     }.get(str(risk_level).lower(), 50)
 
 
@@ -507,12 +532,7 @@ def derive_recommendation(
     sent_norm = max(0.0, min(100.0, (sent_score + 100) / 2))
     risk_norm = 100 - risk_penalty  # higher = safer
 
-    combined = (
-        fund_score * 0.45
-        + tech_norm * 0.30
-        + sent_norm * 0.15
-        + risk_norm * 0.10
-    )
+    combined = fund_score * 0.45 + tech_norm * 0.30 + sent_norm * 0.15 + risk_norm * 0.10
 
     if combined >= 70:
         action = "buy"

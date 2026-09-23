@@ -46,12 +46,8 @@ def test_committee_veto_blocks_positive_evidence(monkeypatch) -> None:
             "analyze_technical": {
                 "TEST": {"signals": {"trend": "bullish"}, "sentiment": {"score": 80}}
             },
-            "analyze_fundamental": {
-                "TEST": {"overall_score": 90, "recommendation": "buy"}
-            },
-            "analyze_sentiment": {
-                "TEST": {"sentiment": {"score": 80}, "overall_sentiment": {}}
-            },
+            "analyze_fundamental": {"TEST": {"overall_score": 90, "recommendation": "buy"}},
+            "analyze_sentiment": {"TEST": {"sentiment": {"score": 80}, "overall_sentiment": {}}},
             "assess_risk": {"TEST": {"risk_level": "low", "risk_score": 20}},
             "calculate_position_size": {"TEST": {"position_size": 20.0}},
         },

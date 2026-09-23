@@ -13,7 +13,10 @@ logger = get_logger(__name__)
 
 class GetHistoricalPricesInput(BaseModel):
     symbol: str = Field(description="Stock symbol (e.g., 'AAPL', '601888.SS')")
-    period: str = Field(default="3mo", description="Time period: '1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max'")
+    period: str = Field(
+        default="3mo",
+        description="Time period: '1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max'",
+    )
     interval: str = Field(default="1d", description="Data interval: '1d', '1wk', '1mo'")
 
 

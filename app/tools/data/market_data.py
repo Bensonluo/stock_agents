@@ -16,7 +16,9 @@ _semaphore = asyncio.Semaphore(5)
 
 class FetchStockDataInput(BaseModel):
     symbols: list[str] = Field(description="Stock ticker symbols (e.g., ['AAPL', '601888'])")
-    source: str = Field(default="auto", description="Data source: ignored, uses multi-source fallback")
+    source: str = Field(
+        default="auto", description="Data source: ignored, uses multi-source fallback"
+    )
 
 
 @tool(args_schema=FetchStockDataInput)

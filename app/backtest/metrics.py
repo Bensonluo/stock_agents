@@ -44,7 +44,11 @@ def compute_metrics(
     metrics: dict[str, Any] = {
         "total_return": round(total_return, 6),
         "cagr": round(cagr, 6),
-        "volatility_annualized": round(volatility * np.sqrt(TRADING_DAYS_PER_YEAR), 6) if volatility is not None else None,
+        "volatility_annualized": (
+            round(volatility * np.sqrt(TRADING_DAYS_PER_YEAR), 6)
+            if volatility is not None
+            else None
+        ),
         "sharpe": sharpe,
         "sortino": sortino,
         "calmar": round(calmar, 6) if calmar is not None else None,

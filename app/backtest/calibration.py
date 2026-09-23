@@ -85,11 +85,7 @@ def wilson_lower_bound(wins: int, n: int, z: float = Z_95) -> float | None:
 def _entry_indices(target: pd.Series) -> list[int]:
     """Indices where the position transitions 0 -> 1."""
     previous = target.shift(1).fillna(0.0)
-    return [
-        int(i)
-        for i in range(len(target))
-        if target.iloc[i] > 0 and previous.iloc[i] <= 0
-    ]
+    return [int(i) for i in range(len(target)) if target.iloc[i] > 0 and previous.iloc[i] <= 0]
 
 
 def _outcome(

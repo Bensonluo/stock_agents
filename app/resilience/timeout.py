@@ -1,10 +1,11 @@
 """Timeout control for preventing long-running operations."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
+from typing import Any, TypeVar
 
 from app.utils.logging import get_logger
 
@@ -32,7 +33,7 @@ class TimeoutStats:
     total_execution_time: float = 0.0
     avg_execution_time: float = 0.0
     max_execution_time: float = 0.0
-    recent_timeouts: List[Dict[str, Any]] = field(default_factory=list)
+    recent_timeouts: list[dict[str, Any]] = field(default_factory=list)
 
     def record_completion(
         self,
@@ -48,9 +49,7 @@ class TimeoutStats:
         self.total_calls += 1
         self.total_execution_time += execution_time
         self.avg_execution_time = (
-            self.total_execution_time / self.total_calls
-            if self.total_calls > 0
-            else 0.0
+            self.total_execution_time / self.total_calls if self.total_calls > 0 else 0.0
         )
         self.max_execution_time = max(self.max_execution_time, execution_time)
 
@@ -58,10 +57,12 @@ class TimeoutStats:
             self.completed_calls += 1
         elif result == TimeoutResult.TIMEOUT:
             self.timeout_calls += 1
-            self.recent_timeouts.append({
-                "timestamp": datetime.now().isoformat(),
-                "execution_time": execution_time,
-            })
+            self.recent_timeouts.append(
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "execution_time": execution_time,
+                }
+            )
             # Keep only recent 100 timeouts
             if len(self.recent_timeouts) > 100:
                 self.recent_timeouts = self.recent_timeouts[-100:]
@@ -87,7 +88,7 @@ class TimeLimiter:
             default_timeout: Default timeout in seconds
         """
         self.default_timeout = default_timeout
-        self.stats: Dict[str, TimeoutStats] = {}
+        self.stats: dict[str, TimeoutStats] = {}
 
     def get_stats(self, name: str) -> TimeoutStats:
         """Get or create statistics for a named operation.
@@ -106,8 +107,8 @@ class TimeLimiter:
         self,
         func: Callable[..., Awaitable[T]],
         *args: Any,
-        timeout: Optional[float] = None,
-        name: Optional[str] = None,
+        timeout: float | None = None,
+        name: str | None = None,
         **kwargs: Any,
     ) -> Any:
         """Execute an async function with timeout protection.
@@ -137,13 +138,11 @@ class TimeLimiter:
             execution_time = asyncio.get_event_loop().time() - start_time
             stats.record_completion(execution_time, TimeoutResult.COMPLETED)
 
-            logger.debug(
-                f"Operation '{operation_name}' completed in {execution_time:.2f}s"
-            )
+            logger.debug(f"Operation '{operation_name}' completed in {execution_time:.2f}s")
 
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             execution_time = asyncio.get_event_loop().time() - start_time
             stats.record_completion(execution_time, TimeoutResult.TIMEOUT)
 
@@ -158,9 +157,7 @@ class TimeLimiter:
             execution_time = asyncio.get_event_loop().time() - start_time
             stats.record_completion(execution_time, TimeoutResult.ERROR)
 
-            logger.error(
-                f"Operation '{operation_name}' failed after {execution_time:.2f}s: {e}"
-            )
+            logger.error(f"Operation '{operation_name}' failed after {execution_time:.2f}s: {e}")
 
             raise
 
@@ -168,8 +165,8 @@ class TimeLimiter:
         self,
         func: Callable[..., T],
         *args: Any,
-        timeout: Optional[float] = None,
-        name: Optional[str] = None,
+        timeout: float | None = None,
+        name: str | None = None,
         **kwargs: Any,
     ) -> T:
         """Execute a synchronous function with timeout protection.
@@ -200,6 +197,7 @@ class TimeLimiter:
         def target():
             nonlocal result, error, execution_time
             import time
+
             start = time.time()
             try:
                 result = func(*args, **kwargs)
@@ -215,9 +213,7 @@ class TimeLimiter:
         if thread.is_alive():
             # Thread is still running, so it timed out
             stats.record_completion(timeout, TimeoutResult.TIMEOUT)
-            logger.warning(
-                f"Operation '{operation_name}' timed out after {timeout}s"
-            )
+            logger.warning(f"Operation '{operation_name}' timed out after {timeout}s")
             raise TimeoutError(f"Operation '{operation_name}' timed out after {timeout}s")
 
         if error is not None:
@@ -228,13 +224,11 @@ class TimeLimiter:
             raise error
 
         stats.record_completion(execution_time, TimeoutResult.COMPLETED)
-        logger.debug(
-            f"Operation '{operation_name}' completed in {execution_time:.2f}s"
-        )
+        logger.debug(f"Operation '{operation_name}' completed in {execution_time:.2f}s")
 
         return result
 
-    def get_all_stats(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_stats(self) -> dict[str, dict[str, Any]]:
         """Get statistics for all tracked operations.
 
         Returns:
@@ -248,14 +242,12 @@ class TimeLimiter:
                 "error_calls": s.error_calls,
                 "avg_execution_time": s.avg_execution_time,
                 "max_execution_time": s.max_execution_time,
-                "timeout_rate": (
-                    s.timeout_calls / s.total_calls if s.total_calls > 0 else 0.0
-                ),
+                "timeout_rate": (s.timeout_calls / s.total_calls if s.total_calls > 0 else 0.0),
             }
             for name, s in self.stats.items()
         }
 
-    def reset_stats(self, name: Optional[str] = None) -> None:
+    def reset_stats(self, name: str | None = None) -> None:
         """Reset statistics.
 
         Args:
@@ -269,7 +261,7 @@ class TimeLimiter:
 
 
 # Global time limiter instance
-_time_limiter: Optional[TimeLimiter] = None
+_time_limiter: TimeLimiter | None = None
 
 
 def get_time_limiter() -> TimeLimiter:

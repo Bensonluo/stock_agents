@@ -45,12 +45,15 @@ class DataService:
                 "symbol": symbol,
                 "name": info.get("longName"),
                 "price": info.get("currentPrice") or info.get("regularMarketPrice"),
-                "change": info.get("currentPrice") - info.get("previousClose", 0)
-                if info.get("currentPrice") and info.get("previousClose")
-                else None,
+                "change": (
+                    info.get("currentPrice") - info.get("previousClose", 0)
+                    if info.get("currentPrice") and info.get("previousClose")
+                    else None
+                ),
                 "change_percent": (
                     (info.get("currentPrice") - info.get("previousClose", 0))
-                    / info.get("previousClose", 1) * 100
+                    / info.get("previousClose", 1)
+                    * 100
                     if info.get("currentPrice") and info.get("previousClose")
                     else None
                 ),
@@ -232,11 +235,13 @@ class DataService:
             results = []
             for quote in data.get("quotes", [])[:limit]:
                 if quote.get("quoteType") in ["EQUITY", "ETF", "INDEX"]:
-                    results.append({
-                        "symbol": quote.get("symbol"),
-                        "name": quote.get("longname") or quote.get("shortname"),
-                        "exchange": quote.get("exchange"),
-                    })
+                    results.append(
+                        {
+                            "symbol": quote.get("symbol"),
+                            "name": quote.get("longname") or quote.get("shortname"),
+                            "exchange": quote.get("exchange"),
+                        }
+                    )
 
             return results
 

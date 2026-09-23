@@ -27,10 +27,7 @@ def _series_to_points(series: pd.Series | None) -> list[dict[str, float | str]] 
     """Equity curve as JSON points; None passes through."""
     if series is None:
         return None
-    return [
-        {"date": str(date), "value": round(float(value), 6)}
-        for date, value in series.items()
-    ]
+    return [{"date": str(date), "value": round(float(value), 6)} for date, value in series.items()]
 
 
 class BacktestService:
@@ -109,9 +106,11 @@ class BacktestService:
             "final_value": final_value,
             "total_return": total_return,
             "total_return_pct": (total_return / initial_cash) * 100,
-            "annual_return": ((final_value / initial_cash) ** (1 / years) - 1) * 100
-            if cagr is None
-            else cagr * 100,
+            "annual_return": (
+                ((final_value / initial_cash) ** (1 / years) - 1) * 100
+                if cagr is None
+                else cagr * 100
+            ),
             "sharpe_ratio": metrics.get("sharpe") or 0,
             "max_drawdown": (metrics.get("max_drawdown") or 0) * 100,
             "win_rate": (metrics.get("win_rate") or 0) * 100,
@@ -165,9 +164,11 @@ class BacktestService:
             "initial_cash": initial_cash,
             "metrics": result.metrics,
             "equity": _series_to_points(result.equity),
-            "benchmark_equity": _series_to_points(result.benchmark_equity)
-            if result.benchmark_equity is not None
-            else None,
+            "benchmark_equity": (
+                _series_to_points(result.benchmark_equity)
+                if result.benchmark_equity is not None
+                else None
+            ),
             "trades": result.trades,
             "manifest": manifest,
         }
@@ -283,14 +284,18 @@ class BacktestService:
 
             if not df.empty:
                 return df
-            logger.warning(f"[backtest] yfinance returned no rows for {symbol}; trying provider chain")
+            logger.warning(
+                f"[backtest] yfinance returned no rows for {symbol}; trying provider chain"
+            )
 
         except Exception as e:
             logger.warning(f"[backtest] yfinance failed for {symbol}: {e}; trying provider chain")
 
         return await self._fetch_data_via_chain(symbol, start_date, end_date)
 
-    async def _fetch_data_via_chain(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+    async def _fetch_data_via_chain(
+        self, symbol: str, start_date: str, end_date: str
+    ) -> pd.DataFrame:
         """Shared provider chain fallback, sliced to the requested window."""
         from app.tools.data.fetcher import fetch_historical
 

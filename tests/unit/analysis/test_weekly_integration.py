@@ -17,7 +17,9 @@ from app.analysis.technical import (
 )
 
 
-def _uptrend_daily(days: int = 800, *, ohlcv: bool = False, start: str = "2023-08-01") -> dict[str, list]:
+def _uptrend_daily(
+    days: int = 800, *, ohlcv: bool = False, start: str = "2023-08-01"
+) -> dict[str, list]:
     """Rising business-day closes; optional full OHLCV for the pipeline agent."""
     closes = [100.0 * (1.002**i) for i in range(days)]
     history: dict[str, list] = {
@@ -160,7 +162,11 @@ class TestReportLayers:
         pack = weekly_sma_pack(_uptrend_daily(), symbol="AAPL")
         data = {
             "technical_analysis": {
-                "AAPL": {"signals": {"trend": "bullish"}, "sentiment": {"score": 40}, "weekly_sma": pack}
+                "AAPL": {
+                    "signals": {"trend": "bullish"},
+                    "sentiment": {"score": 40},
+                    "weekly_sma": pack,
+                }
             }
         }
 
@@ -183,7 +189,13 @@ class TestReportLayers:
 
         pack = weekly_sma_pack(_uptrend_daily(), symbol="MSFT")
         report = generate_report.invoke(
-            {"data": {"technical_analysis": {"MSFT": {"signals": {"trend": "bullish"}, "weekly_sma": pack}}}}
+            {
+                "data": {
+                    "technical_analysis": {
+                        "MSFT": {"signals": {"trend": "bullish"}, "weekly_sma": pack}
+                    }
+                }
+            }
         )
 
         weekly = report["sections"]["technical_analysis"]["by_symbol"]["MSFT"]["weekly_trend"]

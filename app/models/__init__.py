@@ -1,7 +1,6 @@
 """Data models for the application."""
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field, validator
 
@@ -10,14 +9,14 @@ class StockQuote(BaseModel):
     """Stock quote model."""
 
     symbol: str
-    name: Optional[str] = None
-    price: Optional[float] = None
-    change: Optional[float] = None
-    change_percent: Optional[float] = None
-    volume: Optional[int] = None
-    market_cap: Optional[int] = None
-    high_52_week: Optional[float] = None
-    low_52_week: Optional[float] = None
+    name: str | None = None
+    price: float | None = None
+    change: float | None = None
+    change_percent: float | None = None
+    volume: int | None = None
+    market_cap: int | None = None
+    high_52_week: float | None = None
+    low_52_week: float | None = None
     timestamp: str
 
     @validator("symbol")
@@ -30,12 +29,12 @@ class TechnicalIndicators(BaseModel):
     """Technical indicators model."""
 
     symbol: str
-    sma_20: Optional[float] = None
-    sma_50: Optional[float] = None
-    sma_200: Optional[float] = None
-    rsi: Optional[float] = None
-    macd: Optional[dict] = None
-    bollinger_bands: Optional[dict] = None
+    sma_20: float | None = None
+    sma_50: float | None = None
+    sma_200: float | None = None
+    rsi: float | None = None
+    macd: dict | None = None
+    bollinger_bands: dict | None = None
     timestamp: str
 
 
@@ -43,14 +42,14 @@ class FundamentalMetrics(BaseModel):
     """Fundamental metrics model."""
 
     symbol: str
-    pe_ratio: Optional[float] = None
-    pb_ratio: Optional[float] = None
-    roe: Optional[float] = None
-    roa: Optional[float] = None
-    debt_to_equity: Optional[float] = None
-    current_ratio: Optional[float] = None
-    profit_margin: Optional[float] = None
-    dividend_yield: Optional[float] = None
+    pe_ratio: float | None = None
+    pb_ratio: float | None = None
+    roe: float | None = None
+    roa: float | None = None
+    debt_to_equity: float | None = None
+    current_ratio: float | None = None
+    profit_margin: float | None = None
+    dividend_yield: float | None = None
     timestamp: str
 
 
@@ -58,12 +57,12 @@ class RiskMetrics(BaseModel):
     """Risk metrics model."""
 
     symbol: str
-    volatility: Optional[float] = None
-    var_95: Optional[float] = None
-    max_drawdown: Optional[float] = None
-    beta: Optional[float] = None
-    risk_score: Optional[int] = None
-    risk_level: Optional[str] = None
+    volatility: float | None = None
+    var_95: float | None = None
+    max_drawdown: float | None = None
+    beta: float | None = None
+    risk_score: int | None = None
+    risk_level: str | None = None
     timestamp: str
 
 
@@ -88,12 +87,12 @@ class AnalysisResponse(BaseModel):
     status: str
     query: str
     symbols: list[str]
-    technical_analysis: Optional[dict] = None
-    fundamental_analysis: Optional[dict] = None
-    sentiment_analysis: Optional[dict] = None
-    risk_assessment: Optional[dict] = None
-    decisions: Optional[dict] = None
-    report: Optional[dict] = None
+    technical_analysis: dict | None = None
+    fundamental_analysis: dict | None = None
+    sentiment_analysis: dict | None = None
+    risk_assessment: dict | None = None
+    decisions: dict | None = None
+    report: dict | None = None
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
@@ -106,7 +105,7 @@ class BacktestRequest(BaseModel):
     end_date: str
     initial_cash: float = 10000
     commission: float = 0.001
-    strategy_params: Optional[dict] = None
+    strategy_params: dict | None = None
 
 
 class BacktestResponse(BaseModel):

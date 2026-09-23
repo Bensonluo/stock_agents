@@ -135,9 +135,9 @@ def _fundamental_arguments(fundamental: dict, bull: list, bear: list) -> None:
             }
         )
 
-    revenue = (quality.get("revenue_trend") or {})
+    revenue = quality.get("revenue_trend") or {}
     cagr = revenue.get("cagr") if isinstance(revenue, dict) else None
-    if isinstance(cagr, (int, float)):
+    if isinstance(cagr, int | float):
         if cagr >= 0.10:
             bull.append(
                 {
@@ -180,7 +180,7 @@ def _upside_from(scenarios: dict[str, Any], side: str) -> float | None:
     values = []
     for _method, blocks in scenarios.items():
         upside = (blocks or {}).get("upside_pct")
-        if isinstance(upside, (int, float)):
+        if isinstance(upside, int | float):
             values.append(upside)
     return min(values) if side == "bear" and values else (max(values) if values else None)
 
@@ -209,7 +209,7 @@ def _risk_arguments(risk: dict, bear: list) -> None:
     metrics = risk.get("metrics") or {}
     stress = (risk.get("stress_scenarios") or {}).get("scenarios") or {}
     shock = stress.get("market_-20pct")
-    if isinstance(shock, (int, float)) and shock <= -0.30:
+    if isinstance(shock, int | float) and shock <= -0.30:
         bear.append(
             {
                 "claim": f"A -20% market shock implies roughly {shock:+.0%} here (beta {metrics.get('beta')}).",

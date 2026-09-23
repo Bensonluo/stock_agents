@@ -14,7 +14,9 @@ from app.domain.schemas import MetricQuality, QualityGateVerdict
 AS_OF = datetime(2026, 8, 26, tzinfo=UTC)
 
 
-def _daily_history(closes: list[float], *, start: str = "2023-08-01", volume_step: float = 0.0) -> dict:
+def _daily_history(
+    closes: list[float], *, start: str = "2023-08-01", volume_step: float = 0.0
+) -> dict:
     """Wrap a close series into a daily history on business days."""
     dates = [d.isoformat() for d in pd.bdate_range(start, periods=len(closes))]
     volumes = [1_000_000 + volume_step * i for i in range(len(closes))]
@@ -32,7 +34,7 @@ def _assert_no_nan(node) -> None:
     if isinstance(node, dict):
         for value in node.values():
             _assert_no_nan(value)
-    elif isinstance(node, (list, tuple)):
+    elif isinstance(node, list | tuple):
         for value in node:
             _assert_no_nan(value)
     elif isinstance(node, float):
@@ -168,9 +170,7 @@ class TestCrosses:
         decline = [200.0 * (0.995**i) for i in range(110 * 5)]
         trough = decline[-1]
         rise = [trough * (1.006**i) for i in range(30 * 5)]
-        pack = weekly_sma_pack(
-            _daily_history(decline + rise, volume_step=5_000.0), symbol="NVDA"
-        )
+        pack = weekly_sma_pack(_daily_history(decline + rise, volume_step=5_000.0), symbol="NVDA")
 
         cross = pack["crosses"]["5_vs_10"]
         assert cross["status"] == "observed"

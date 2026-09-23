@@ -132,7 +132,11 @@ class TechnicalAnalysisAgent(BaseAgent):
             patterns["doji"] = True
 
         # Hammer (small body, long lower shadow)
-        lower_shadow = latest["close"] - latest["low"] if latest["close"] > latest["open"] else latest["open"] - latest["low"]
+        lower_shadow = (
+            latest["close"] - latest["low"]
+            if latest["close"] > latest["open"]
+            else latest["open"] - latest["low"]
+        )
         upper_shadow = latest["high"] - max(latest["open"], latest["close"])
         if lower_shadow > body_size * 2 and upper_shadow < body_size * 0.5:
             patterns["hammer"] = True
@@ -159,7 +163,6 @@ class TechnicalAnalysisAgent(BaseAgent):
                 patterns["bullish_engulfing"] = True
 
         return patterns
-
 
 
 class FundamentalAnalysisAgent(BaseAgent):
@@ -243,9 +246,7 @@ class FundamentalAnalysisAgent(BaseAgent):
             logger.warning(f"Financial quality engine failed for {symbol}: {e}")
             return {"status": "error", "reason": str(e)}
 
-    def _valuation_scenarios(
-        self, symbol: str, fin_data: dict, mkt_data: dict
-    ) -> dict[str, Any]:
+    def _valuation_scenarios(self, symbol: str, fin_data: dict, mkt_data: dict) -> dict[str, Any]:
         """Bear/Base/Bull valuation range from the engine."""
         metrics = fin_data.get("metrics", {})
         try:
@@ -261,10 +262,3 @@ class FundamentalAnalysisAgent(BaseAgent):
         except Exception as e:
             logger.warning(f"Valuation engine failed for {symbol}: {e}")
             return {"status": "error", "reason": str(e)}
-
-
-
-
-
-
-

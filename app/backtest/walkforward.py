@@ -49,7 +49,10 @@ def walk_forward(
             "configs_tested": 0,
         }
 
-    combos = [dict(zip(param_grid, values, strict=True)) for values in itertools.product(*param_grid.values())]
+    combos = [
+        dict(zip(param_grid, values, strict=True))
+        for values in itertools.product(*param_grid.values())
+    ]
     windows: list[dict[str, Any]] = []
     start = 0
     while start + train_bars + test_bars <= len(data):
@@ -100,7 +103,7 @@ def _select_params(
             train, strategy=strategy, cost_model=cost_model, initial_cash=initial_cash, **combo
         )
         score = result.metrics.get(selection_metric)
-        numeric = float(score) if isinstance(score, (int, float)) else -float("inf")
+        numeric = float(score) if isinstance(score, int | float) else -float("inf")
         train_results.append({"params": combo, "score": None if score is None else float(score)})
         if numeric > best_score:
             best_score, best_params = numeric, combo
@@ -115,29 +118,32 @@ def _aggregate(windows: list[dict[str, Any]], param_grid: dict[str, list[Any]]) 
 
     oos_returns = [w["test_metrics"].get("total_return") for w in windows]
     oos_sharpes = [w["test_metrics"].get("sharpe") for w in windows]
-    numeric_returns = [r for r in oos_returns if isinstance(r, (int, float))]
-    numeric_sharpes = [s for s in oos_sharpes if isinstance(s, (int, float))]
+    numeric_returns = [r for r in oos_returns if isinstance(r, int | float)]
+    numeric_sharpes = [s for s in oos_sharpes if isinstance(s, int | float)]
 
     choices_by_key: dict[tuple, int] = {}
     for window in windows:
-        key = tuple(
-            (name, window["chosen_params"].get(name))
-            for name in sorted(param_grid)
-        )
+        key = tuple((name, window["chosen_params"].get(name)) for name in sorted(param_grid))
         choices_by_key[key] = choices_by_key.get(key, 0) + 1
     modal_count = max(choices_by_key.values()) if choices_by_key else 0
 
     worst = min(
-        (w for w in windows if isinstance(w["test_return"], (int, float))),
+        (w for w in windows if isinstance(w["test_return"], int | float)),
         key=lambda w: w["test_return"],
         default=None,
     )
 
     return {
         "windows_run": len(windows),
-        "oos_return_mean": round(sum(numeric_returns) / len(numeric_returns), 6) if numeric_returns else None,
-        "oos_sharpe_mean": round(sum(numeric_sharpes) / len(numeric_sharpes), 6) if numeric_sharpes else None,
+        "oos_return_mean": (
+            round(sum(numeric_returns) / len(numeric_returns), 6) if numeric_returns else None
+        ),
+        "oos_sharpe_mean": (
+            round(sum(numeric_sharpes) / len(numeric_sharpes), 6) if numeric_sharpes else None
+        ),
         "losing_windows": sum(1 for r in numeric_returns if r < 0),
-        "worst_window": {k: worst[k] for k in ("test_start", "test_end", "test_return")} if worst else None,
+        "worst_window": (
+            {k: worst[k] for k in ("test_start", "test_end", "test_return")} if worst else None
+        ),
         "param_stability": round(modal_count / len(windows), 4) if windows else None,
     }

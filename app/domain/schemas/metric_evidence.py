@@ -30,18 +30,14 @@ def parse_metric_id(metric_id: str) -> tuple[str, str, str, date]:
     """
     parts = metric_id.split(".")
     if len(parts) < 4:
-        raise ValueError(
-            f"metric_id must be 'symbol.domain.name.YYYY-MM-DD', got {metric_id!r}"
-        )
+        raise ValueError(f"metric_id must be 'symbol.domain.name.YYYY-MM-DD', got {metric_id!r}")
     *symbol_parts, domain, name, as_of_date = parts
     if not all(symbol_parts) or not domain or not name:
         raise ValueError(f"metric_id has empty segments: {metric_id!r}")
     try:
         parsed_date = date.fromisoformat(as_of_date)
     except ValueError as exc:
-        raise ValueError(
-            f"metric_id must end with a YYYY-MM-DD date, got {metric_id!r}"
-        ) from exc
+        raise ValueError(f"metric_id must end with a YYYY-MM-DD date, got {metric_id!r}") from exc
     return ".".join(symbol_parts), domain, name, parsed_date
 
 
@@ -90,7 +86,8 @@ class MetricEvidence(BaseModel):
         default=None, description="Snapshot id or URL pinning the observation"
     )
     formula: str | None = Field(
-        default=None, description="How the value was computed, e.g. 'mean(adjusted_weekly_close, 20)'"
+        default=None,
+        description="How the value was computed, e.g. 'mean(adjusted_weekly_close, 20)'",
     )
     params: dict[str, Any] = Field(
         default_factory=dict, description="Formula parameters (window, frequency, adjustment...)"

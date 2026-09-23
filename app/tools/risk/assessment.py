@@ -76,7 +76,11 @@ def _assess_symbol(symbol: str, data: dict) -> dict[str, Any]:
     benchmark_history = _get_benchmark_history(data)
     stock_returns, benchmark_returns = _paired_returns(hist, benchmark_history)
     beta = calculate_beta(stock_returns, benchmark_returns)
-    relative = relative_risk_metrics(stock_returns, benchmark_returns) if benchmark_returns is not None else {}
+    relative = (
+        relative_risk_metrics(stock_returns, benchmark_returns)
+        if benchmark_returns is not None
+        else {}
+    )
     stress = stress_scenarios(beta)
 
     risk_score = _calculate_score(volatility, max_dd, var_95, beta)
@@ -139,7 +143,9 @@ def _get_benchmark_history(data: dict) -> dict | None:
     return nested if isinstance(nested, dict) else benchmark
 
 
-def _calculate_score(vol: float | None, dd: float | None, var: float | None, beta: float | None) -> float | None:
+def _calculate_score(
+    vol: float | None, dd: float | None, var: float | None, beta: float | None
+) -> float | None:
     """Risk score 0-100 (higher = riskier); None when core metrics are missing.
 
     Core metrics (volatility, drawdown, VaR) are required — missing ones yield

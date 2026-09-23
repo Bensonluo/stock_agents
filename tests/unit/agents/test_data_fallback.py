@@ -80,7 +80,10 @@ class TestProviderFallback:
         monkeypatch.setattr(
             data_agent_module,
             "_sync_fetch_market_data",
-            lambda *args, **kwargs: {"symbol": "TEST", "historical_data": {"dates": ["2024-01-02"], "close": [1.0]}},
+            lambda *args, **kwargs: {
+                "symbol": "TEST",
+                "historical_data": {"dates": ["2024-01-02"], "close": [1.0]},
+            },
         )
 
         result = await agent._fetch_market_data("TEST")

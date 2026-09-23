@@ -158,15 +158,20 @@ class TestProviderChainFallback:
             closes = [100.0 * (1.001**i) for i in range(days)]
             return {
                 "dates": [d.isoformat() for d in pd.bdate_range("2024-01-01", periods=days)],
-                "open": closes, "high": closes, "low": closes,
-                "close": closes, "volume": [1e6] * days,
+                "open": closes,
+                "high": closes,
+                "low": closes,
+                "close": closes,
+                "volume": [1e6] * days,
             }
 
         monkeypatch.setattr("app.tools.data.fetcher.fetch_historical", fake_chain)
 
         result = await service.run_backtest(
-            symbol="AAPL", strategy="buy_and_hold",
-            start_date="2024-06-01", end_date="2025-06-01",
+            symbol="AAPL",
+            strategy="buy_and_hold",
+            start_date="2024-06-01",
+            end_date="2025-06-01",
         )
 
         assert result["final_value"] > 0
@@ -204,10 +209,7 @@ class TestStooqLastResort:
         class FakeResponse:
             text = "\n".join(
                 ["Date,Open,High,Low,Close,Volume"]
-                + [
-                    f"{d},{c},{c},{c},{c},1000000"
-                    for d, c in zip(dates, closes)
-                ]
+                + [f"{d},{c},{c},{c},{c},1000000" for d, c in zip(dates, closes)]
             )
 
             def raise_for_status(self):
@@ -228,7 +230,9 @@ class TestStooqLastResort:
 
         service = BacktestService()
         result = await service.run_backtest(
-            symbol="AAPL", strategy="buy_and_hold",
-            start_date="2024-03-01", end_date="2025-06-01",
+            symbol="AAPL",
+            strategy="buy_and_hold",
+            start_date="2024-03-01",
+            end_date="2025-06-01",
         )
         assert result["final_value"] > 0

@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,8 @@ DB_PATH = Path(__file__).parent.parent.parent / "data" / "analysis_history.db"
 @dataclass
 class AnalysisRecord:
     """分析记录数据类"""
-    id: Optional[int] = None
+
+    id: int | None = None
     thread_id: str = ""
     symbols: str = ""  # JSON 格式的股票代码列表
     query: str = ""
@@ -37,7 +38,7 @@ class AnalysisRecord:
     updated_at: str = ""
     execution_time: float = 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         return asdict(self)
 
@@ -46,8 +47,14 @@ class Database:
     """SQLite database manager with thread-safe connections."""
 
     _VALID_COLUMNS = {
-        "thread_id", "symbols", "query", "status", "result",
-        "created_at", "updated_at", "execution_time",
+        "thread_id",
+        "symbols",
+        "query",
+        "status",
+        "result",
+        "created_at",
+        "updated_at",
+        "execution_time",
     }
 
     _instance = None
@@ -79,7 +86,8 @@ class Database:
 
         # 创建表
         with self._get_connection() as conn:
-            conn.execute('''
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS analysis_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     thread_id TEXT UNIQUE NOT NULL,
@@ -91,21 +99,28 @@ class Database:
                     updated_at TEXT NOT NULL,
                     execution_time REAL DEFAULT 0.0
                 )
-            ''')
+            """
+            )
 
             # 创建索引
-            conn.execute('''
+            conn.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_thread_id
                 ON analysis_history(thread_id)
-            ''')
-            conn.execute('''
+            """
+            )
+            conn.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_created_at
                 ON analysis_history(created_at DESC)
-            ''')
-            conn.execute('''
+            """
+            )
+            conn.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_status
                 ON analysis_history(status)
-            ''')
+            """
+            )
 
             conn.commit()
             logger.debug("[DB] 表结构初始化完成")
@@ -113,7 +128,7 @@ class Database:
     @contextmanager
     def _get_connection(self):
         """获取线程安全的数据库连接"""
-        if not hasattr(self._local, 'conn') or self._local.conn is None:
+        if not hasattr(self._local, "conn") or self._local.conn is None:
             self._local.conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
             self._local.conn.row_factory = sqlite3.Row
         yield self._local.conn
@@ -130,27 +145,30 @@ class Database:
         now = datetime.now().isoformat()
 
         with self._get_connection() as conn:
-            cursor = conn.execute('''
+            cursor = conn.execute(
+                """
                 INSERT INTO analysis_history
                 (thread_id, symbols, query, status, result, created_at, updated_at, execution_time)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                record.thread_id,
-                record.symbols,
-                record.query,
-                record.status,
-                record.result,
-                now,
-                now,
-                record.execution_time
-            ))
+            """,
+                (
+                    record.thread_id,
+                    record.symbols,
+                    record.query,
+                    record.status,
+                    record.result,
+                    now,
+                    now,
+                    record.execution_time,
+                ),
+            )
             conn.commit()
 
             record_id = cursor.lastrowid
             logger.info(f"[DB] 创建记录: id={record_id}, thread_id={record.thread_id}")
             return record_id
 
-    def get_record(self, thread_id: str) -> Optional[AnalysisRecord]:
+    def get_record(self, thread_id: str) -> AnalysisRecord | None:
         """根据 thread_id 获取记录
 
         Args:
@@ -161,8 +179,7 @@ class Database:
         """
         with self._get_connection() as conn:
             row = conn.execute(
-                'SELECT * FROM analysis_history WHERE thread_id = ?',
-                (thread_id,)
+                "SELECT * FROM analysis_history WHERE thread_id = ?", (thread_id,)
             ).fetchone()
 
             if row:
@@ -172,12 +189,11 @@ class Database:
             logger.debug(f"[DB] 记录不存在: thread_id={thread_id}")
             return None
 
-    def get_record_by_id(self, record_id: int) -> Optional[AnalysisRecord]:
+    def get_record_by_id(self, record_id: int) -> AnalysisRecord | None:
         """根据 ID 获取记录"""
         with self._get_connection() as conn:
             row = conn.execute(
-                'SELECT * FROM analysis_history WHERE id = ?',
-                (record_id,)
+                "SELECT * FROM analysis_history WHERE id = ?", (record_id,)
             ).fetchone()
 
             if row:
@@ -212,16 +228,20 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.execute(
                 f"UPDATE analysis_history SET {set_clause} WHERE thread_id = ?",
-                (*kwargs.values(), thread_id)
+                (*kwargs.values(), thread_id),
             )
             conn.commit()
 
             success = cursor.rowcount > 0
             if success:
-                logger.info(f"[DB] Updated record: thread_id={thread_id}, fields={list(kwargs.keys())}")
+                logger.info(
+                    f"[DB] Updated record: thread_id={thread_id}, fields={list(kwargs.keys())}"
+                )
             return success
 
-    def update_status(self, thread_id: str, status: str, result: str = None, execution_time: float = 0.0) -> bool:
+    def update_status(
+        self, thread_id: str, status: str, result: str = None, execution_time: float = 0.0
+    ) -> bool:
         """更新分析状态和结果
 
         Args:
@@ -237,17 +257,23 @@ class Database:
 
         with self._get_connection() as conn:
             if result:
-                cursor = conn.execute('''
+                cursor = conn.execute(
+                    """
                     UPDATE analysis_history
                     SET status = ?, result = ?, execution_time = ?, updated_at = ?
                     WHERE thread_id = ?
-                ''', (status, result, execution_time, now, thread_id))
+                """,
+                    (status, result, execution_time, now, thread_id),
+                )
             else:
-                cursor = conn.execute('''
+                cursor = conn.execute(
+                    """
                     UPDATE analysis_history
                     SET status = ?, execution_time = ?, updated_at = ?
                     WHERE thread_id = ?
-                ''', (status, execution_time, now, thread_id))
+                """,
+                    (status, execution_time, now, thread_id),
+                )
 
             conn.commit()
 
@@ -256,11 +282,8 @@ class Database:
             return success
 
     def list_records(
-        self,
-        limit: int = 20,
-        offset: int = 0,
-        status: Optional[str] = None
-    ) -> List[AnalysisRecord]:
+        self, limit: int = 20, offset: int = 0, status: str | None = None
+    ) -> list[AnalysisRecord]:
         """获取记录列表
 
         Args:
@@ -273,24 +296,30 @@ class Database:
         """
         with self._get_connection() as conn:
             if status:
-                rows = conn.execute('''
+                rows = conn.execute(
+                    """
                     SELECT * FROM analysis_history
                     WHERE status = ?
                     ORDER BY created_at DESC
                     LIMIT ? OFFSET ?
-                ''', (status, limit, offset)).fetchall()
+                """,
+                    (status, limit, offset),
+                ).fetchall()
             else:
-                rows = conn.execute('''
+                rows = conn.execute(
+                    """
                     SELECT * FROM analysis_history
                     ORDER BY created_at DESC
                     LIMIT ? OFFSET ?
-                ''', (limit, offset)).fetchall()
+                """,
+                    (limit, offset),
+                ).fetchall()
 
             records = [self._row_to_record(row) for row in rows]
             logger.debug(f"[DB] 查询列表: 返回 {len(records)} 条记录")
             return records
 
-    def count_records(self, status: Optional[str] = None) -> int:
+    def count_records(self, status: str | None = None) -> int:
         """统计记录数量
 
         Args:
@@ -302,13 +331,10 @@ class Database:
         with self._get_connection() as conn:
             if status:
                 count = conn.execute(
-                    'SELECT COUNT(*) FROM analysis_history WHERE status = ?',
-                    (status,)
+                    "SELECT COUNT(*) FROM analysis_history WHERE status = ?", (status,)
                 ).fetchone()[0]
             else:
-                count = conn.execute(
-                    'SELECT COUNT(*) FROM analysis_history'
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM analysis_history").fetchone()[0]
 
             return count
 
@@ -322,10 +348,7 @@ class Database:
             是否删除成功
         """
         with self._get_connection() as conn:
-            cursor = conn.execute(
-                'DELETE FROM analysis_history WHERE thread_id = ?',
-                (thread_id,)
-            )
+            cursor = conn.execute("DELETE FROM analysis_history WHERE thread_id = ?", (thread_id,))
             conn.commit()
 
             success = cursor.rowcount > 0
@@ -333,7 +356,7 @@ class Database:
                 logger.info(f"[DB] 删除记录: thread_id={thread_id}")
             return success
 
-    def search_records(self, keyword: str, limit: int = 20) -> List[AnalysisRecord]:
+    def search_records(self, keyword: str, limit: int = 20) -> list[AnalysisRecord]:
         """搜索记录
 
         Args:
@@ -344,12 +367,15 @@ class Database:
             匹配的记录列表
         """
         with self._get_connection() as conn:
-            rows = conn.execute('''
+            rows = conn.execute(
+                """
                 SELECT * FROM analysis_history
                 WHERE symbols LIKE ? OR query LIKE ?
                 ORDER BY created_at DESC
                 LIMIT ?
-            ''', (f'%{keyword}%', f'%{keyword}%', limit)).fetchall()
+            """,
+                (f"%{keyword}%", f"%{keyword}%", limit),
+            ).fetchall()
 
             records = [self._row_to_record(row) for row in rows]
             logger.debug(f"[DB] 搜索: keyword={keyword}, 找到 {len(records)} 条")
@@ -358,20 +384,20 @@ class Database:
     def _row_to_record(self, row: sqlite3.Row) -> AnalysisRecord:
         """将数据库行转换为记录对象"""
         return AnalysisRecord(
-            id=row['id'],
-            thread_id=row['thread_id'],
-            symbols=row['symbols'],
-            query=row['query'],
-            status=row['status'],
-            result=row['result'],
-            created_at=row['created_at'],
-            updated_at=row['updated_at'],
-            execution_time=row['execution_time']
+            id=row["id"],
+            thread_id=row["thread_id"],
+            symbols=row["symbols"],
+            query=row["query"],
+            status=row["status"],
+            result=row["result"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            execution_time=row["execution_time"],
         )
 
 
 # 全局数据库实例
-_db_instance: Optional[Database] = None
+_db_instance: Database | None = None
 
 
 def get_database() -> Database:

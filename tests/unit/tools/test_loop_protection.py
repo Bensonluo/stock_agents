@@ -62,9 +62,7 @@ class TestHkSymbols:
     async def test_kline_parser_maps_fields(self) -> None:
         from app.tools.data.fetcher import _eastmoney_klines_to_hist
 
-        hist = _eastmoney_klines_to_hist(
-            ["2026-09-01,10.0,11.0,12.0,9.0,100,200,3.0,10.0,1.0"]
-        )
+        hist = _eastmoney_klines_to_hist(["2026-09-01,10.0,11.0,12.0,9.0,100,200,3.0,10.0,1.0"])
         assert hist["dates"] == ["2026-09-01"]
         assert hist["open"] == [10.0] and hist["close"] == [11.0]
         assert hist["high"] == [12.0] and hist["low"] == [9.0]
@@ -83,7 +81,10 @@ class TestHkSymbols:
         fake_df = pd.DataFrame(
             {
                 "日期": index.strftime("%Y-%m-%d"),
-                "开盘": closes, "收盘": closes, "最高": closes, "最低": closes,
+                "开盘": closes,
+                "收盘": closes,
+                "最高": closes,
+                "最低": closes,
                 "成交量": [1e6] * days,
             }
         )
@@ -135,8 +136,10 @@ class TestFailureCircuitBreaker:
         async def boom(*a, **k):  # provider chain would raise if called
             raise AssertionError("provider chain must not be reached")
 
-        with patch.object(auto_tools, "fetch_stock_data", boom), \
-             patch.object(auto_tools, "fetch_historical", boom):
+        with (
+            patch.object(auto_tools, "fetch_stock_data", boom),
+            patch.object(auto_tools, "fetch_historical", boom),
+        ):
             result = await auto_tools._fetch_and_split("0700.HK")
 
         assert result["data_available"] is False
@@ -190,9 +193,10 @@ class TestRotationLoopDetection:
     def _ai_with_calls(calls):
         from langchain_core.messages import AIMessage
 
-        return AIMessage(content="", tool_calls=[
-            {"name": n, "args": a, "id": f"c{i}"} for i, (n, a) in enumerate(calls)
-        ])
+        return AIMessage(
+            content="",
+            tool_calls=[{"name": n, "args": a, "id": f"c{i}"} for i, (n, a) in enumerate(calls)],
+        )
 
     def test_rotation_loop_forces_finish(self) -> None:
         call = ("fetch_stock_data_tool", {"symbols": ["0700.HK"]})
@@ -214,7 +218,7 @@ class TestRotationLoopDetection:
             ("analyze_fundamental", {"symbol": "0700.HK"}),
             ("fetch_stock_data_tool", {"symbols": ["0700.HK"]}),
         ]
-        messages = [self._ai_with_calls(calls[i:i+3]) for i in range(0, len(calls), 3)]
+        messages = [self._ai_with_calls(calls[i : i + 3]) for i in range(0, len(calls), 3)]
 
         result = self._reflect(messages)
 
@@ -231,7 +235,9 @@ class TestRotationLoopDetection:
 
         result = self._reflect(messages)
 
-        assert not any("STOP calling tools" in getattr(m, "content", "") for m in result.get("messages", []))
+        assert not any(
+            "STOP calling tools" in getattr(m, "content", "") for m in result.get("messages", [])
+        )
 
 
 class TestTencentHk:
@@ -241,15 +247,23 @@ class TestTencentHk:
         from app.tools.data import fetcher
 
         quote = {
-            "name": "腾讯控股", "price": 433.0, "prev_close": 438.2, "open": 444.2,
-            "volume": 17387096.0, "high": 445.6, "low": 433.0, "turnover": 7.6e9,
+            "name": "腾讯控股",
+            "price": 433.0,
+            "prev_close": 438.2,
+            "open": 444.2,
+            "volume": 17387096.0,
+            "high": 445.6,
+            "low": 433.0,
+            "turnover": 7.6e9,
         }
         klines = [
             ["2026-09-02", "440.0", "438.2", "445.0", "435.0", "15000000"],
             ["2026-09-03", "444.2", "433.0", "445.6", "433.0", "17387096"],
         ]
-        with patch.object(fetcher, "_tencent_hk_quote", return_value=quote), \
-             patch.object(fetcher, "_tencent_hk_klines", return_value=klines):
+        with (
+            patch.object(fetcher, "_tencent_hk_quote", return_value=quote),
+            patch.object(fetcher, "_tencent_hk_klines", return_value=klines),
+        ):
             result = await fetcher._tencent_hk_fetch("0700.HK")
 
         mkt = result["market_data"]["0700.HK"]
@@ -264,7 +278,9 @@ class TestTencentHk:
     def test_tencent_quote_parser(self) -> None:
         from app.tools.data import fetcher
 
-        raw = 'v_hk00700="100~腾讯控股~00700~433.000~438.200~444.200~17387096.0~' + "~0" * 60 + '";\n'
+        raw = (
+            'v_hk00700="100~腾讯控股~00700~433.000~438.200~444.200~17387096.0~' + "~0" * 60 + '";\n'
+        )
         with patch.object(fetcher.requests, "get") as mock_get:
             mock_get.return_value.status_code = 200
             mock_get.return_value.content = raw.encode("gbk")

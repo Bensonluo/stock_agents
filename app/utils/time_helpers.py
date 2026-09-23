@@ -1,12 +1,11 @@
 """Time utility functions."""
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 
 def now_utc() -> datetime:
     """Get current UTC datetime."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def now_timestamp() -> int:
@@ -16,19 +15,19 @@ def now_timestamp() -> int:
 
 def from_timestamp(ts: int) -> datetime:
     """Convert Unix timestamp to datetime."""
-    return datetime.fromtimestamp(ts, tz=timezone.utc)
+    return datetime.fromtimestamp(ts, tz=UTC)
 
 
-def to_datetime(dt: Optional[datetime]) -> Optional[datetime]:
+def to_datetime(dt: datetime | None) -> datetime | None:
     """Ensure datetime is timezone-aware (UTC)."""
     if dt is None:
         return None
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
-def format_datetime(dt: Optional[datetime], fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+def format_datetime(dt: datetime | None, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
     """Format datetime to string."""
     if dt is None:
         return ""

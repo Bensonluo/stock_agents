@@ -40,4 +40,3 @@ async def test_symbol_only_tool_does_not_fabricate_beta_or_position(monkeypatch)
     assert result["metrics"]["beta_status"] == "insufficient_data"
     assert result["risk_score_status"] == "partial"
     assert result["position_recommendation"]["max_position_size"] is None
-

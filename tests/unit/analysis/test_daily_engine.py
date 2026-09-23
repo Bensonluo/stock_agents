@@ -31,7 +31,7 @@ def _assert_no_nan(node) -> None:
     if isinstance(node, dict):
         for value in node.values():
             _assert_no_nan(value)
-    elif isinstance(node, (list, tuple)):
+    elif isinstance(node, list | tuple):
         for value in node:
             _assert_no_nan(value)
     elif isinstance(node, float):
@@ -99,19 +99,29 @@ class TestDeduplication:
         assert _to_dataframe is to_dataframe
         assert _calculate_indicators is calculate_indicators
         assert _generate_signals is generate_signals
-        assert _find_support_resistance is __import__(
-            "app.analysis.technical", fromlist=["find_support_resistance"]
-        ).find_support_resistance
-        assert _calculate_sentiment is __import__(
-            "app.analysis.technical", fromlist=["calculate_sentiment"]
-        ).calculate_sentiment
+        assert (
+            _find_support_resistance
+            is __import__(
+                "app.analysis.technical", fromlist=["find_support_resistance"]
+            ).find_support_resistance
+        )
+        assert (
+            _calculate_sentiment
+            is __import__(
+                "app.analysis.technical", fromlist=["calculate_sentiment"]
+            ).calculate_sentiment
+        )
 
     def test_tool_and_engine_agree_on_same_history(self) -> None:
         from app.tools.analysis.technical import analyze_technical
 
         history = _daily()
         tool_result = analyze_technical.invoke(
-            {"market_data": {"AAPL": {"symbol": "AAPL", "current_price": None, "historical_data": history}}}
+            {
+                "market_data": {
+                    "AAPL": {"symbol": "AAPL", "current_price": None, "historical_data": history}
+                }
+            }
         )
 
         direct = analyze_daily(history, symbol="AAPL", source="market_data_history")

@@ -79,9 +79,7 @@ class RiskAssessmentAgent(StatelessAgent):
         """Assess risk for a single symbol via the shared engine path."""
         return assess_symbol(symbol, data)
 
-    def _estimate_beta(
-        self, returns, benchmark_returns=None
-    ) -> float | None:
+    def _estimate_beta(self, returns, benchmark_returns=None) -> float | None:
         """Beta from paired returns; None when evidence is insufficient."""
         return _calculate_beta(returns, benchmark_returns)
 
@@ -117,7 +115,7 @@ class RiskAssessmentAgent(StatelessAgent):
         risk_scores = [
             score
             for result in results.values()
-            if isinstance((score := result.get("risk_score")), (int, float))
+            if isinstance((score := result.get("risk_score")), int | float)
         ]
         avg_risk_score = sum(risk_scores) / len(risk_scores) if risk_scores else None
 
@@ -176,7 +174,7 @@ class RiskAssessmentAgent(StatelessAgent):
         risk_scores = [
             score
             for result in results.values()
-            if isinstance((score := result.get("risk_score")), (int, float))
+            if isinstance((score := result.get("risk_score")), int | float)
         ]
         if not risk_scores:
             return "insufficient_data"

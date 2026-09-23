@@ -3,10 +3,11 @@
 import asyncio
 import random
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, TypeVar
 
 from app.utils.logging import get_logger
 
@@ -37,14 +38,16 @@ class RetryConfig:
     jitter_factor: float = 0.1  # Jitter as fraction of delay
 
     # Retryable error types
-    retryable_exceptions: List[str] = field(default_factory=lambda: [
-        "TimeoutError",
-        "ConnectionError",
-        "RateLimitError",
-        "TemporaryFailure",
-        "HTTPError",
-        "RequestException",
-    ])
+    retryable_exceptions: list[str] = field(
+        default_factory=lambda: [
+            "TimeoutError",
+            "ConnectionError",
+            "RateLimitError",
+            "TemporaryFailure",
+            "HTTPError",
+            "RequestException",
+        ]
+    )
 
 
 @dataclass
@@ -53,10 +56,10 @@ class RetryAttempt:
 
     attempt_number: int
     started_at: datetime
-    completed_at: Optional[datetime] = None
+    completed_at: datetime | None = None
     success: bool = False
-    error_type: Optional[str] = None
-    error_message: Optional[str] = None
+    error_type: str | None = None
+    error_message: str | None = None
     delay_before: float = 0.0
 
 
@@ -67,8 +70,8 @@ class RetryHistory:
     retry_id: str
     function_name: str
     started_at: datetime
-    completed_at: Optional[datetime] = None
-    attempts: List[RetryAttempt] = field(default_factory=list)
+    completed_at: datetime | None = None
+    attempts: list[RetryAttempt] = field(default_factory=list)
     success: bool = False
     total_delay: float = 0.0
 
@@ -77,7 +80,7 @@ class RetryHistory:
         self.attempts.append(attempt)
         self.total_delay += attempt.delay_before
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Get a summary of the retry history."""
         return {
             "retry_id": self.retry_id,
@@ -111,20 +114,20 @@ class RetryManager:
     Core learning: Implementing retry patterns for distributed systems resilience.
     """
 
-    def __init__(self, default_config: Optional[RetryConfig] = None):
+    def __init__(self, default_config: RetryConfig | None = None):
         """Initialize the retry manager.
 
         Args:
             default_config: Default retry configuration
         """
         self.default_config = default_config or RetryConfig()
-        self.history: List[RetryHistory] = []
+        self.history: list[RetryHistory] = []
 
     async def execute_with_retry(
         self,
         func: Callable[..., T],
         *args: Any,
-        config: Optional[RetryConfig] = None,
+        config: RetryConfig | None = None,
         **kwargs: Any,
     ) -> T:
         """Execute a function with retry logic.
@@ -227,7 +230,7 @@ class RetryManager:
         self,
         func: Callable[..., T],
         *args: Any,
-        config: Optional[RetryConfig] = None,
+        config: RetryConfig | None = None,
         **kwargs: Any,
     ) -> T:
         """Execute a synchronous function with retry logic.
@@ -310,9 +313,9 @@ class RetryManager:
 
     def get_retry_history(
         self,
-        function_name: Optional[str] = None,
+        function_name: str | None = None,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get retry history.
 
         Args:
@@ -332,7 +335,7 @@ class RetryManager:
 
         return [h.get_summary() for h in reversed(history)]
 
-    def get_retry_statistics(self) -> Dict[str, Any]:
+    def get_retry_statistics(self) -> dict[str, Any]:
         """Get statistics about retry operations.
 
         Returns:
@@ -363,7 +366,7 @@ class RetryManager:
             "avg_delay": total_delay / len(self.history),
         }
 
-    def clear_history(self, older_than: Optional[int] = None) -> None:
+    def clear_history(self, older_than: int | None = None) -> None:
         """Clear retry history.
 
         Args:
@@ -374,11 +377,7 @@ class RetryManager:
             self.history.clear()
         else:
             cutoff = datetime.now().timestamp() - older_than
-            self.history = [
-                h
-                for h in self.history
-                if h.started_at.timestamp() > cutoff
-            ]
+            self.history = [h for h in self.history if h.started_at.timestamp() > cutoff]
 
     def _calculate_delay(self, attempt: int, config: RetryConfig) -> float:
         """Calculate delay before next retry.
@@ -429,7 +428,7 @@ class RetryManager:
 
 
 # Global retry manager instance
-_retry_manager: Optional[RetryManager] = None
+_retry_manager: RetryManager | None = None
 
 
 def get_retry_manager() -> RetryManager:

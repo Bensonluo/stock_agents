@@ -66,14 +66,26 @@ def _market_history(days: int = 300) -> dict[str, list]:
 def _financial() -> dict:
     return {
         "metrics": {
-            "roe": 0.17, "roa": 0.07, "profit_margin": 0.19, "operating_margin": 0.22,
-            "pe_ratio": 21.0, "pb_ratio": 3.4, "ps_ratio": 3.8, "trailing_eps": 5.9,
-            "debt_to_equity": 0.9, "current_ratio": 1.5, "revenue_growth": 0.11,
+            "roe": 0.17,
+            "roa": 0.07,
+            "profit_margin": 0.19,
+            "operating_margin": 0.22,
+            "pe_ratio": 21.0,
+            "pb_ratio": 3.4,
+            "ps_ratio": 3.8,
+            "trailing_eps": 5.9,
+            "debt_to_equity": 0.9,
+            "current_ratio": 1.5,
+            "revenue_growth": 0.11,
             "earnings_growth": 0.08,
         },
         "income_statement": {
             "dates": ["2023-12-31", "2024-12-31"],
-            "data": {"Total Revenue": [90.0, 100.0], "Gross Profit": [33.0, 38.0], "Net Income": [10.0, 12.0]},
+            "data": {
+                "Total Revenue": [90.0, 100.0],
+                "Gross Profit": [33.0, 38.0],
+                "Net Income": [10.0, 12.0],
+            },
         },
         "cash_flow": {
             "dates": ["2023-12-31", "2024-12-31"],
@@ -123,8 +135,16 @@ class TestSentimentParity:
         module = _load_agent_module("sentiment_agent.py", "sentiment_agent_parity")
         agent = module.SentimentAnalysisAgent()
         news = [
-            {"title": "Strong profit beat and record growth", "summary": "surge in demand", "related_symbols": ["TEST"]},
-            {"title": "Lawsuit risk over debt", "summary": "downgrade warning", "related_symbols": ["TEST"]},
+            {
+                "title": "Strong profit beat and record growth",
+                "summary": "surge in demand",
+                "related_symbols": ["TEST"],
+            },
+            {
+                "title": "Lawsuit risk over debt",
+                "summary": "downgrade warning",
+                "related_symbols": ["TEST"],
+            },
             {"title": "Neutral announcement", "summary": "", "related_symbols": ["TEST"]},
         ]
 
@@ -141,7 +161,9 @@ class TestDecisionParity:
         from app.services.report_service import derive_recommendation
 
         technical = {"signals": {"trend": "bullish"}, "sentiment": {"score": 35}}
-        fundamental = analyze_fundamental_scoring({"TEST": _financial()}, {"TEST": {"current_price": 150.0}})["TEST"]
+        fundamental = analyze_fundamental_scoring(
+            {"TEST": _financial()}, {"TEST": {"current_price": 150.0}}
+        )["TEST"]
         sentiment = {"sentiment": "positive", "score": 22}
         risk = {"risk_level": "medium", "position_recommendation": {"max_position_size": 10}}
 

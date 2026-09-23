@@ -55,7 +55,9 @@ class DecisionMakingAgent(StatelessAgent):
             return {}
 
         logger.info(f"Making investment decisions for {len(symbols)} symbols")
-        logger.info(f"Data available - technical: {bool(technical)}, fundamental: {bool(fundamental)}, sentiment: {bool(sentiment)}, risk: {bool(risk)}")
+        logger.info(
+            f"Data available - technical: {bool(technical)}, fundamental: {bool(fundamental)}, sentiment: {bool(sentiment)}, risk: {bool(risk)}"
+        )
 
         results = {}
 
@@ -73,6 +75,7 @@ class DecisionMakingAgent(StatelessAgent):
             except Exception as e:
                 logger.error(f"Error making decision for {symbol}: {e}")
                 import traceback
+
                 traceback.print_exc()
 
         # Use LLM for final decision synthesis if available
@@ -199,9 +202,7 @@ class DecisionMakingAgent(StatelessAgent):
 
         return sentiment.get("score", 0.0)
 
-    def _calculate_position_size(
-        self, score: float, risk_rec: dict
-    ) -> dict[str, float]:
+    def _calculate_position_size(self, score: float, risk_rec: dict) -> dict[str, float]:
         """Calculate recommended position size.
 
         Args:
@@ -231,9 +232,7 @@ class DecisionMakingAgent(StatelessAgent):
             "sizing_rationale": f"Based on conviction ({abs_score:.0f}/100) and risk limits",
         }
 
-    def _calculate_price_targets(
-        self, technical: dict, risk: dict
-    ) -> dict[str, Any]:
+    def _calculate_price_targets(self, technical: dict, risk: dict) -> dict[str, Any]:
         """Calculate entry, stop loss, and take profit targets.
 
         Args:
@@ -279,9 +278,7 @@ class DecisionMakingAgent(StatelessAgent):
 
         return targets
 
-    def _generate_decision_warnings(
-        self, action: str, risk: dict, confidence: float
-    ) -> list[str]:
+    def _generate_decision_warnings(self, action: str, risk: dict, confidence: float) -> list[str]:
         """Generate decision-specific warnings.
 
         Args:
@@ -296,7 +293,9 @@ class DecisionMakingAgent(StatelessAgent):
 
         # Low confidence warning
         if confidence < 50:
-            warnings.append("Low confidence in this recommendation. Consider waiting for clearer signals.")
+            warnings.append(
+                "Low confidence in this recommendation. Consider waiting for clearer signals."
+            )
 
         # High risk warning
         risk_level = risk.get("risk_level", "")
@@ -326,8 +325,12 @@ class DecisionMakingAgent(StatelessAgent):
 
         return {
             "total_symbols": len(decisions),
-            "buy_recommendations": actions.count("buy") + actions.count("strong_buy") + actions.count("moderate_buy"),
-            "sell_recommendations": actions.count("sell") + actions.count("strong_sell") + actions.count("moderate_sell"),
+            "buy_recommendations": actions.count("buy")
+            + actions.count("strong_buy")
+            + actions.count("moderate_buy"),
+            "sell_recommendations": actions.count("sell")
+            + actions.count("strong_sell")
+            + actions.count("moderate_sell"),
             "hold_recommendations": actions.count("hold"),
             "avg_confidence": sum(d["confidence"] for d in decisions.values()) / len(decisions),
         }

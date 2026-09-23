@@ -26,14 +26,19 @@ def visible_from(period_end: str | date, lag_days: int = DEFAULT_REPORTING_LAG_D
     return end + timedelta(days=lag_days)
 
 
-def stamp_visibility(statement_block: dict[str, Any], lag_days: int = DEFAULT_REPORTING_LAG_DAYS) -> dict[str, Any]:
+def stamp_visibility(
+    statement_block: dict[str, Any], lag_days: int = DEFAULT_REPORTING_LAG_DAYS
+) -> dict[str, Any]:
     """Return the statement block with a ``visible_from`` list added.
 
     The block shape is the data-agent's: ``{"dates": [...], "data": {...}}``.
     ``visible_from`` aligns index-wise with ``dates``.
     """
     dates = statement_block.get("dates") or []
-    return {**statement_block, "visible_from": [visible_from(d, lag_days).isoformat() for d in dates]}
+    return {
+        **statement_block,
+        "visible_from": [visible_from(d, lag_days).isoformat() for d in dates],
+    }
 
 
 def visible_values_at(
