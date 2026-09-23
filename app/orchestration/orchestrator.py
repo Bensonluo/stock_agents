@@ -18,8 +18,8 @@ from app.agents import (
     SentimentAnalysisAgent,
     TechnicalAnalysisAgent,
 )
-from app.api.routes.monitor import add_log, init_workflow, update_agent_status
 from app.monitoring import get_connection_manager, get_monitor
+from app.monitoring.workflow_status import add_log, init_workflow, update_agent_status
 from app.orchestration.checkpoint import PostgresCheckpointManager
 from app.orchestration.state import (
     AgentState,

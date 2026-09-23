@@ -42,6 +42,11 @@ async def lifespan(app: FastAPI):
 
     logger.info("Shutting down application")
 
+    # Release the orchestrator's resources (e.g., close the checkpoint DB).
+    from app.api.dependencies import close_orchestrator
+
+    await close_orchestrator()
+
 
 # Create FastAPI application
 app = FastAPI(

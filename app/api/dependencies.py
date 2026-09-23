@@ -115,3 +115,19 @@ def reset_orchestrator():
     global _orchestrator
     _orchestrator = None
     logger.info("Orchestrator reset")
+
+
+async def close_orchestrator() -> None:
+    """Gracefully release the orchestrator's resources (FastAPI shutdown)."""
+    global _orchestrator
+    if _orchestrator is None:
+        return
+    checkpoint_manager = _orchestrator.checkpoint_manager
+    aclose = getattr(checkpoint_manager, "aclose", None)
+    if aclose is not None:
+        try:
+            await aclose()
+        except Exception as e:
+            logger.warning(f"Checkpoint manager close failed: {e}")
+    _orchestrator = None
+    logger.info("Orchestrator closed")

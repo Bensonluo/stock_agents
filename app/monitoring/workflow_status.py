@@ -1,0 +1,119 @@
+"""In-memory workflow status store shared by the orchestrator and the monitor API.
+
+Extracted from the API layer so the orchestration layer can record progress
+without depending on FastAPI routes.
+"""
+
+from datetime import datetime
+
+# Agents pre-registered for progress display, in pipeline order.
+PIPELINE_AGENTS = [
+    "data_collection",
+    "technical_analysis",
+    "fundamental_analysis",
+    "sentiment_analysis",
+    "risk_assessment",
+    "research_synthesis",
+    "decision_making",
+    "report_generation",
+]
+
+MAX_LOG_ENTRIES = 200
+
+# Global state stores (thread_id keyed)
+_workflow_states: dict[str, dict] = {}
+_agent_logs: dict[str, list[dict]] = {}
+
+
+def init_workflow(thread_id: str):
+    """初始化工作流状态"""
+    _workflow_states[thread_id] = {
+        "thread_id": thread_id,
+        "status": "pending",
+        "agents": {a: {"name": a, "status": "pending"} for a in PIPELINE_AGENTS},
+        "current_agent": None,
+        "progress": 0.0,
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat(),
+    }
+    _agent_logs[thread_id] = []
+
+
+def update_agent_status(thread_id: str, agent: str, status: str, error: str | None = None):
+    """更新智能体状态"""
+    if thread_id not in _workflow_states:
+        init_workflow(thread_id)
+
+    state = _workflow_states[thread_id]
+    previous = state["agents"].get(agent, {})
+    state["agents"][agent] = {
+        "name": agent,
+        "status": status,
+        "started_at": (
+            datetime.now().isoformat() if status == "running" else previous.get("started_at")
+        ),
+        "completed_at": datetime.now().isoformat() if status in ("completed", "failed") else None,
+        "error": error,
+    }
+    state["current_agent"] = agent if status == "running" else None
+    state["updated_at"] = datetime.now().isoformat()
+
+    # 计算进度
+    completed = sum(1 for a in state["agents"].values() if a["status"] == "completed")
+    state["progress"] = (completed / len(state["agents"])) * 100
+
+    # 更新整体状态
+    if status == "running":
+        state["status"] = "running"
+    elif all(a["status"] == "completed" for a in state["agents"].values()):
+        state["status"] = "completed"
+    elif any(a["status"] == "failed" for a in state["agents"].values()):
+        state["status"] = "failed"
+
+
+def add_log(thread_id: str, agent: str, level: str, message: str):
+    """添加日志条目"""
+    if thread_id not in _agent_logs:
+        _agent_logs[thread_id] = []
+
+    _agent_logs[thread_id].append(
+        {
+            "timestamp": datetime.now().isoformat(),
+            "agent": agent,
+            "level": level,
+            "message": message,
+        }
+    )
+
+    # 保留最近 MAX_LOG_ENTRIES 条
+    if len(_agent_logs[thread_id]) > MAX_LOG_ENTRIES:
+        _agent_logs[thread_id] = _agent_logs[thread_id][-MAX_LOG_ENTRIES:]
+
+
+def get_workflow_state(thread_id: str) -> dict | None:
+    """获取工作流状态(不存在返回 None)"""
+    return _workflow_states.get(thread_id)
+
+
+def get_logs(thread_id: str, limit: int = 50) -> list[dict]:
+    """获取日志条目(最新在前取尾部 limit 条)"""
+    return _agent_logs.get(thread_id, [])[-limit:]
+
+
+def list_workflows() -> list[dict]:
+    """列出所有工作流摘要"""
+    return [
+        {
+            "thread_id": tid,
+            "status": state["status"],
+            "progress": state["progress"],
+            "updated_at": state["updated_at"],
+        }
+        for tid, state in _workflow_states.items()
+    ]
+
+
+def reset() -> None:
+    """清空全部状态(测试用)"""
+    _workflow_states.clear()
+    _agent_logs.clear()
