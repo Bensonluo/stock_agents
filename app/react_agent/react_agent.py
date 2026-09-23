@@ -23,7 +23,6 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 _reasoning_llm: ChatOpenAI | None = None
-_reflection_llm: ChatOpenAI | None = None
 
 ZHIPU_API_BASE = "https://open.bigmodel.cn/api/coding/paas/v4/"
 
@@ -40,20 +39,6 @@ def _get_reasoning_llm() -> ChatOpenAI:
             openai_api_base=ZHIPU_API_BASE,
         )
     return _reasoning_llm
-
-
-def _get_reflection_llm() -> ChatOpenAI:
-    global _reflection_llm
-    if _reflection_llm is None:
-        _reflection_llm = ChatOpenAI(
-            model=settings.agent_reflection_model,
-            temperature=0.1,
-            max_tokens=500,
-            timeout=settings.llm_timeout,
-            openai_api_key=settings.zhipuai_api_key,
-            openai_api_base=ZHIPU_API_BASE,
-        )
-    return _reflection_llm
 
 
 def build_react_graph():
@@ -364,13 +349,12 @@ def observe_node(state: ReActState) -> dict[str, Any]:
             if isinstance(msg, ToolMessage) and msg.name == "generate_report":
                 report = msg.content
                 if isinstance(report, str):
-                    try:
-                        report = json.loads(report)
-                    except json.JSONDecodeError:
-                        # Tool results with non-JSON-native values (numpy floats)
-                        # fall back to a Python-repr string — parse that too.
+                    # Shared scanner: tolerant of markdown fences / surrounding
+                    # chatter, then the legacy numpy-repr fallback.
+                    report = extract_json(report)
+                    if not isinstance(report, dict):
                         try:
-                            report = ast.literal_eval(report)
+                            report = ast.literal_eval(msg.content)
                         except (ValueError, SyntaxError):
                             report = None
                 if not isinstance(report, dict):
@@ -552,25 +536,6 @@ def _reflect_decision(state: ReActState) -> Literal["agent_reason", "__end__"]:
     if state.get("iteration", 0) >= state.get("max_iterations", 15):
         return END
     return "agent_reason"
-
-
-def _truncate_messages_for_reflection(messages: list) -> list:
-    """Create a compact copy of messages for the reflection LLM.
-
-    Replaces large ToolMessage content with short summaries to keep
-    the reflection prompt small and fast.
-    """
-    truncated = []
-    for msg in messages:
-        if isinstance(msg, ToolMessage):
-            content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            summary = content[:300] + "..." if len(content) > 300 else content
-            truncated.append(
-                ToolMessage(content=summary, tool_call_id=msg.tool_call_id, name=msg.name)
-            )
-        else:
-            truncated.append(msg)
-    return truncated
 
 
 def _truncate_messages_for_reasoning(messages: list, max_chars: int = 20000) -> list:

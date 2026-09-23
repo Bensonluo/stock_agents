@@ -87,7 +87,6 @@ class Settings(BaseSettings):
     agent_max_iterations: int = 15
     agent_cost_limit: float = 0.50  # USD
     agent_reasoning_model: str = "glm-5.3-flash"
-    agent_reflection_model: str = "glm-5.3-flash"
 
     # Backtesting
     backtest_initial_cash: float = 10000.0
