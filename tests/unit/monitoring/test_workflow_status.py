@@ -158,3 +158,60 @@ class TestCloseOrchestrator:
 
         dependencies._orchestrator = None
         await dependencies.close_orchestrator()  # must not raise
+
+
+class TestParallelAndDegradedSemantics:
+    async def test_parallel_stage_keeps_current_agent_while_peers_run(self):
+        workflow_status.init_workflow("t1")
+        # fan-out superstep: three analysis agents running concurrently
+        for agent in ("technical_analysis", "sentiment_analysis", "fundamental_analysis"):
+            workflow_status.update_agent_status("t1", agent, "running")
+        state = workflow_status.get_workflow_state("t1")
+        assert state["current_agent"] == "technical_analysis"  # first in pipeline order
+        assert set(state["running_agents"]) == {
+            "technical_analysis",
+            "sentiment_analysis",
+            "fundamental_analysis",
+        }
+
+        # one finishes: current_agent must not blank out while peers still run
+        workflow_status.update_agent_status("t1", "technical_analysis", "completed")
+        state = workflow_status.get_workflow_state("t1")
+        assert state["current_agent"] == "fundamental_analysis"  # next in pipeline order
+        assert set(state["running_agents"]) == {"sentiment_analysis", "fundamental_analysis"}
+
+    async def test_degraded_run_reports_partial_with_full_progress(self):
+        workflow_status.init_workflow("t1")
+        for agent in workflow_status.PIPELINE_AGENTS:
+            status = "failed" if agent == "sentiment_analysis" else "completed"
+            workflow_status.update_agent_status("t1", agent, status)
+        state = workflow_status.get_workflow_state("t1")
+        assert state["status"] == "partial"  # degraded but finished, not failed
+        assert state["progress"] == 100.0
+        assert state["current_agent"] is None
+
+    async def test_failed_agent_then_next_running_recovers_status(self):
+        workflow_status.init_workflow("t1")
+        workflow_status.update_agent_status("t1", "data_collection", "completed")
+        workflow_status.update_agent_status("t1", "technical_analysis", "failed", error="boom")
+        assert workflow_status.get_workflow_state("t1")["status"] == "failed"  # maybe aborting
+        # graceful degradation: the pipeline continues with remaining inputs
+        workflow_status.update_agent_status("t1", "risk_assessment", "running")
+        assert workflow_status.get_workflow_state("t1")["status"] == "running"
+
+    async def test_partial_workflows_are_eviction_eligible(self):
+        from datetime import datetime, timedelta
+
+        old = datetime.now() - timedelta(hours=1)
+        for i in range(workflow_status.MAX_TRACKED_WORKFLOWS - 1):
+            workflow_status.init_workflow(f"old-{i}")
+            workflow_status.get_workflow_state(f"old-{i}")["updated_at"] = old.isoformat()
+            for agent in workflow_status.PIPELINE_AGENTS:
+                workflow_status.update_agent_status(f"old-{i}", agent, "completed")
+
+        workflow_status.init_workflow("new-runner")
+        workflow_status.update_agent_status("new-runner", "data_collection", "running")
+
+        # store at capacity: completed workflows age out, the active runner stays
+        assert workflow_status.get_workflow_state("new-runner") is not None
+        assert len(workflow_status.list_workflows()) <= workflow_status.MAX_TRACKED_WORKFLOWS

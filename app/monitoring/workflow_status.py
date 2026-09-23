@@ -38,7 +38,9 @@ def _evict_oldest_if_full() -> None:
         return
 
     terminal = [
-        tid for tid, s in _workflow_states.items() if s.get("status") in ("completed", "failed")
+        tid
+        for tid, s in _workflow_states.items()
+        if s.get("status") in ("completed", "failed", "partial")
     ]
     pool = terminal or list(_workflow_states)
     victim = min(pool, key=lambda tid: _workflow_states[tid].get("updated_at", ""))
@@ -55,6 +57,7 @@ def init_workflow(thread_id: str):
         "status": "pending",
         "agents": {a: {"name": a, "status": "pending"} for a in PIPELINE_AGENTS},
         "current_agent": None,
+        "running_agents": [],
         "progress": 0.0,
         "created_at": datetime.now().isoformat(),
         "updated_at": datetime.now().isoformat(),
@@ -78,19 +81,26 @@ def update_agent_status(thread_id: str, agent: str, status: str, error: str | No
         "completed_at": datetime.now().isoformat() if status in ("completed", "failed") else None,
         "error": error,
     }
-    state["current_agent"] = agent if status == "running" else None
+    # 并行阶段会有多个 agent 同时 running：current_agent 取流水线顺序里第一个
+    # 还在跑的（标量语义不变：None = 空闲），running_agents 给出完整在跑集合。
+    running = [name for name, info in state["agents"].items() if info["status"] == "running"]
+    state["current_agent"] = running[0] if running else None
+    state["running_agents"] = running
     state["updated_at"] = datetime.now().isoformat()
 
-    # 计算进度
-    completed = sum(1 for a in state["agents"].values() if a["status"] == "completed")
-    state["progress"] = (completed / len(state["agents"])) * 100
+    # 计算进度：终态（completed/failed）都计入，降级跑完的进度也能到 100%
+    terminal = sum(1 for a in state["agents"].values() if a["status"] in ("completed", "failed"))
+    state["progress"] = (terminal / len(state["agents"])) * 100
 
-    # 更新整体状态
+    # 更新整体状态。全部 agent 到终态时按有无失败分流：有失败但流水线走完 =
+    # 优雅降级（与 DB 侧 "partial" 语义对齐，而不是误报 failed）；失败且还有
+    # agent 未到终态 = 关键节点中止（error handler 路径，之后不会再有更新）。
+    failed = any(a["status"] == "failed" for a in state["agents"].values())
     if status == "running":
         state["status"] = "running"
-    elif all(a["status"] == "completed" for a in state["agents"].values()):
-        state["status"] = "completed"
-    elif any(a["status"] == "failed" for a in state["agents"].values()):
+    elif terminal == len(state["agents"]):
+        state["status"] = "partial" if failed else "completed"
+    elif failed:
         state["status"] = "failed"
 
 
