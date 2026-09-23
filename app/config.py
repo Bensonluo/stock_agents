@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
     llm_timeout: int = 60
+    # Optional LLM narrative overlay on the pipeline report (bounded, degrades to None)
+    report_llm_enabled: bool = False
+    report_llm_timeout: float = 60.0
 
     # Data Sources
     akshare_enabled: bool = True

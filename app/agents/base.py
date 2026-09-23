@@ -266,7 +266,13 @@ class BaseAgent(ABC):
             **kwargs,
         )
 
-        return response.content
+        content = response.content
+        if isinstance(content, list):
+            # Some providers return content-block lists; join the text parts.
+            content = "".join(
+                part.get("text", "") if isinstance(part, dict) else str(part) for part in content
+            )
+        return content
 
     def get_status(self) -> dict[str, Any]:
         """Get the current status of this agent.

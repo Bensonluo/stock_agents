@@ -5,7 +5,6 @@ from app.orchestration.checkpoint import (
     PostgresCheckpointManager,
     SqliteCheckpointManager,
 )
-from app.orchestration.orchestrator import MultiAgentOrchestrator
 from app.orchestration.state import (
     add_agent_output,
     add_error,
@@ -19,6 +18,22 @@ from app.orchestration.state import (
     should_retry,
     update_state_immutable,
 )
+
+
+def __getattr__(name: str):
+    """Lazily import the orchestrator (PEP 562).
+
+    Importing it eagerly created a cycle: app.agents.base ->
+    app.orchestration.state -> app.orchestration.__init__ ->
+    orchestrator -> app.agents, which crashed any `import app.agents`
+    that ran first. The orchestrator is only needed at wiring time.
+    """
+    if name == "MultiAgentOrchestrator":
+        from app.orchestration.orchestrator import MultiAgentOrchestrator
+
+        return MultiAgentOrchestrator
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # State

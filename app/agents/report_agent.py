@@ -1,9 +1,11 @@
 """Report generation agent for creating investment research reports."""
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
 from app.agents.base import StatelessAgent
+from app.config import settings
 from app.orchestration.state import AgentState
 from app.services.report_service import ReportService
 from app.utils.logging import get_logger
@@ -55,16 +57,29 @@ class ReportGenerationAgent(StatelessAgent):
         # Generate executive summary
         executive_summary = await self._generate_executive_summary(data, sections)
 
-        # Generate LLM report if available
-        # TODO: Re-enable LLM report generation when timeout is fixed
+        # Optional LLM narrative overlay. Bounded by REPORT_LLM_TIMEOUT and
+        # degrades to None on failure or timeout, so the deterministic report
+        # always ships.
         llm_report = None
-        # if self.llm:
-        #     try:
-        #         llm_report = await self._generate_llm_report(data)
-        #         logger.info("LLM report generated successfully")
-        #     except Exception as e:
-        #         logger.warning(f"LLM report generation failed, continuing without it: {e}")
-        #         llm_report = None
+        if self.llm and settings.report_llm_enabled:
+            try:
+                llm_report = (
+                    await asyncio.wait_for(
+                        self._generate_llm_report(data), timeout=settings.report_llm_timeout
+                    )
+                    or None
+                )
+                if llm_report:
+                    logger.info("LLM report generated successfully")
+            except TimeoutError:
+                logger.warning(
+                    f"LLM report timed out after {settings.report_llm_timeout}s, "
+                    "continuing without it"
+                )
+                llm_report = None
+            except Exception as e:
+                logger.warning(f"LLM report generation failed, continuing without it: {e}")
+                llm_report = None
 
         # Compile final report
         report = {
