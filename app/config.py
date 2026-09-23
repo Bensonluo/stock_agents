@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     # Optional LLM narrative overlay on the pipeline report (bounded, degrades to None)
     report_llm_enabled: bool = False
     report_llm_timeout: float = 60.0
+    # Eval harness: LLM-as-judge opt-in (deterministic rubric is always on in tests)
+    eval_llm_judge: bool = False
 
     # Data Sources
     akshare_enabled: bool = True
