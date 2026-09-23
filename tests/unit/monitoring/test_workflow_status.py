@@ -70,6 +70,51 @@ class TestWorkflowStatusStore:
         assert workflow_status.get_workflow_state("ghost") is None
 
 
+class TestBoundedStore:
+    async def test_evicts_oldest_terminal_workflow_first(self, monkeypatch):
+        monkeypatch.setattr(workflow_status, "MAX_TRACKED_WORKFLOWS", 3)
+        workflow_status.init_workflow("old-done")
+        workflow_status.init_workflow("old-running")
+        workflow_status.init_workflow("new-done")
+
+        # old-done finished long ago; old-running is stale but still "running"
+        workflow_status._workflow_states["old-done"]["status"] = "completed"
+        workflow_status._workflow_states["old-done"]["updated_at"] = "2026-01-01T00:00:00"
+        workflow_status._workflow_states["old-running"]["updated_at"] = "2026-01-02T00:00:00"
+        workflow_status._workflow_states["new-done"]["status"] = "completed"
+        workflow_status._workflow_states["new-done"]["updated_at"] = "2026-01-03T00:00:00"
+
+        workflow_status.init_workflow("t4")
+
+        assert workflow_status.get_workflow_state("old-done") is None  # evicted
+        assert workflow_status.get_workflow_state("old-running") is not None
+        assert workflow_status.get_workflow_state("new-done") is not None
+        assert workflow_status.get_workflow_state("t4") is not None
+        assert len(workflow_status.list_workflows()) == 3
+
+    async def test_evicts_oldest_overall_when_none_terminal(self, monkeypatch):
+        monkeypatch.setattr(workflow_status, "MAX_TRACKED_WORKFLOWS", 2)
+        workflow_status.init_workflow("a")
+        workflow_status.init_workflow("b")
+        workflow_status._workflow_states["a"]["updated_at"] = "2026-01-01T00:00:00"
+        workflow_status._workflow_states["b"]["updated_at"] = "2026-01-02T00:00:00"
+
+        workflow_status.init_workflow("c")
+
+        assert workflow_status.get_workflow_state("a") is None
+        assert workflow_status.get_workflow_state("b") is not None
+
+    async def test_eviction_drops_logs_too(self, monkeypatch):
+        monkeypatch.setattr(workflow_status, "MAX_TRACKED_WORKFLOWS", 1)
+        workflow_status.init_workflow("first")
+        workflow_status.add_log("first", "system", "info", "hello")
+
+        workflow_status.init_workflow("second")
+
+        assert workflow_status.get_logs("first") == []
+        assert "first" not in workflow_status._agent_logs
+
+
 class TestMonitorRouteDelegates:
     """The monitor API routes read the same shared store."""
 

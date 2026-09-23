@@ -19,14 +19,37 @@ PIPELINE_AGENTS = [
 ]
 
 MAX_LOG_ENTRIES = 200
+# Cap on tracked workflows; the oldest finished ones are evicted first so a
+# long-running process does not grow the store without bound.
+MAX_TRACKED_WORKFLOWS = 100
 
 # Global state stores (thread_id keyed)
 _workflow_states: dict[str, dict] = {}
 _agent_logs: dict[str, list[dict]] = {}
 
 
+def _evict_oldest_if_full() -> None:
+    """Evict one workflow when the store is at capacity.
+
+    Terminal (completed/failed) workflows are evicted by oldest updated_at;
+    only when none are terminal does the oldest running one get evicted.
+    """
+    if len(_workflow_states) < MAX_TRACKED_WORKFLOWS:
+        return
+
+    terminal = [
+        tid for tid, s in _workflow_states.items() if s.get("status") in ("completed", "failed")
+    ]
+    pool = terminal or list(_workflow_states)
+    victim = min(pool, key=lambda tid: _workflow_states[tid].get("updated_at", ""))
+
+    del _workflow_states[victim]
+    _agent_logs.pop(victim, None)
+
+
 def init_workflow(thread_id: str):
     """初始化工作流状态"""
+    _evict_oldest_if_full()
     _workflow_states[thread_id] = {
         "thread_id": thread_id,
         "status": "pending",
