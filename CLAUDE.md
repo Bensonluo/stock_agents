@@ -40,15 +40,16 @@ Note: `mypy` is referenced in the old docs but is **not** in `pyproject.toml` de
 
 ### Workflow Execution
 
-The orchestrator (`app/orchestration/orchestrator.py`) builds a LangGraph `StateGraph` with conditional retry edges. Each agent is a graph node. The actual execution order is:
+The orchestrator (`app/orchestration/orchestrator.py`) builds a LangGraph `StateGraph` using the map-reduce fan-out pattern. Each agent is a graph node. The actual execution order is:
 
 ```
-data_collection -> technical_analysis -> sentiment_analysis -> fundamental_analysis -> risk_assessment -> decision_making -> report_generation
+data_collection -> [technical_analysis, sentiment_analysis, fundamental_analysis]  # parallel superstep
+                 -> risk_assessment -> research_synthesis -> decision_making -> report_generation
 ```
 
-Each node wraps the agent call with monitoring hooks, WebSocket broadcasts, and error handling. After each node, a conditional edge checks for errors and either retries, continues to the next node, or routes to the error handler.
+Each node wraps the agent call with monitoring hooks, WebSocket broadcasts, and error handling. Nodes return **partial state updates** (only the keys they changed); shared channels accumulate through reducers (`errors`/`agent_outputs` append, `agent_status`/`retry_count` merge, `current_step` adds), which is what makes the parallel stage safe.
 
-**Important**: The `get_workflow_summary()` in `workflow.py` shows an incorrect/idealized DAG. The real flow is the sequential pipeline above.
+Routing keys off each agent's **last-attempt outcome** (`agent_status`) with `retry_count` as the budget — a transient failure that succeeds on retry continues the pipeline. Analysis agents that exhaust their retry budget **degrade gracefully** (risk still runs with the remaining inputs); pipeline-critical nodes (data, risk, synthesis, decision, report) route to the error handler. Set `parallel_execution=False` in the analyze request or initial state to force the sequential technical -> sentiment -> fundamental order.
 
 ### Agent Calling Pattern
 

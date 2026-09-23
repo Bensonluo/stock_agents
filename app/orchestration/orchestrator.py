@@ -1,7 +1,7 @@
 """Multi-agent orchestrator using LangGraph."""
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 from langchain_core.language_models import BaseChatModel
@@ -23,9 +23,7 @@ from app.monitoring import get_connection_manager, get_monitor
 from app.orchestration.checkpoint import PostgresCheckpointManager
 from app.orchestration.state import (
     AgentState,
-    add_error,
     create_initial_state,
-    get_agent_errors,
     should_retry,
 )
 from app.storage.database import AnalysisRecord, get_database
@@ -70,6 +68,16 @@ def _convert_to_serializable(obj: Any) -> Any:
         return obj
 
 
+# Keys owned by the orchestration layer itself — never merged from agent results.
+_RESERVED_STATE_KEYS = (
+    "agent_outputs",
+    "errors",
+    "agent_status",
+    "current_agent",
+    "current_step",
+)
+
+
 class MultiAgentOrchestrator:
     """Multi-agent orchestrator for stock analysis workflow.
 
@@ -86,8 +94,8 @@ class MultiAgentOrchestrator:
 
     def __init__(
         self,
-        llm: Optional[BaseChatModel] = None,
-        checkpoint_manager: Optional[PostgresCheckpointManager] = None,
+        llm: BaseChatModel | None = None,
+        checkpoint_manager: PostgresCheckpointManager | None = None,
     ):
         """Initialize the multi-agent orchestrator.
 
@@ -143,8 +151,26 @@ class MultiAgentOrchestrator:
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph workflow.
 
-        The workflow runs ALL analysis agents sequentially to ensure all data is available:
-        data_collection -> technical -> sentiment -> fundamental -> risk -> decision -> report
+        Topology (LangGraph's map-reduce fan-out pattern):
+
+            data_collection
+              -> [technical, sentiment, fundamental]   # parallel analysis stage
+              -> risk_assessment -> research_synthesis
+              -> decision_making -> report_generation
+
+        Nodes return partial state updates; shared channels accumulate through
+        reducers (errors/agent_outputs append, agent_status/retry_count merge,
+        current_step adds), which is what makes the parallel stage safe.
+
+        Retry semantics: routing keys off the agent's LAST attempt outcome
+        (agent_status) with retry_count as the budget, so a transient failure
+        that succeeds on retry continues the pipeline instead of looping
+        forever. Analysis agents that exhaust their budget degrade gracefully
+        (risk still runs with the remaining inputs); pipeline-critical nodes
+        route to the error handler.
+
+        Set ``parallel_execution=False`` in the initial state to force the
+        sequential technical -> sentiment -> fundamental order.
 
         Returns:
             Compiled StateGraph
@@ -167,76 +193,85 @@ class MultiAgentOrchestrator:
         # Set entry point
         graph.set_entry_point("data_collection_agent")
 
-        # Linear workflow: all analysis agents run sequentially
-        # This ensures all data is available for the decision agent
+        # Fan-out: the router returns several path keys at once, so the three
+        # independent analysis agents run in the same superstep.
         graph.add_conditional_edges(
             "data_collection_agent",
-            self._should_retry_or_continue_data,
+            self._route_after_data,
             {
-                "continue": "technical_analysis_agent",  # Always go to technical first
+                "fan_out_technical": "technical_analysis_agent",
+                "fan_out_sentiment": "sentiment_analysis_agent",
+                "fan_out_fundamental": "fundamental_analysis_agent",
+                "sequential": "technical_analysis_agent",
                 "retry": "data_collection_agent",
                 "error": "error_handler",
-            }
+            },
         )
 
+        # Each parallel branch converges on risk_assessment (fan-in barrier:
+        # risk waits until every branch has routed), with a self-loop retry
+        # and a degraded path that keeps the pipeline alive when an analysis
+        # exhausts its retry budget.
         graph.add_conditional_edges(
             "technical_analysis_agent",
-            self._should_retry_or_continue_technical,
+            self._route_after_technical,
             {
-                "continue": "sentiment_analysis_agent",  # Then sentiment
+                "join_risk": "risk_assessment_agent",
+                "sequential_sentiment": "sentiment_analysis_agent",
                 "retry": "technical_analysis_agent",
-                "error": "error_handler",
-            }
+                "degraded": "risk_assessment_agent",
+            },
         )
 
         graph.add_conditional_edges(
             "sentiment_analysis_agent",
-            self._should_retry_or_continue_sentiment,
+            self._route_after_sentiment,
             {
-                "continue": "fundamental_analysis_agent",  # Then fundamental
+                "join_risk": "risk_assessment_agent",
+                "sequential_fundamental": "fundamental_analysis_agent",
                 "retry": "sentiment_analysis_agent",
-                "error": "error_handler",
-            }
+                "degraded": "risk_assessment_agent",
+            },
         )
 
         graph.add_conditional_edges(
             "fundamental_analysis_agent",
-            self._should_retry_or_continue_fundamental,
+            self._route_after_fundamental,
             {
-                "continue": "risk_assessment_agent",  # Then risk
+                "join_risk": "risk_assessment_agent",
                 "retry": "fundamental_analysis_agent",
-                "error": "error_handler",
-            }
+                "degraded": "risk_assessment_agent",
+            },
         )
 
         graph.add_conditional_edges(
             "risk_assessment_agent",
-            self._should_retry_or_continue_risk,
+            self._route_after_risk,
             {
                 "synthesis": "research_synthesis_agent",  # Debate/audit/committee before deciding
                 "retry": "risk_assessment_agent",
                 "error": "error_handler",
-            }
+            },
         )
 
         graph.add_conditional_edges(
             "research_synthesis_agent",
-            self._should_retry_or_continue_synthesis,
+            self._route_after_synthesis,
             {
                 "decision": "decision_making_agent",  # Decision with audited research
                 "retry": "research_synthesis_agent",
                 "error": "error_handler",
-            }
+            },
         )
 
         graph.add_conditional_edges(
             "decision_making_agent",
-            self._should_retry_or_continue_decision,
+            self._route_after_decision,
             {
                 "report": "report_generation_agent",
                 "retry": "decision_making_agent",
                 "error": "error_handler",
-            }
+            },
         )
 
         # Final edges
@@ -257,8 +292,8 @@ class MultiAgentOrchestrator:
     async def execute_workflow(
         self,
         query: str,
-        symbols: List[str],
-        thread_id: Optional[str] = None,
+        symbols: list[str],
+        thread_id: str | None = None,
         **kwargs,
     ) -> AgentState:
         """Execute the complete analysis workflow.
@@ -299,12 +334,11 @@ class MultiAgentOrchestrator:
         # 保存初始记录到数据库
         try:
             db = get_database()
-            db.create_record(AnalysisRecord(
-                thread_id=thread_id,
-                symbols=json.dumps(symbols),
-                query=query,
-                status="running"
-            ))
+            db.create_record(
+                AnalysisRecord(
+                    thread_id=thread_id, symbols=json.dumps(symbols), query=query, status="running"
+                )
+            )
             logger.info(f"[Orchestrator] 创建历史记录: thread_id={thread_id}")
         except Exception as e:
             logger.error(f"[Orchestrator] 创建历史记录失败: {e}")
@@ -357,7 +391,9 @@ class MultiAgentOrchestrator:
                 all_completed = all(s == "completed" for s in final_state.values())
                 any_failed = any(s == "failed" for s in final_state.values())
 
-                final_status = "completed" if all_completed else ("failed" if any_failed else "partial")
+                final_status = (
+                    "completed" if all_completed else ("failed" if any_failed else "partial")
+                )
 
                 # 序列化结果
                 result_data = {
@@ -370,16 +406,18 @@ class MultiAgentOrchestrator:
                     "fundamental_analysis": result.get("fundamental_analysis"),
                     "sentiment_analysis": result.get("sentiment_analysis"),
                     "risk_assessment": result.get("risk_assessment"),
-                    "execution_metadata": result.get("execution_metadata")
+                    "execution_metadata": result.get("execution_metadata"),
                 }
 
                 db.update_status(
                     thread_id=thread_id,
                     status=final_status,
                     result=json.dumps(result_data, default=str),
-                    execution_time=result.get("execution_metadata", {}).get("execution_time", 0)
+                    execution_time=result.get("execution_metadata", {}).get("execution_time", 0),
                 )
-                logger.info(f"[Orchestrator] 更新历史记录: thread_id={thread_id}, status={final_status}")
+                logger.info(
+                    f"[Orchestrator] 更新历史记录: thread_id={thread_id}, status={final_status}"
+                )
             except Exception as e:
                 logger.error(f"[Orchestrator] 更新历史记录失败: {e}")
 
@@ -410,13 +448,13 @@ class MultiAgentOrchestrator:
                     "symbols": symbols,
                     "query": query,
                     "error": str(e),
-                    "execution_metadata": initial_state.get("execution_metadata")
+                    "execution_metadata": initial_state.get("execution_metadata"),
                 }
                 db.update_status(
                     thread_id=thread_id,
                     status="failed",
                     result=json.dumps(result_data, default=str),
-                    execution_time=execution_time
+                    execution_time=execution_time,
                 )
                 logger.info(f"[Orchestrator] 更新历史记录（失败）: thread_id={thread_id}")
             except Exception as db_error:
@@ -430,34 +468,38 @@ class MultiAgentOrchestrator:
         agent_name: str,
         agent,
         mode: str = "run",
-        state_key: Optional[str] = None,
+        state_key: str | None = None,
         post_process=None,
-    ) -> AgentState:
+    ) -> dict[str, Any]:
         """Shared agent node runner with monitoring, broadcasting, and error handling.
 
+        Returns a PARTIAL state update (LangGraph best practice: nodes return
+        only the keys they changed). Shared channels accumulate through their
+        reducers, which keeps concurrent analysis nodes conflict-free.
+
         Args:
-            state: Current agent state
+            state: Current agent state (full channel state, read-only)
             agent_name: Name for status tracking and monitoring
             agent: Agent instance to execute
             mode: "run" for BaseAgent.run(), "process" for StatelessAgent.process()
             state_key: If set, assign process() result to this state key
-            post_process: Optional async callback(state, agent_result) for extra logic
+            post_process: Optional async callback(state, agent_result) -> dict
+                of extra state updates (e.g., the AkShare merge for data_collection)
 
         Returns:
-            Updated agent state
+            Partial state update for LangGraph to merge into the channels
         """
         import time
+        from datetime import datetime
 
         thread_id = state.get("thread_id", "unknown")
 
-        # Set tracking
-        state = dict(state)
-        state["current_agent"] = agent_name
-        state["current_step"] = state.get("current_step", 0) + 1
-        step = state["current_step"]
-        agent_status = state.get("agent_status", {})
-        agent_status[agent_name] = "running"
-        state["agent_status"] = agent_status
+        step = state.get("current_step", 0) + 1
+        update: dict[str, Any] = {
+            "current_agent": agent_name,
+            "current_step": 1,  # `add` reducer: +1 per node execution
+            "agent_status": {agent_name: "running"},
+        }
 
         # Broadcast and monitor start
         monitor = get_monitor()
@@ -496,26 +538,32 @@ class MultiAgentOrchestrator:
 
             agent_result = _convert_to_serializable(agent_result)
 
-            # Merge results into state
+            # Collect result keys into the partial update
             if mode == "run":
                 if isinstance(agent_result, dict):
                     for key, value in agent_result.items():
-                        if key not in ("agent_outputs", "errors", "agent_status", "current_agent", "current_step"):
-                            state[key] = value
+                        if key not in _RESERVED_STATE_KEYS:
+                            update[key] = value
             elif state_key:
-                state[state_key] = agent_result
+                update[state_key] = agent_result
 
-            # Post-process hook (e.g., AkShare merge for data_collection)
+            # Post-process hook (e.g., AkShare merge for data_collection).
+            # It sees a merged view of the input state plus this node's
+            # pending updates, and returns extra updates to apply.
             if post_process:
-                await post_process(state, agent_result)
+                view = {**state, **update}
+                extra = await post_process(view, agent_result)
+                if isinstance(extra, dict):
+                    update.update(extra)
 
             # Mark completed
-            agent_status[agent_name] = "completed"
-            state["agent_status"] = agent_status
+            update["agent_status"] = {agent_name: "completed"}
             execution_time = time.time() - start_time
 
             update_agent_status(thread_id, agent_name, "completed")
-            add_log(thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s")
+            add_log(
+                thread_id, agent_name, "info", f"Completed successfully in {execution_time:.2f}s"
+            )
 
             monitor.log_agent_step(
                 thread_id=thread_id,
@@ -554,9 +602,21 @@ class MultiAgentOrchestrator:
                 duration_ms=int(execution_time * 1000),
             )
 
-            state = add_error(state, agent_name, type(e).__name__, str(e), retryable=True)
-            agent_status[agent_name] = "failed"
-            state["agent_status"] = agent_status
+            # Error delta: exactly one entry, appended by the `add` reducer.
+            # (Returning the accumulated list here used to double it.)
+            update["errors"] = [
+                {
+                    "agent": agent_name,
+                    "type": type(e).__name__,
+                    "message": str(e),
+                    "timestamp": datetime.now(),
+                    "retryable": True,
+                }
+            ]
+            update["retry_count"] = {
+                agent_name: state.get("retry_count", {}).get(agent_name, 0) + 1
+            }
+            update["agent_status"] = {agent_name: "failed"}
 
             if monitor.broadcast_manager:
                 await monitor.broadcast_manager.broadcast_agent_event(
@@ -572,23 +632,28 @@ class MultiAgentOrchestrator:
                 agent_name, str(e), execution_time, type(e).__name__, thread_id=thread_id
             )
 
-        return AgentState(**state)
+        return update
 
-    async def _data_collection_node(self, state: AgentState) -> AgentState:
+    async def _data_collection_node(self, state: AgentState) -> dict[str, Any]:
         """Data collection node with AkShare merge for Chinese stocks."""
 
-        async def merge_akshare(state, _agent_result):
-            symbols = state.get("symbols", [])
+        async def merge_akshare(view, _agent_result):
+            symbols = view.get("symbols", [])
             cn_symbols = [s for s in symbols if s.isdigit() and len(s) == 6]
-            if cn_symbols:
-                akshare_result = await self.akshare_agent.run(state)
-                akshare_result = _convert_to_serializable(akshare_result)
-                for key, value in akshare_result.items():
-                    if key not in ("agent_outputs", "errors", "agent_status", "current_agent", "current_step"):
-                        if key in state and isinstance(state.get(key), dict) and isinstance(value, dict):
-                            state[key] = {**state[key], **value}
-                        else:
-                            state[key] = value
+            if not cn_symbols:
+                return None
+            akshare_result = await self.akshare_agent.run(view)
+            akshare_result = _convert_to_serializable(akshare_result)
+            merged = {}
+            for key, value in akshare_result.items():
+                if key in _RESERVED_STATE_KEYS:
+                    continue
+                existing = view.get(key)
+                if isinstance(existing, dict) and isinstance(value, dict):
+                    merged[key] = {**existing, **value}
+                else:
+                    merged[key] = value
+            return merged
 
         return await self._run_agent_node(
             state,
@@ -598,47 +663,68 @@ class MultiAgentOrchestrator:
             post_process=merge_akshare,
         )
 
-    async def _technical_analysis_node(self, state: AgentState) -> AgentState:
+    async def _technical_analysis_node(self, state: AgentState) -> dict[str, Any]:
         return await self._run_agent_node(
-            state, agent_name="technical_analysis", agent=self.technical_agent, mode="run",
+            state,
+            agent_name="technical_analysis",
+            agent=self.technical_agent,
+            mode="run",
         )
 
-    async def _fundamental_analysis_node(self, state: AgentState) -> AgentState:
+    async def _fundamental_analysis_node(self, state: AgentState) -> dict[str, Any]:
         return await self._run_agent_node(
-            state, agent_name="fundamental_analysis", agent=self.fundamental_agent, mode="run",
+            state,
+            agent_name="fundamental_analysis",
+            agent=self.fundamental_agent,
+            mode="run",
         )
 
-    async def _sentiment_analysis_node(self, state: AgentState) -> AgentState:
+    async def _sentiment_analysis_node(self, state: AgentState) -> dict[str, Any]:
         return await self._run_agent_node(
-            state, agent_name="sentiment_analysis", agent=self.sentiment_agent,
-            mode="process", state_key="sentiment_analysis",
+            state,
+            agent_name="sentiment_analysis",
+            agent=self.sentiment_agent,
+            mode="process",
+            state_key="sentiment_analysis",
         )
 
-    async def _risk_assessment_node(self, state: AgentState) -> AgentState:
+    async def _risk_assessment_node(self, state: AgentState) -> dict[str, Any]:
         return await self._run_agent_node(
-            state, agent_name="risk_assessment", agent=self.risk_agent,
-            mode="process", state_key="risk_assessment",
+            state,
+            agent_name="risk_assessment",
+            agent=self.risk_agent,
+            mode="process",
+            state_key="risk_assessment",
         )
 
-    async def _research_synthesis_node(self, state: AgentState) -> AgentState:
+    async def _research_synthesis_node(self, state: AgentState) -> dict[str, Any]:
         return await self._run_agent_node(
-            state, agent_name="research_synthesis", agent=self.synthesis_agent,
-            mode="process", state_key="research_synthesis",
+            state,
+            agent_name="research_synthesis",
+            agent=self.synthesis_agent,
+            mode="process",
+            state_key="research_synthesis",
         )
 
-    async def _decision_making_node(self, state: AgentState) -> AgentState:
+    async def _decision_making_node(self, state: AgentState) -> dict[str, Any]:
         return await self._run_agent_node(
-            state, agent_name="decision_making", agent=self.decision_agent,
-            mode="process", state_key="decision",
+            state,
+            agent_name="decision_making",
+            agent=self.decision_agent,
+            mode="process",
+            state_key="decision",
         )
 
-    async def _report_generation_node(self, state: AgentState) -> AgentState:
+    async def _report_generation_node(self, state: AgentState) -> dict[str, Any]:
         return await self._run_agent_node(
-            state, agent_name="report_generation", agent=self.report_agent,
-            mode="process", state_key="report",
+            state,
+            agent_name="report_generation",
+            agent=self.report_agent,
+            mode="process",
+            state_key="report",
         )
 
-    async def _error_handler_node(self, state: AgentState) -> AgentState:
+    async def _error_handler_node(self, state: AgentState) -> dict[str, Any]:
         """Error handler node."""
         errors = state.get("errors", [])
 
@@ -656,97 +742,75 @@ class MultiAgentOrchestrator:
 
         logger.error(f"Error handler processed {len(errors)} errors")
 
-        state = dict(state)
-        state["error_summary"] = error_summary
-        execution_metadata = state.get("execution_metadata", {})
+        execution_metadata = dict(state.get("execution_metadata", {}))
         execution_metadata["had_errors"] = True
-        state["execution_metadata"] = execution_metadata
 
-        return AgentState(**state)
+        return {
+            "error_summary": error_summary,
+            "execution_metadata": execution_metadata,
+        }
 
-    def _should_retry_or_continue_data(self, state: AgentState) -> str:
-        """Decision function for data collection node.
+    @staticmethod
+    def _last_attempt_failed(state: AgentState, agent_name: str) -> bool:
+        """True only if the agent's most recent attempt failed.
 
-        Args:
-            state: Current agent state
-
-        Returns:
-            Next node name ("continue", "retry", or "error")
+        Routing on the cumulative errors list (the old behaviour) made a
+        transient failure loop forever: a later successful attempt appended
+        no error, so the retry budget never drained and the router kept
+        re-running a healthy agent.
         """
-        if not get_agent_errors(state, "data_collection"):
-            return "continue"  # Always continue to technical analysis
-        return self._retry_or_error("data_collection", state)
+        return state.get("agent_status", {}).get(agent_name) == "failed"
 
-    def _should_retry_or_continue_technical(self, state: AgentState) -> str:
-        """Decision function for technical analysis node.
+    def _route_after_data(self, state: AgentState) -> Any:
+        """Route after data collection: fan out to the analysis stage.
 
-        Args:
-            state: Current agent state
-
-        Returns:
-            Next node name ("continue", "retry", or "error")
+        Returns a list of path keys in parallel mode (LangGraph then runs all
+        three destinations in the same superstep) or a single key when
+        ``parallel_execution`` is disabled.
         """
-        if not get_agent_errors(state, "technical_analysis"):
-            return "continue"  # Continue to sentiment analysis
-        return self._retry_or_error("technical_analysis", state)
+        if self._last_attempt_failed(state, "data_collection"):
+            return self._retry_or_error("data_collection", state)
+        if state.get("parallel_execution", True):
+            return ["fan_out_technical", "fan_out_sentiment", "fan_out_fundamental"]
+        return "sequential"
 
-    def _should_retry_or_continue_fundamental(self, state: AgentState) -> str:
-        """Decision function for fundamental analysis node.
+    def _route_after_technical(self, state: AgentState) -> str:
+        """join_risk / sequential_sentiment / retry / degraded."""
+        if self._last_attempt_failed(state, "technical_analysis"):
+            return "retry" if should_retry(state, "technical_analysis") else "degraded"
+        return "sequential_sentiment" if not state.get("parallel_execution", True) else "join_risk"
 
-        Args:
-            state: Current agent state
+    def _route_after_sentiment(self, state: AgentState) -> str:
+        """join_risk / sequential_fundamental / retry / degraded."""
+        if self._last_attempt_failed(state, "sentiment_analysis"):
+            return "retry" if should_retry(state, "sentiment_analysis") else "degraded"
+        return (
+            "sequential_fundamental" if not state.get("parallel_execution", True) else "join_risk"
+        )
 
-        Returns:
-            Next node name ("continue", "retry", or "error")
-        """
-        if not get_agent_errors(state, "fundamental_analysis"):
-            return "continue"  # Continue to risk assessment
-        return self._retry_or_error("fundamental_analysis", state)
+    def _route_after_fundamental(self, state: AgentState) -> str:
+        """join_risk / retry / degraded."""
+        if self._last_attempt_failed(state, "fundamental_analysis"):
+            return "retry" if should_retry(state, "fundamental_analysis") else "degraded"
+        return "join_risk"
 
-    def _should_retry_or_continue_sentiment(self, state: AgentState) -> str:
-        """Decision function for sentiment analysis node.
+    def _route_after_risk(self, state: AgentState) -> str:
+        """synthesis / retry / error."""
+        if self._last_attempt_failed(state, "risk_assessment"):
+            return "retry" if should_retry(state, "risk_assessment") else "error"
+        return "synthesis"  # All analysis done, run debate/audit/committee
 
-        Args:
-            state: Current agent state
+    def _route_after_synthesis(self, state: AgentState) -> str:
+        """decision / retry / error."""
+        if self._last_attempt_failed(state, "research_synthesis"):
+            return "retry" if should_retry(state, "research_synthesis") else "error"
+        return "decision"
 
-        Returns:
-            Next node name ("continue", "retry", or "error")
-        """
-        if not get_agent_errors(state, "sentiment_analysis"):
-            return "continue"  # Continue to fundamental analysis
-        return self._retry_or_error("sentiment_analysis", state)
-
-    def _should_retry_or_continue_risk(self, state: AgentState) -> str:
-        """Decision function for risk assessment node.
-
-        Args:
-            state: Current agent state
-
-        Returns:
-            Next node name ("synthesis", "retry", or "error")
-        """
-        if not get_agent_errors(state, "risk_assessment"):
-            return "synthesis"  # All analysis done, run debate/audit/committee
-        return self._retry_or_error("risk_assessment", state)
-
-    def _should_retry_or_continue_synthesis(self, state: AgentState) -> str:
-        """Decision function for the research synthesis node."""
-        if not get_agent_errors(state, "research_synthesis"):
-            return "decision"
-        return self._retry_or_error("research_synthesis", state)
-
-    def _should_retry_or_continue_decision(self, state: AgentState) -> str:
-        """Decision function for decision making node.
-
-        Args:
-            state: Current agent state
-
-        Returns:
-            Next node name
-        """
-        if not get_agent_errors(state, "decision_making"):
-            return "report"
-        return self._retry_or_error("decision_making", state)
+    def _route_after_decision(self, state: AgentState) -> str:
+        """report / retry / error."""
+        if self._last_attempt_failed(state, "decision_making"):
+            return "retry" if should_retry(state, "decision_making") else "error"
+        return "report"
 
     def _retry_or_error(self, agent_name: str, state: AgentState) -> str:
         """Determine whether to retry or go to error handler.
@@ -765,7 +829,7 @@ class MultiAgentOrchestrator:
             logger.error(f"Max retries exceeded for {agent_name}, going to error handler")
             return "error"
 
-    def get_workflow_status(self, thread_id: str) -> Dict[str, Any]:
+    def get_workflow_status(self, thread_id: str) -> dict[str, Any]:
         """Get the status of a workflow.
 
         Args:

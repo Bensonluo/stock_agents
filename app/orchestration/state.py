@@ -7,6 +7,25 @@ from typing import Annotated, Any
 from typing_extensions import TypedDict
 
 
+def merge_dicts(left: dict, right: dict) -> dict:
+    """Shallow-merge reducer for dict channels updated by parallel nodes.
+
+    Each parallel node returns only its own entries (e.g.
+    ``{"technical_analysis": "completed"}``), so the merge is conflict-free
+    and LangGraph can run the analysis stage concurrently.
+    """
+    if not left:
+        return dict(right)
+    if not right:
+        return dict(left)
+    return {**left, **right}
+
+
+def keep_last(left: Any, right: Any) -> Any:
+    """Last-write-wins reducer for display-only channels under parallel writes."""
+    return right if right is not None else left
+
+
 class AgentState(TypedDict):
     """Global state definition - shared by all agents.
 
@@ -41,11 +60,16 @@ class AgentState(TypedDict):
     report: dict  # Generated report
 
     # ========== Execution State (Core Learning Part) ==========
-    agent_outputs: Annotated[list[dict], add]  # Accumulated agent outputs
-    errors: Annotated[list[dict], add]  # Accumulated error list
-    retry_count: dict[str, int]  # Retry count per agent
-    agent_status: dict[str, str]  # Agent status
+    # Reducers make the parallel analysis stage safe: nodes return partial
+    # updates and LangGraph accumulates the shared channels.
+    agent_outputs: Annotated[list[dict], add]  # Appended per agent attempt
+    errors: Annotated[list[dict], add]  # Appended per failure (never echoed in full)
+    retry_count: Annotated[dict[str, int], merge_dicts]  # Failures per agent (retry budget)
+    agent_status: Annotated[dict[str, str], merge_dicts]  # Last-attempt outcome per agent
     execution_metadata: dict  # Execution metadata
+    error_summary: (
+        dict  # Filled by the error handler node (must be in the schema or writes are dropped)
+    )
 
     # ========== Control Parameters ==========
     max_retries: int  # Max retry count
@@ -53,8 +77,8 @@ class AgentState(TypedDict):
     parallel_execution: bool  # Whether to execute in parallel
 
     # ========== Current Agent Tracking ==========
-    current_agent: str | None  # Currently executing agent
-    current_step: int  # Current step number
+    current_agent: Annotated[str | None, keep_last]  # Agent that most recently started
+    current_step: Annotated[int, add]  # Completed-step counter (+1 per node execution)
 
 
 def create_initial_state(
@@ -102,6 +126,7 @@ def create_initial_state(
         errors=[],
         retry_count={},
         agent_status={},
+        error_summary={},
         execution_metadata={
             "started_at": datetime.now(),
             "workflow_id": f"workflow-{datetime.now().timestamp()}",
