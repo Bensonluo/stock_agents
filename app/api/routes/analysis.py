@@ -101,6 +101,26 @@ class AnalysisResultResponse(BaseModel):
 # In-memory workflow storage (in production, use database)
 workflows: dict = {}
 
+# Entries hold full analysis results (heavy); cap well below the status store.
+MAX_TRACKED_API_WORKFLOWS = 50
+
+
+def _store_workflow(thread_id: str, entry: dict) -> None:
+    """Insert a workflow entry, evicting when the cache is at capacity.
+
+    Terminal entries (oldest completed/failed) go first; history remains
+    queryable from the DB, so an evicted entry only degrades stale polls.
+    """
+    from app.utils.bounded_store import evict_oldest_terminal
+
+    evict_oldest_terminal(
+        workflows,
+        MAX_TRACKED_API_WORKFLOWS,
+        terminal_statuses=("completed", "failed"),
+        timestamp_of=lambda e: e.get("completed_at") or e.get("started_at") or datetime.min,
+    )
+    workflows[thread_id] = entry
+
 
 @router.post("/analyze", response_model=AnalysisResponse)
 async def analyze_stocks(
@@ -128,11 +148,14 @@ async def analyze_stocks(
     )
 
     # Store initial workflow status
-    workflows[thread_id] = {
-        "status": "running",
-        "request": request.dict(),
-        "started_at": datetime.now(),
-    }
+    _store_workflow(
+        thread_id,
+        {
+            "status": "running",
+            "request": request.dict(),
+            "started_at": datetime.now(),
+        },
+    )
 
     # Execute workflow in background
     background_tasks.add_task(
@@ -255,13 +278,16 @@ async def analyze_stocks_sync(request: StockAnalysisRequest) -> AnalysisResultRe
         execution_time = time() - start_time
 
         # Store workflow
-        workflows[thread_id] = {
-            "status": "completed",
-            "request": request.dict(),
-            "result": result,
-            "started_at": datetime.now(),
-            "completed_at": datetime.now(),
-        }
+        _store_workflow(
+            thread_id,
+            {
+                "status": "completed",
+                "request": request.dict(),
+                "result": result,
+                "started_at": datetime.now(),
+                "completed_at": datetime.now(),
+            },
+        )
 
         return AnalysisResultResponse(
             thread_id=thread_id,
@@ -334,19 +360,24 @@ async def _execute_workflow(thread_id: str, request: StockAnalysisRequest):
             request.parallel_execution,
         )
 
-        # Store result
-        workflows[thread_id]["status"] = "completed"
-        workflows[thread_id]["result"] = result
-        workflows[thread_id]["completed_at"] = datetime.now()
+        # Store result (guard: an eviction under cache pressure may have
+        # dropped this entry mid-run; history still lands in the DB)
+        entry = workflows.get(thread_id)
+        if entry is not None:
+            entry["status"] = "completed"
+            entry["result"] = result
+            entry["completed_at"] = datetime.now()
 
         logger.info(f"Workflow {thread_id} completed successfully")
         logger.info(f"Final agent_status: {result.get('agent_status', {})}")
 
     except Exception as e:
         logger.error(f"Workflow {thread_id} failed: {e}")
-        workflows[thread_id]["status"] = "failed"
-        workflows[thread_id]["error"] = str(e)
-        workflows[thread_id]["completed_at"] = datetime.now()
+        entry = workflows.get(thread_id)
+        if entry is not None:
+            entry["status"] = "failed"
+            entry["error"] = str(e)
+            entry["completed_at"] = datetime.now()
 
 
 async def _execute_workflow_impl(
@@ -401,7 +432,10 @@ async def _execute_workflow_impl(
 
     logger.info(f"Workflow {thread_id} result agent_status: {result.get('agent_status', {})}")
 
-    workflow = workflows.setdefault(thread_id, {"status": "running"})
+    workflow = workflows.get(thread_id)
+    if workflow is None:  # evicted mid-run; recreate with a fresh timestamp
+        workflow = {"status": "running", "started_at": datetime.now()}
+        _store_workflow(thread_id, workflow)
     workflow["agent_status"] = agent_status
     workflow["current_agent"] = result.get("current_agent")
     workflow["current_step"] = result.get("current_step", 0)

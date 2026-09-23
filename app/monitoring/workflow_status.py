@@ -6,6 +6,8 @@ without depending on FastAPI routes.
 
 from datetime import datetime
 
+from app.utils.bounded_store import evict_oldest_terminal
+
 # Agents pre-registered for progress display, in pipeline order.
 PIPELINE_AGENTS = [
     "data_collection",
@@ -29,24 +31,14 @@ _agent_logs: dict[str, list[dict]] = {}
 
 
 def _evict_oldest_if_full() -> None:
-    """Evict one workflow when the store is at capacity.
-
-    Terminal (completed/failed) workflows are evicted by oldest updated_at;
-    only when none are terminal does the oldest running one get evicted.
-    """
-    if len(_workflow_states) < MAX_TRACKED_WORKFLOWS:
-        return
-
-    terminal = [
-        tid
-        for tid, s in _workflow_states.items()
-        if s.get("status") in ("completed", "failed", "partial")
-    ]
-    pool = terminal or list(_workflow_states)
-    victim = min(pool, key=lambda tid: _workflow_states[tid].get("updated_at", ""))
-
-    del _workflow_states[victim]
-    _agent_logs.pop(victim, None)
+    """Evict one workflow when the store is at capacity (shared policy)."""
+    evict_oldest_terminal(
+        _workflow_states,
+        MAX_TRACKED_WORKFLOWS,
+        terminal_statuses=("completed", "failed", "partial"),
+        timestamp_of=lambda state: state.get("updated_at", ""),
+        on_evict=lambda tid: _agent_logs.pop(tid, None),
+    )
 
 
 def init_workflow(thread_id: str):
