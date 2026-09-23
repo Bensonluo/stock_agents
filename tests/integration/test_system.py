@@ -62,7 +62,7 @@ class TestOrchestratorIntegration:
         )
 
         # Check status
-        status = orchestrator.get_workflow_status("test-workflow-status")
+        status = await orchestrator.get_workflow_status("test-workflow-status")
 
         assert status is not None
         assert "thread_id" in status

@@ -1,7 +1,5 @@
 """API dependency injection utilities."""
 
-from typing import Optional
-
 from langchain_openai import ChatOpenAI
 
 from app.config import settings
@@ -12,7 +10,7 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Global orchestrator instance
-_orchestrator: Optional[MultiAgentOrchestrator] = None
+_orchestrator: MultiAgentOrchestrator | None = None
 
 
 def get_llm():
@@ -50,24 +48,44 @@ def get_llm():
             timeout=settings.llm_timeout,
         )
 
-    logger.warning("No API key configured (set ZHIPUAI_API_KEY or OPENAI_API_KEY), LLM features will be limited")
+    logger.warning(
+        "No API key configured (set ZHIPUAI_API_KEY or OPENAI_API_KEY), LLM features will be limited"
+    )
     return None
 
 
 def get_checkpoint_manager():
-    """Get the checkpoint manager instance.
+    """Select the checkpoint manager per CHECKPOINT_BACKEND.
 
-    Returns:
-        CheckpointManager instance
+    auto (default): PostgreSQL when DATABASE_URL is explicitly configured
+    and reachable; otherwise durable SQLite (restart-safe without an
+    external database). Explicit values: sqlite | postgres | memory.
     """
-    try:
-        # Try PostgreSQL checkpoint manager
-        return PostgresCheckpointManager(settings.database_url)
-    except Exception as e:
-        logger.warning(f"Could not initialize PostgreSQL checkpoint manager: {e}")
-        logger.info("Using in-memory checkpoint manager")
+    import os
+
+    backend = settings.checkpoint_backend.strip().lower()
+
+    if backend == "memory":
         from app.orchestration import InMemoryCheckpointManager
+
         return InMemoryCheckpointManager()
+    if backend == "sqlite":
+        from app.orchestration import SqliteCheckpointManager
+
+        return SqliteCheckpointManager()
+    if backend == "postgres":
+        return PostgresCheckpointManager(settings.database_url)
+
+    # auto
+    if os.environ.get("DATABASE_URL"):
+        try:
+            return PostgresCheckpointManager(settings.database_url)
+        except Exception as e:
+            logger.warning(f"PostgreSQL checkpoint manager unavailable: {e}")
+    from app.orchestration import SqliteCheckpointManager
+
+    logger.info("Using durable SQLite checkpoint backend")
+    return SqliteCheckpointManager()
 
 
 def get_orchestrator() -> MultiAgentOrchestrator:

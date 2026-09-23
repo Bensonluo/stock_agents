@@ -1,16 +1,23 @@
 """Checkpoint managers for SQL-backed history and LangGraph state."""
 
+import asyncio
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+import aiosqlite
 from langgraph.checkpoint.base import BaseCheckpointSaver, Checkpoint, CheckpointMetadata
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.config import settings
 from app.orchestration.state import AgentState
+from app.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 Base = declarative_base()
 
@@ -348,6 +355,12 @@ class PostgresCheckpointManager:
             }
         }
 
+    async def aload_state(
+        self, thread_id: str, checkpoint_id: str | None = None
+    ) -> AgentState | None:
+        """Async facade over the sync SQL load (threaded IO is acceptable here)."""
+        return self.load_state(thread_id, checkpoint_id)
+
 
 class InMemoryCheckpointManager:
     """In-memory checkpoint manager for testing and development.
@@ -444,3 +457,68 @@ class InMemoryCheckpointManager:
                 "thread_id": thread_id,
             }
         }
+
+    async def aload_state(
+        self, thread_id: str, checkpoint_id: str | None = None
+    ) -> AgentState | None:
+        return self.load_state(thread_id, checkpoint_id)
+
+
+class SqliteCheckpointManager:
+    """Durable checkpoint manager backed by the official AsyncSqliteSaver.
+
+    Gives LangGraph workflow state restart-surviving persistence without an
+    external database. The aiosqlite connection and saver are created lazily
+    on first use — ``AsyncSqliteSaver`` requires a running event loop, so from
+    sync contexts (scripts, import time) it degrades to an in-memory saver
+    with a warning. Call ``aclose()`` on app shutdown to release the
+    connection cleanly.
+    """
+
+    def __init__(self, db_path: str | None = None):
+        """Initialize with a SQLite file path (default from settings)."""
+        self.db_path = db_path or settings.checkpoint_db_path
+        self._saver: AsyncSqliteSaver | None = None
+        self._conn: aiosqlite.Connection | None = None
+        self._fallback = InMemorySaver()
+
+    def get_checkpoint_saver(self) -> BaseCheckpointSaver:
+        """Return the durable saver, creating it lazily inside the running loop."""
+        if self._saver is not None:
+            return self._saver
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning(
+                "No running event loop — SQLite checkpoint saver unavailable, "
+                "falling back to in-memory (checkpoints will not survive restart)"
+            )
+            return self._fallback
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._conn = aiosqlite.connect(self.db_path)
+        self._saver = AsyncSqliteSaver(self._conn)
+        logger.info(f"SQLite checkpoint saver active: {self.db_path}")
+        return self._saver
+
+    async def aload_state(
+        self, thread_id: str, checkpoint_id: str | None = None
+    ) -> AgentState | None:
+        """Read the latest checkpoint's channel values for a thread."""
+        saver = self.get_checkpoint_saver()
+        config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+        if checkpoint_id:
+            config["configurable"]["checkpoint_id"] = checkpoint_id
+        try:
+            tup = await saver.aget_tuple(config)
+        except NotImplementedError:
+            return None
+        if tup is None:
+            return None
+        return tup.checkpoint.get("channel_values") or None
+
+    async def aclose(self) -> None:
+        """Close the aiosqlite connection (app shutdown / tests)."""
+        if self._conn is not None:
+            await self._conn.close()
+            self._conn = None
+            self._saver = None

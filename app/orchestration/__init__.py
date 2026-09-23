@@ -3,6 +3,7 @@
 from app.orchestration.checkpoint import (
     InMemoryCheckpointManager,
     PostgresCheckpointManager,
+    SqliteCheckpointManager,
 )
 from app.orchestration.orchestrator import MultiAgentOrchestrator
 from app.orchestration.state import (
@@ -36,6 +37,7 @@ __all__ = [
     # Checkpoint
     "PostgresCheckpointManager",
     "InMemoryCheckpointManager",
+    "SqliteCheckpointManager",
     # Orchestrator
     "MultiAgentOrchestrator",
 ]

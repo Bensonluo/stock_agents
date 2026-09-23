@@ -47,7 +47,7 @@ def _convert_to_serializable(obj: Any) -> Any:
         return [_convert_to_serializable(v) for v in obj]
     elif isinstance(obj, tuple):
         return tuple(_convert_to_serializable(v) for v in obj)
-    elif isinstance(obj, (np.integer, np.int64, np.int32)):
+    elif isinstance(obj, np.integer | np.int64 | np.int32):
         return int(obj)
     elif isinstance(obj, np.floating):
         value = float(obj)
@@ -62,7 +62,7 @@ def _convert_to_serializable(obj: Any) -> Any:
         return obj
     elif isinstance(obj, np.ndarray):
         return _convert_to_serializable(obj.tolist())
-    elif isinstance(obj, (np.bool_, bool)):
+    elif isinstance(obj, np.bool_ | bool):
         return bool(obj)
     else:
         return obj
@@ -829,7 +829,7 @@ class MultiAgentOrchestrator:
             logger.error(f"Max retries exceeded for {agent_name}, going to error handler")
             return "error"
 
-    def get_workflow_status(self, thread_id: str) -> dict[str, Any]:
+    async def get_workflow_status(self, thread_id: str) -> dict[str, Any]:
         """Get the status of a workflow.
 
         Args:
@@ -839,7 +839,7 @@ class MultiAgentOrchestrator:
             Status dictionary
         """
         if self.checkpoint_manager:
-            state = self.checkpoint_manager.load_state(thread_id)
+            state = await self.checkpoint_manager.aload_state(thread_id)
             if state:
                 return {
                     "thread_id": thread_id,

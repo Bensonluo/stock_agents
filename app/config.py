@@ -1,7 +1,6 @@
 """Application configuration management."""
 
 from functools import lru_cache
-from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -19,13 +18,18 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://admin:password@localhost:5432/stockdb"
     redis_url: str = "redis://localhost:6379"
 
+    # Checkpoint persistence: auto | sqlite | postgres | memory
+    # auto = postgres when DATABASE_URL is explicitly set, else durable sqlite
+    checkpoint_backend: str = "auto"
+    checkpoint_db_path: str = "data/checkpoints.db"
+
     # API Keys
-    openai_api_key: Optional[str] = None
-    anthropic_api_key: Optional[str] = None
-    zhipuai_api_key: Optional[str] = None
-    tushare_token: Optional[str] = None
-    alpha_vantage_key: Optional[str] = None
-    finnhub_api_key: Optional[str] = None
+    openai_api_key: str | None = None
+    anthropic_api_key: str | None = None
+    zhipuai_api_key: str | None = None
+    tushare_token: str | None = None
+    alpha_vantage_key: str | None = None
+    finnhub_api_key: str | None = None
 
     # JWT
     jwt_secret: str = "change-this-secret-in-production"

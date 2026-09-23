@@ -51,6 +51,7 @@ python-dotenv = "^1.0.0"
 httpx = "^0.26.0"
 aiofiles = ">=23.2.1"
 loguru = "^0.7.0"
+langgraph-checkpoint-sqlite = "^3.1.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
