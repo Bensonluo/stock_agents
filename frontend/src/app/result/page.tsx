@@ -1247,10 +1247,28 @@ function ReactReport({ answer, report: structuredReport }: {
                     <p className="font-medium">{sym}</p>
                     <span className={cn('px-2 py-0.5 rounded text-xs font-semibold', vStyle.bg, vStyle.color)}>{vStyle.label}</span>
                   </div>
-                  {entry.thesis && (
+                  {(entry.bull_points?.length > 0 || entry.thesis) && (
                     <div>
-                      <p className="text-xs text-green-700 font-medium">多头论点</p>
-                      <p className="text-xs text-slate-600 leading-relaxed">{entry.thesis}</p>
+                      <p className="text-xs text-green-700 font-medium">多方论据</p>
+                      <ul className="mt-1 space-y-1">
+                        {(entry.bull_points?.length > 0
+                          ? entry.bull_points
+                          : [{ claim: entry.thesis, strength: undefined }]
+                        ).map((p: any, i: number) => (
+                          <li key={i} className="flex items-start gap-2 text-xs text-slate-600 leading-relaxed">
+                            <span className="text-green-500 mt-0.5">▲</span>
+                            <span className="flex-1">{p.claim}</span>
+                            {typeof p.strength === 'number' && (
+                              <span className="w-8 h-1 rounded bg-slate-200 shrink-0 mt-1.5 overflow-hidden">
+                                <span
+                                  className="block h-full rounded bg-green-500"
+                                  style={{ width: `${Math.min(100, p.strength)}%` }}
+                                />
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                   {entry.narrative?.bull_narrative && (
@@ -1271,10 +1289,28 @@ function ReactReport({ answer, report: structuredReport }: {
                       <p className="text-xs text-slate-600 leading-relaxed">{entry.narrative.pm_comment}</p>
                     </div>
                   )}
-                  {entry.strongest_counter && (
+                  {(entry.bear_points?.length > 0 || entry.strongest_counter) && (
                     <div>
-                      <p className="text-xs text-red-700 font-medium">最强反方</p>
-                      <p className="text-xs text-slate-600 leading-relaxed">{entry.strongest_counter}</p>
+                      <p className="text-xs text-red-700 font-medium">空方论据</p>
+                      <ul className="mt-1 space-y-1">
+                        {(entry.bear_points?.length > 0
+                          ? entry.bear_points
+                          : [{ claim: entry.strongest_counter, strength: undefined }]
+                        ).map((p: any, i: number) => (
+                          <li key={i} className="flex items-start gap-2 text-xs text-slate-600 leading-relaxed">
+                            <span className="text-red-500 mt-0.5">▼</span>
+                            <span className="flex-1">{p.claim}</span>
+                            {typeof p.strength === 'number' && (
+                              <span className="w-8 h-1 rounded bg-slate-200 shrink-0 mt-1.5 overflow-hidden">
+                                <span
+                                  className="block h-full rounded bg-red-500"
+                                  style={{ width: `${Math.min(100, p.strength)}%` }}
+                                />
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                   {entry.invalidation && (
