@@ -5,6 +5,7 @@ from app.backtest.costs import CN_STOCK, US_STOCK, ZERO, CostModel
 from app.backtest.engine import STRATEGIES, STRATEGY_PARAMETERS, BacktestResult, run_backtest
 from app.backtest.manifest import build_manifest, current_commit, hash_dataframe
 from app.backtest.metrics import compute_metrics
+from app.backtest.null_benchmark import random_entry_null
 from app.backtest.point_in_time import (
     latest_visible_value,
     stamp_visibility,
@@ -27,6 +28,7 @@ __all__ = [
     "current_commit",
     "hash_dataframe",
     "latest_visible_value",
+    "random_entry_null",
     "run_backtest",
     "stamp_visibility",
     "visible_from",

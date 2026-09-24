@@ -118,6 +118,9 @@ class BacktestResponse(BaseModel):
     win_rate: float
     total_trades: int
     equity: list[dict[str, float | str]]
+    # Random-entry Monte Carlo null ("signal or noise"); None when the run
+    # has no meaningful null (buy-and-hold style exposure, too few trades).
+    null_benchmark: dict | None = None
     execution_time: float
 
 
@@ -175,6 +178,7 @@ async def run_backtest(request: BacktestRequest) -> BacktestResponse:
             win_rate=result["win_rate"],
             total_trades=result["total_trades"],
             equity=result["equity"],
+            null_benchmark=result.get("null_benchmark"),
             execution_time=execution_time,
         )
 
@@ -268,6 +272,13 @@ class V2BacktestRequest(BaseModel):
     benchmark_symbol: str | None = Field(
         default=None, description="Optional benchmark for the excess-return metric (e.g. '^GSPC')"
     )
+    null_iterations: int = Field(
+        default=300,
+        ge=0,
+        le=10_000,
+        description="Random-entry Monte Carlo draws for the signal-or-noise benchmark "
+        "(/v2/run only; 0 disables)",
+    )
 
     @field_validator("symbol")
     @classmethod
@@ -329,6 +340,7 @@ async def run_backtest_v2(request: V2BacktestRequest) -> dict:
             market=request.market,
             strategy_params=request.strategy_params,
             benchmark_symbol=request.benchmark_symbol,
+            null_iterations=request.null_iterations,
         )
         result["execution_time"] = round(time() - start_time, 3)
         return result

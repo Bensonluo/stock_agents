@@ -19,6 +19,7 @@ import pandas as pd
 
 from app.backtest.costs import CostModel
 from app.backtest.metrics import compute_metrics
+from app.backtest.null_benchmark import random_entry_null
 
 STRATEGIES = ("sma_crossover", "rsi_strategy", "macd_strategy", "buy_and_hold")
 
@@ -49,6 +50,9 @@ class BacktestResult:
     total_cost: float = 0.0
     bars: int = 0
     metrics: dict[str, Any] = field(default_factory=dict)
+    # Random-entry Monte Carlo null ("signal or noise"); None when the run
+    # opted out (null_iterations=0) or no meaningful null exists.
+    null_benchmark: dict[str, Any] | None = None
 
 
 def run_backtest(
@@ -58,6 +62,8 @@ def run_backtest(
     cost_model: CostModel | None = None,
     initial_cash: float = 10_000.0,
     benchmark_data: pd.DataFrame | None = None,
+    null_iterations: int = 0,
+    null_seed: int = 42,
     **params: Any,
 ) -> BacktestResult:
     """Run one deterministic backtest over OHLCV data.
@@ -69,6 +75,11 @@ def run_backtest(
         initial_cash: Starting equity.
         benchmark_data: Optional OHLCV for the buy-and-hold benchmark, aligned
             to the same dates for the excess-return metric.
+        null_iterations: Random-entry null draws for the signal-or-noise
+            benchmark (0 disables — walk-forward parameter search keeps it
+            off because every combo would pay the Monte Carlo cost).
+        null_seed: Seed for the null draws; fixed default keeps the benchmark
+            reproducible.
         **params: Strategy parameters; unknown names are rejected.
     """
     if strategy not in STRATEGIES:
@@ -110,6 +121,18 @@ def run_backtest(
         benchmark_equity=benchmark_equity,
         initial_cash=initial_cash,
     )
+    if null_iterations > 0 and result.metrics.get("total_return") is not None:
+        result.null_benchmark = random_entry_null(
+            data,
+            target,
+            float(result.metrics["total_return"]),
+            cost_model,
+            initial_cash,
+            iterations=null_iterations,
+            seed=null_seed,
+        )
+        if result.null_benchmark is not None:
+            result.metrics["null_benchmark"] = result.null_benchmark
     return result
 
 

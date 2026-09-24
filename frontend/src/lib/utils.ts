@@ -256,6 +256,22 @@ export interface BacktestRequest {
   signal_period?: number
 }
 
+export interface NullBenchmark {
+  method: string
+  iterations: number
+  seed: number
+  segments: number
+  matched_round_trips: number
+  strategy_return: number
+  null_return_mean: number
+  null_return_std: number
+  null_return_p05: number
+  null_return_p50: number
+  null_return_p95: number
+  percentile: number
+  p_value: number
+}
+
 export interface BacktestResponse {
   symbol: string
   strategy: string
@@ -270,6 +286,7 @@ export interface BacktestResponse {
   win_rate: number
   total_trades: number
   equity: Array<{ date: string; value: number }>
+  null_benchmark?: NullBenchmark | null
   execution_time: number
 }
 

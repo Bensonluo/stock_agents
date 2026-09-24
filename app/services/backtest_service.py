@@ -18,6 +18,7 @@ from app.backtest import (
 from app.backtest import (
     walk_forward as walk_forward_engine,
 )
+from app.backtest.null_benchmark import NULL_ITERATIONS
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -87,6 +88,7 @@ class BacktestService:
             strategy=strategy,
             cost_model=CostModel(commission_rate=commission),
             initial_cash=initial_cash,
+            null_iterations=NULL_ITERATIONS,
             **selected_params,
         )
 
@@ -119,6 +121,7 @@ class BacktestService:
             "lost_trades": len(lost),
             "trades_list": result.trades,
             "equity": _series_to_points(result.equity) or [],
+            "null_benchmark": result.null_benchmark,
         }
 
     async def run_backtest_v2(
@@ -131,6 +134,7 @@ class BacktestService:
         market: str = "us",
         strategy_params: dict | None = None,
         benchmark_symbol: str | None = None,
+        null_iterations: int = NULL_ITERATIONS,
     ) -> dict[str, Any]:
         """V2-engine backtest: next-bar fills, full costs, benchmark, manifest."""
         data = await self._fetch_data(symbol, start_date, end_date)
@@ -144,6 +148,7 @@ class BacktestService:
             cost_model=self._cost_model(market),
             initial_cash=initial_cash,
             benchmark_data=benchmark_data,
+            null_iterations=null_iterations,
             **(strategy_params or {}),
         )
         manifest = build_manifest(
@@ -171,6 +176,7 @@ class BacktestService:
             ),
             "trades": result.trades,
             "manifest": manifest,
+            "null_benchmark": result.null_benchmark,
         }
 
     async def run_walk_forward(
