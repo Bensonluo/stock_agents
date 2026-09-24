@@ -249,6 +249,34 @@ def _sync_fetch_news(yahoo_symbol: str, symbol: str) -> list[dict[str, Any]]:
     return articles
 
 
+def _dedup_news(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge duplicate articles (same link, else title) across symbol fetches.
+
+    yfinance returns the same article under every related ticker, so a
+    multi-symbol run collects one copy per symbol; un-merged copies
+    double-count in score_news's mean and crowd the LLM's 5-headline
+    window. The first copy wins and absorbs later copies' related_symbols
+    so cross-symbol attribution survives the merge.
+    """
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for article in articles:
+        key = article.get("link") or article.get("title")
+        if not key:
+            continue  # no link and no title: nothing to attribute or score
+        if key not in merged:
+            merged[key] = {**article}
+            order.append(key)
+        else:
+            kept = merged[key]
+            related = list(kept.get("related_symbols") or [])
+            for sym in article.get("related_symbols") or []:
+                if sym not in related:
+                    related.append(sym)
+            kept["related_symbols"] = related
+    return [merged[key] for key in order]
+
+
 def _sync_fetch_akshare_spot_table(ak):
     """Fetch the full A-share spot table — ONE network round-trip per run.
 
@@ -385,6 +413,9 @@ class DataCollectionAgent(BaseAgent):
                 financial_data[symbol] = result.get("financial_data", {})
                 news_data.extend(result.get("news_data", []))
 
+        # Merge duplicate articles (same link/title) across symbol fetches
+        news_data = _dedup_news(news_data)
+
         logger.info(
             f"Collected data for {len(market_data)} symbols, " f"{len(news_data)} news items"
         )
@@ -393,7 +424,7 @@ class DataCollectionAgent(BaseAgent):
         return {
             "market_data": market_data,
             "financial_data": financial_data,
-            "news_data": news_data[-100:],  # Keep last 100 news items
+            "news_data": news_data[-100:],  # Keep last 100 unique news items
         }
 
     async def _collect_symbol_data(self, symbol: str) -> dict[str, Any]:
