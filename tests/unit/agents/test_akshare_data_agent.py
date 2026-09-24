@@ -53,16 +53,42 @@ _FINANCIAL_COLUMNS = (
 class _FakeAk:
     """Stands in for the akshare module; counts network round-trips."""
 
-    def __init__(self, *, spot_error: Exception | None = None):
+    def __init__(
+        self,
+        *,
+        spot_error: Exception | None = None,
+        hist_error: Exception | None = None,
+        hist_empty: bool = False,
+    ):
         self.spot_calls = 0
+        self.hist_calls: list[str] = []
         self.financial_calls: list[str] = []
         self._spot_error = spot_error
+        self._hist_error = hist_error
+        self._hist_empty = hist_empty
 
     def stock_zh_a_spot_em(self) -> pd.DataFrame:
         self.spot_calls += 1
         if self._spot_error is not None:
             raise self._spot_error
         return pd.DataFrame([dict(zip(_SPOT_COLUMNS, row)) for row in _SPOT_ROWS])
+
+    def stock_zh_a_hist(self, symbol: str, **kwargs) -> pd.DataFrame:
+        self.hist_calls.append(symbol)
+        if self._hist_error is not None:
+            raise self._hist_error
+        if self._hist_empty:
+            return pd.DataFrame()
+        assert kwargs.get("period") == "daily"
+        assert kwargs.get("adjust") == "qfq"
+        rows = [
+            ("2026-09-22", 1600.0, 1620.0, 1625.0, 1595.0, 24_000),
+            ("2026-09-23", 1620.0, 1640.0, 1648.0, 1615.0, 26_500),
+            ("2026-09-24", 1640.0, 1650.0, 1660.0, 1635.0, 25_000),
+        ]
+        return pd.DataFrame(
+            [dict(zip(("日期", "开盘", "收盘", "最高", "最低", "成交量"), row)) for row in rows]
+        )
 
     def stock_financial_analysis_indicator(self, symbol: str) -> pd.DataFrame:
         self.financial_calls.append(symbol)
@@ -74,6 +100,7 @@ def _install_fake_ak(monkeypatch: pytest.MonkeyPatch, fake: _FakeAk) -> None:
     """Route the agent's `import akshare as ak` to the fake."""
     module = types.ModuleType("akshare")
     module.stock_zh_a_spot_em = fake.stock_zh_a_spot_em  # type: ignore[attr-defined]
+    module.stock_zh_a_hist = fake.stock_zh_a_hist  # type: ignore[attr-defined]
     module.stock_financial_analysis_indicator = (  # type: ignore[attr-defined]
         fake.stock_financial_analysis_indicator
     )
@@ -143,3 +170,32 @@ class TestColumnMapping:
         assert mkt["high"] == 216.0
         assert mkt["low"] == 209.0
         assert mkt["timestamp"]  # stamped for downstream staleness checks
+
+
+class TestHistoryBars:
+    async def test_daily_bars_attached_in_yfinance_shape(self, monkeypatch):
+        """CN symbols get historical_data so technical analysis can run."""
+        fake, result = await _run(monkeypatch, ["600519"])
+        hist = result["market_data"]["600519"]["historical_data"]
+
+        assert fake.hist_calls == ["600519"]
+        assert set(hist) == {"dates", "open", "high", "low", "close", "volume"}
+        assert hist["dates"] == ["2026-09-22", "2026-09-23", "2026-09-24"]
+        assert hist["open"] == [1600.0, 1620.0, 1640.0]  # from 开盘
+        assert hist["close"] == [1620.0, 1640.0, 1650.0]  # from 收盘
+        assert hist["volume"] == [24_000, 26_500, 25_000]
+        # as_of tracks the last bar, not the fetch time
+        assert result["market_data"]["600519"]["as_of"] == "2026-09-24"
+
+    async def test_history_failure_degrades_to_spot_only(self, monkeypatch):
+        """Bars down: symbol keeps its spot row (iter-16 degradation path)."""
+        _, result = await _run(monkeypatch, ["600519"], hist_error=RuntimeError("hist feed down"))
+        mkt = result["market_data"]["600519"]
+
+        assert mkt["symbol"] == "600519"
+        assert "historical_data" not in mkt
+        assert "as_of" not in mkt
+
+    async def test_empty_history_degrades_to_spot_only(self, monkeypatch):
+        _, result = await _run(monkeypatch, ["600519"], hist_empty=True)
+        assert "historical_data" not in result["market_data"]["600519"]

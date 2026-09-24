@@ -162,6 +162,62 @@ class TestScenarioEvals:
         assert result.passed, result.summary()
         assert cn in state["decision"]["decisions"]
 
+    async def test_ashare_with_bars_gets_full_technical_analysis(self):
+        """With daily bars attached (the ak.stock_zh_a_hist path), a CN
+        symbol is no longer a degraded spot-only passenger: the technical
+        agent computes real signals for it, not just an availability note."""
+        state = _synthetic_state("TEST", seed=5)
+        cn = "600519"
+        days = 120
+        closes = [1400.0 * (1.002**i) for i in range(days)]  # steady uptrend
+        state["symbols"] = ["TEST", cn]
+        state["query"] = f"Analyze TEST, {cn}"
+        state["market_data"][cn] = {
+            "symbol": cn,
+            "current_price": closes[-1],
+            "change": closes[-1] - closes[-2],
+            "change_percent": (closes[-1] - closes[-2]) / closes[-2] * 100,
+            "volume": 2_500_000,
+            "open": closes[-1] * 0.997,
+            "high": closes[-1] * 1.005,
+            "low": closes[-1] * 0.995,
+            "previous_close": closes[-2],
+            "historical_data": {
+                "dates": [f"2026-{(i // 28) % 12 + 1:02d}-{i % 28 + 1:02d}" for i in range(days)],
+                "open": [c * 0.998 for c in closes],
+                "high": [c * 1.005 for c in closes],
+                "low": [c * 0.995 for c in closes],
+                "close": closes,
+                "volume": [2_000_000 + i * 100 for i in range(days)],
+            },
+            "timestamp": "2026-09-24T10:00:00",
+        }
+        state["financial_data"][cn] = {
+            "symbol": cn,
+            "metrics": {
+                "roe": 0.31,
+                "roa": 0.19,
+                "gross_margin": 0.91,
+                "net_margin": 0.49,
+                "debt_to_asset": 0.21,
+                "current_ratio": 4.2,
+                "quick_ratio": 3.9,
+            },
+            "timestamp": "2026-09-24T10:00:00",
+        }
+
+        state, report = await _run_pipeline(state)
+
+        cn_technical = state["technical_analysis"][cn]
+        assert cn_technical.get("signals"), "CN symbol with bars must get real signals"
+        assert cn_technical.get("sentiment", {}).get("score") is not None
+        # Evidence drawer carries computed evidence, not just availability
+        evidence = (report["sections"].get("evidence_index") or {}).get(cn)
+        assert evidence and all(r.get("source") != "data_availability" for r in evidence)
+
+        result = _grade(state, report)
+        assert result.passed, result.summary()
+
 
 class TestRubricUnit:
     async def test_bad_report_fails_with_breakdown(self):

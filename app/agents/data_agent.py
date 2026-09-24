@@ -309,6 +309,32 @@ def _sync_fetch_akshare_financials(symbol: str, ak) -> dict[str, Any] | None:
     }
 
 
+def _sync_fetch_akshare_history(symbol: str, ak) -> dict[str, Any] | None:
+    """Fetch A-share daily bars (qfq-adjusted) in the yfinance-compatible shape.
+
+    Without bars the technical agent has nothing to compute on — CN symbols
+    degraded to spot-only. Same keys as `_historical_data_to_dict` so every
+    downstream consumer is source-agnostic.
+    """
+    start = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
+    end = datetime.now().strftime("%Y%m%d")
+    df = ak.stock_zh_a_hist(
+        symbol=symbol, period="daily", start_date=start, end_date=end, adjust="qfq"
+    )
+
+    if df is None or df.empty:
+        return None
+
+    return {
+        "dates": [d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d) for d in df["日期"]],
+        "open": df["开盘"].tolist(),
+        "high": df["最高"].tolist(),
+        "low": df["最低"].tolist(),
+        "close": df["收盘"].tolist(),
+        "volume": df["成交量"].tolist(),
+    }
+
+
 class DataCollectionAgent(BaseAgent):
     """Agent responsible for collecting stock market data.
 
@@ -572,6 +598,12 @@ class AkShareDataAgent(BaseAgent):
             # Fetch stock info
             stock_info = await self._fetch_akshare_stock_info(symbol, spot_df)
             if stock_info:
+                # Daily bars unlock full technical analysis; without them
+                # the symbol degrades to spot-only (still a valid report).
+                history = await self._fetch_akshare_history(symbol, ak)
+                if history:
+                    stock_info["historical_data"] = history
+                    stock_info["as_of"] = history["dates"][-1]
                 market_data[symbol] = stock_info
 
             # Fetch financial data
@@ -625,4 +657,20 @@ class AkShareDataAgent(BaseAgent):
             return await asyncio.to_thread(_sync_fetch_akshare_financials, symbol, ak)
         except Exception as e:
             logger.error(f"Error fetching AkShare financials for {symbol}: {e}")
+            return None
+
+    async def _fetch_akshare_history(self, symbol: str, ak) -> dict[str, Any] | None:
+        """Fetch Chinese stock daily bars using AkShare.
+
+        Args:
+            symbol: Stock symbol (6 digits)
+            ak: AkShare module
+
+        Returns:
+            Historical data dict (yfinance-compatible), or None on failure
+        """
+        try:
+            return await asyncio.to_thread(_sync_fetch_akshare_history, symbol, ak)
+        except Exception as e:
+            logger.error(f"Error fetching AkShare history for {symbol}: {e}")
             return None
