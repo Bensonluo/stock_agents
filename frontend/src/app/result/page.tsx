@@ -866,8 +866,24 @@ function ReactReport({ answer, report: structuredReport }: {
                       <Progress value={composite} className="h-2" />
                     </div>
                   )}
-                  {rec.reasoning && (
-                    <p className="text-xs text-slate-500 mt-2 leading-relaxed">{rec.reasoning}</p>
+                  {(rec.entry != null || rec.stop_loss != null || rec.take_profit != null || rec.position_size != null) && (
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-3 p-2.5 bg-slate-50 rounded-lg text-xs">
+                      {rec.entry != null && (
+                        <div className="flex justify-between"><span className="text-slate-500">建议买入区</span><span className="font-medium">{formatCurrency(rec.entry)}</span></div>
+                      )}
+                      {rec.stop_loss != null && (
+                        <div className="flex justify-between"><span className="text-slate-500">止损价</span><span className="font-medium text-red-600">{formatCurrency(rec.stop_loss)}</span></div>
+                      )}
+                      {rec.take_profit != null && (
+                        <div className="flex justify-between"><span className="text-slate-500">止盈价</span><span className="font-medium text-green-600">{formatCurrency(rec.take_profit)}</span></div>
+                      )}
+                      {rec.position_size != null && (
+                        <div className="flex justify-between col-span-2"><span className="text-slate-500">建议仓位</span><span className="font-medium">{formatNumber(rec.position_size, 1)}% 的投资组合</span></div>
+                      )}
+                    </div>
+                  )}
+                  {(rec.reasoning || rec.rationale) && (
+                    <p className="text-xs text-slate-500 mt-2 leading-relaxed">{rec.reasoning || rec.rationale}</p>
                   )}
                 </CardContent>
               </Card>
@@ -875,6 +891,35 @@ function ReactReport({ answer, report: structuredReport }: {
           })}
         </div>
       )}
+
+      {/* 组合权重建议（conviction/vol 加权 + 单票上限） */}
+      {recommendations.suggested_weights?.weights && Object.keys(recommendations.suggested_weights.weights).length > 0 && (() => {
+        const sw = recommendations.suggested_weights
+        const entries = Object.entries(sw.weights) as [string, number][]
+        return (
+          <SectionCard icon={PieChart} title="组合权重建议">
+            <div className="space-y-3">
+              {entries.map(([sym, w]) => (
+                <div key={sym}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="font-medium">{sym}</span>
+                    <span className="text-slate-600">{(w * 100).toFixed(1)}%</span>
+                  </div>
+                  <Progress value={w * 100} className="h-2" />
+                </div>
+              ))}
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs pt-1 border-t border-slate-100">
+                <div className="flex justify-between"><span className="text-slate-500">现金保留</span><span className="font-medium">{formatPercent(sw.cash_reserve)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">集中度 HHI</span><span className="font-medium">{formatNumber(sw.concentration_hhi, 3)}</span></div>
+              </div>
+              {sw.excluded?.length > 0 && (
+                <p className="text-xs text-slate-400">未纳入：{sw.excluded.join('、')}（非买入类建议或缺少波动率数据）</p>
+              )}
+              <p className="text-xs text-slate-400">方法：{sw.method === 'conviction_tilted_inverse_volatility' ? '置信度倾斜逆波动率加权，单票上限 ' + formatPercent(sw.max_weight, 0) : sw.method || '-'}</p>
+            </div>
+          </SectionCard>
+        )
+      })()}
 
       {/* 市场概览 */}
       {filterEntries(overviewEntries).length > 0 && (
