@@ -219,9 +219,20 @@ class ReportService:
                 "risk_score": score,
                 "beta": metrics.get("beta"),
                 "volatility": metrics.get("volatility_annualized"),
+                "var_95": metrics.get("var_95"),
+                "max_drawdown": metrics.get("max_drawdown"),
+                "alpha_annualized": metrics.get("alpha_annualized"),
                 "max_position_size": position.get("max_position_size"),
                 "warnings": analysis.get("warnings", []),
             }
+            # Annotation blocks pass through when present; degraded entries
+            # stay lean — same convention as the technical section's
+            # freshness key. The frontend risk card renders these, the
+            # composite score never reads them.
+            for key in ("liquidity", "sector_relative"):
+                block = analysis.get(key)
+                if isinstance(block, dict):
+                    by_symbol[symbol][key] = block
 
         overall = c["overall_risk_level"]
         if c["overall_risk_level"] == "medium" and scores:
