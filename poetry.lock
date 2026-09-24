@@ -58,14 +58,14 @@ reference = "aliyun"
 
 [[package]]
 name = "akshare"
-version = "1.18.22"
+version = "1.18.96"
 description = "AKShare is an elegant and simple financial data interface library for Python, built for human beings!"
 optional = false
-python-versions = ">=3.8"
+python-versions = ">=3.11"
 groups = ["main"]
 files = [
-    {file = "akshare-1.18.22-py3-none-any.whl", hash = "sha256:735b27e8518c286ce57d521482da624c916522433595e781b893f012f979a877"},
-    {file = "akshare-1.18.22.tar.gz", hash = "sha256:f44720f2666c7bacad19b62d7fa3630eab60200dc4556c32caa4cf966bf7bc70"},
+    {file = "akshare-1.18.96-py3-none-any.whl", hash = "sha256:d49c98632b741ab069098d8d1c9150f8452f46419d898bbfcba52a3b5c959f59"},
+    {file = "akshare-1.18.96.tar.gz", hash = "sha256:99edbf15e017450dc9bf2aa14da05bf7dbcb4373d6e89c5ae5c4a07d036436a7"},
 ]
 
 [package.dependencies]
@@ -85,11 +85,6 @@ tabulate = ">=0.8.6"
 tqdm = ">=4.43.0"
 urllib3 = ">=1.25.8"
 xlrd = ">=1.2.0"
-
-[package.extras]
-dev = ["akqmt (>=0.1.0)", "commitizen (>=4.12.1)", "mplfinance (>=0.12.10b0)", "pre-commit (>=3.6.2)", "recommonmark (>=0.7.1)", "ruff (>=0.14.14)", "ruff-lsp (>=0.0.53)", "sphinx (>=7.4.3)", "sphinx_markdown_tables (>=0.0.17)", "sphinx_rtd_theme (>=1.0.0)"]
-full = ["akqmt"]
-qmt = ["akqmt"]
 
 [package.source]
 type = "legacy"
@@ -4591,4 +4586,4 @@ reference = "aliyun"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "7d8a419052187b13f7a566f485f4a1e2e63f9f12204959fe215fe36a5f15f07d"
+content-hash = "d74be76389a70cc74765a5f54c31743b83becbe744840424a935c76971007f58"
