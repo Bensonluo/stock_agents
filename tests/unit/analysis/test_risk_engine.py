@@ -128,6 +128,8 @@ class TestJensenAlpha:
 
         class _Settings:
             risk_free_rate_annual = 0.04
+            min_adv_usd = 2_000_000
+            min_adv_cny = 20_000_000
 
         monkeypatch.setattr(assessment, "get_settings", lambda: _Settings())
         stock, benchmark = self._pair()

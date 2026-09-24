@@ -542,6 +542,8 @@ async def _akshare_hk(symbol: str, ak: Any) -> dict[str, Any] | None:
                     "low": df["low"].tolist(),
                     "close": closes,
                     "volume": df["volume"].tolist() if "volume" in df else [],
+                    # Exact daily turnover (成交额) for the liquidity layer.
+                    **({"amount": df["成交额"].tolist()} if "成交额" in df.columns else {}),
                 },
             }
         },
@@ -596,6 +598,9 @@ async def _akshare_us(symbol: str, ak: Any) -> dict[str, Any] | None:
             "low": df["low"].tolist(),
             "close": closes,
             "volume": df["volume"].tolist() if "volume" in df else [],
+            # Exact daily turnover (成交额, source currency) for the
+            # liquidity layer — same key the pipeline's AkShare path emits.
+            **({"amount": df["成交额"].tolist()} if "成交额" in df.columns else {}),
         },
     }
 
@@ -662,6 +667,9 @@ async def _akshare_cn(symbol: str, ak: Any) -> dict[str, Any] | None:
             "low": df["low"].tolist(),
             "close": closes,
             "volume": df["volume"].tolist() if "volume" in df else [],
+            # Exact daily turnover (成交额, source currency) for the
+            # liquidity layer — same key the pipeline's AkShare path emits.
+            **({"amount": df["成交额"].tolist()} if "成交额" in df.columns else {}),
         },
     }
 

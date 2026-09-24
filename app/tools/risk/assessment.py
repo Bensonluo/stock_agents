@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.analysis.risk import (
     aligned_returns,
+    average_dollar_volume,
     calculate_beta,
     cvar_historical,
     downside_deviation,
@@ -92,6 +93,7 @@ def _assess_symbol(symbol: str, data: dict) -> dict[str, Any]:
     risk_score = _calculate_score(volatility, max_dd, var_95, beta)
     risk_level = _score_to_level(risk_score)
     beta_status = "available" if beta is not None else "insufficient_data"
+    liquidity = _liquidity_block(symbol, average_dollar_volume(hist))
 
     return {
         "symbol": symbol,
@@ -118,12 +120,19 @@ def _assess_symbol(symbol: str, data: dict) -> dict[str, Any]:
             "correlation": relative.get("correlation"),
         },
         "stress_scenarios": stress,
+        "liquidity": liquidity,
         "position_recommendation": {
             "max_position_size": _position_size(risk_score) if beta is not None else None,
             "stop_loss_percentage": float(volatility * 2 * 100),
             "status": "available" if beta is not None else "insufficient_data",
         },
-        "warnings": _warnings(risk_level, volatility, max_dd, beta_status),
+        "warnings": _warnings(
+            risk_level,
+            volatility,
+            max_dd,
+            beta_status,
+            liquidity_level=liquidity.get("level"),
+        ),
     }
 
 
@@ -223,7 +232,48 @@ def _position_size(score: float | None) -> float | None:
         return 20.0
 
 
-def _warnings(level: str, vol: float, dd: float, beta_status: str = "available") -> list:
+def _liquidity_block(symbol: str, adv: float | None) -> dict[str, Any]:
+    """Liquidity annotation: ADV vs a per-market floor.
+
+    Purely additive — deliberately not blended into ``risk_score``: price
+    risk and exit risk are different axes and every existing score pin stays
+    untouched. Six-digit symbols are A-shares (turnover in CNY); ``.HK``
+    symbols report HKD against the USD floor (same order of magnitude —
+    a floor annotation, not an FX conversion); everything else is USD.
+    """
+    if ".HK" in symbol.upper():
+        currency = "HKD"
+    elif symbol.isdigit() and len(symbol) == 6:
+        currency = "CNY"
+    else:
+        currency = "USD"
+    settings = get_settings()
+    min_adv = settings.min_adv_cny if currency == "CNY" else settings.min_adv_usd
+    if adv is None:
+        return {
+            "adv_20d": None,
+            "currency": currency,
+            "level": None,
+            "min_adv": min_adv,
+            "status": "insufficient_data",
+        }
+    level = "thin" if adv < min_adv else "adequate"
+    return {
+        "adv_20d": round(adv, 2),
+        "currency": currency,
+        "level": level,
+        "min_adv": min_adv,
+        "status": "available",
+    }
+
+
+def _warnings(
+    level: str,
+    vol: float,
+    dd: float,
+    beta_status: str = "available",
+    liquidity_level: str | None = None,
+) -> list:
     warnings = []
     if level in ["high", "very_high"]:
         warnings.append("High risk stock. Consider smaller position size.")
@@ -233,6 +283,8 @@ def _warnings(level: str, vol: float, dd: float, beta_status: str = "available")
         warnings.append(f"History of deep drawdowns ({dd * 100:.1f}%).")
     if beta_status != "available":
         warnings.append("Beta unavailable: aligned benchmark history is insufficient.")
+    if liquidity_level == "thin":
+        warnings.append("Thin average daily turnover: exiting size takes days, not hours.")
     return warnings
 
 

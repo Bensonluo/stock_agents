@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     llm_sentiment_enabled: bool = False
     # Jensen's alpha risk-free rate (annualized, cash T-bill level; alpha only)
     risk_free_rate_annual: float = 0.04
+    # Liquidity floors for the risk annotation: 20-day average daily traded
+    # value below this flags exit-liquidity risk (per source currency).
+    min_adv_usd: float = 2_000_000
+    min_adv_cny: float = 20_000_000
     # Eval harness: LLM-as-judge opt-in (deterministic rubric is always on in tests)
     eval_llm_judge: bool = False
 

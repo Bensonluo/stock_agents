@@ -1,8 +1,10 @@
 """Deterministic risk computations (V2 plan §5.1)."""
 
 from app.analysis.risk.engine import (
+    ADV_WINDOW,
     MARKET_SHOCKS,
     aligned_returns,
+    average_dollar_volume,
     calculate_beta,
     concentration_hhi,
     correlation_matrix,
@@ -19,8 +21,10 @@ from app.analysis.risk.engine import (
 )
 
 __all__ = [
+    "ADV_WINDOW",
     "MARKET_SHOCKS",
     "aligned_returns",
+    "average_dollar_volume",
     "calculate_beta",
     "concentration_hhi",
     "correlation_matrix",

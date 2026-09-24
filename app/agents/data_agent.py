@@ -394,7 +394,7 @@ def _sync_fetch_akshare_history(symbol: str, ak) -> dict[str, Any] | None:
     if df is None or df.empty:
         return None
 
-    return {
+    history = {
         "dates": [d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d) for d in df["日期"]],
         "open": df["开盘"].tolist(),
         "high": df["最高"].tolist(),
@@ -402,6 +402,13 @@ def _sync_fetch_akshare_history(symbol: str, ak) -> dict[str, Any] | None:
         "close": df["收盘"].tolist(),
         "volume": df["成交量"].tolist(),
     }
+    # Exact daily turnover in yuan — the liquidity layer's preferred input.
+    # East Money's volume column is in 手 (100-share lots), so close×volume
+    # would understate CN turnover by two orders of magnitude; 成交额 has no
+    # such ambiguity. Key omitted entirely when the source lacks the column.
+    if "成交额" in df.columns:
+        history["amount"] = df["成交额"].tolist()
+    return history
 
 
 class DataCollectionAgent(BaseAgent):

@@ -22,6 +22,10 @@ from app.domain.schemas import MetricEvidence
 MIN_BETA_OBSERVATIONS = 20
 # Rolling window (days) for the short-term volatility regime percentile.
 VOL_REGIME_WINDOW = 20
+# Liquidity: trailing days averaged into ADV, and the minimum overlapping
+# observations below which the answer is "insufficient data", not a guess.
+ADV_WINDOW = 20
+ADV_MIN_OBSERVATIONS = 5
 
 # Market shock scenarios for stress estimates (fractional moves).
 MARKET_SHOCKS: dict[str, float] = {
@@ -212,6 +216,42 @@ def stress_scenarios(beta: float | None) -> dict[str, Any]:
         "status": "available",
         "scenarios": {name: round(beta * shock, 4) for name, shock in MARKET_SHOCKS.items()},
     }
+
+
+def average_dollar_volume(
+    historical_data: Mapping[str, Any], window: int = ADV_WINDOW
+) -> float | None:
+    """Mean daily traded value over the trailing ``window`` days, source currency.
+
+    Prefers an explicit turnover series (``amount`` — the CN daily bars'
+    成交额 in yuan): East Money reports volume in 手 (100-share lots), so
+    close×volume understates CN turnover by two orders of magnitude. Falls
+    back to close×volume (share-denominated bars) when no turnover series
+    exists. None without ``ADV_MIN_OBSERVATIONS`` finite positive values.
+    """
+    amount = historical_data.get("amount")
+    if amount:
+        try:
+            dollars = np.asarray(amount, dtype=float)[-window:]
+        except (TypeError, ValueError):
+            return None
+    else:
+        closes = historical_data.get("close")
+        volumes = historical_data.get("volume")
+        if not closes or not volumes:
+            return None
+        try:
+            dollars = (
+                np.asarray(closes, dtype=float)[-window:]
+                * np.asarray(volumes, dtype=float)[-window:]
+            )
+        except (TypeError, ValueError):
+            return None
+
+    dollars = dollars[np.isfinite(dollars) & (dollars > 0)]
+    if len(dollars) < ADV_MIN_OBSERVATIONS:
+        return None
+    return float(np.mean(dollars))
 
 
 def correlation_matrix(histories: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:

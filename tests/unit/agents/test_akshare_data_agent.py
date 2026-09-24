@@ -90,12 +90,15 @@ class _FakeAk:
         assert kwargs.get("period") == "daily"
         assert kwargs.get("adjust") == "qfq"
         rows = [
-            ("2026-09-22", 1600.0, 1620.0, 1625.0, 1595.0, 24_000),
-            ("2026-09-23", 1620.0, 1640.0, 1648.0, 1615.0, 26_500),
-            ("2026-09-24", 1640.0, 1650.0, 1660.0, 1635.0, 25_000),
+            ("2026-09-22", 1600.0, 1620.0, 1625.0, 1595.0, 24_000, 3.9e9),
+            ("2026-09-23", 1620.0, 1640.0, 1648.0, 1615.0, 26_500, 4.1e9),
+            ("2026-09-24", 1640.0, 1650.0, 1660.0, 1635.0, 25_000, 4.0e9),
         ]
         return pd.DataFrame(
-            [dict(zip(("日期", "开盘", "收盘", "最高", "最低", "成交量"), row)) for row in rows]
+            [
+                dict(zip(("日期", "开盘", "收盘", "最高", "最低", "成交量", "成交额"), row))
+                for row in rows
+            ]
         )
 
     def stock_financial_analysis_indicator(self, symbol: str) -> pd.DataFrame:
@@ -187,11 +190,12 @@ class TestHistoryBars:
         hist = result["market_data"]["600519"]["historical_data"]
 
         assert fake.hist_calls == ["600519"]
-        assert set(hist) == {"dates", "open", "high", "low", "close", "volume"}
+        assert set(hist) == {"dates", "open", "high", "low", "close", "volume", "amount"}
         assert hist["dates"] == ["2026-09-22", "2026-09-23", "2026-09-24"]
         assert hist["open"] == [1600.0, 1620.0, 1640.0]  # from 开盘
         assert hist["close"] == [1620.0, 1640.0, 1650.0]  # from 收盘
         assert hist["volume"] == [24_000, 26_500, 25_000]
+        assert hist["amount"] == [3.9e9, 4.1e9, 4.0e9]  # exact yuan turnover (成交额)
         # as_of tracks the last bar, not the fetch time
         assert result["market_data"]["600519"]["as_of"] == "2026-09-24"
 
