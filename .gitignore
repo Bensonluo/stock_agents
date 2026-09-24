@@ -79,3 +79,4 @@ frontend/.env*.local
 /.next/cache
 /.next
 .omc/
+docs/resume-description.md
