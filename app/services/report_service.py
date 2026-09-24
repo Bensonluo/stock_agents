@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from app.analysis.fundamental import compact_quality_view
+from app.analysis.portfolio import suggest_weights
 from app.analysis.technical import compact_weekly_view
 from app.analysis.valuation import compact_valuation_view
 
@@ -297,9 +298,38 @@ class ReportService:
 
     @classmethod
     def _recommendations(cls, c: dict[str, Any]) -> dict[str, Any]:
-        if c["decisions"]:
-            return cls._recommendations_from_decisions(c)
-        return cls._recommendations_derived(c)
+        summary = (
+            cls._recommendations_from_decisions(c)
+            if c["decisions"]
+            else cls._recommendations_derived(c)
+        )
+        # Allocation across the buy-worthy names — deterministic, additive;
+        # None (fewer than two eligible) leaves the section unchanged.
+        summary["suggested_weights"] = cls._suggested_weights(c, summary)
+        return summary
+
+    @staticmethod
+    def _suggested_weights(c: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any] | None:
+        """Candidates for the portfolio allocation from either path.
+
+        Conviction comes from the decision agent (pipeline) or the derived
+        recommendation (ReAct); volatility from the shared risk metrics.
+        Only symbols whose action says buy participate — a sell/hold name
+        gets no allocation, and the caller needs no action filtering.
+        """
+        candidates: dict[str, dict[str, float | None]] = {}
+        for symbol in c["symbols"]:
+            decision = c["decisions"].get(symbol) or summary["by_symbol"].get(symbol) or {}
+            action = str(decision.get("action", ""))
+            if "buy" not in action and action != "add":
+                continue
+            risk = c["risk_flat"].get(symbol) or {}
+            metrics = risk.get("metrics") or {}
+            candidates[symbol] = {
+                "conviction": decision.get("confidence"),
+                "volatility_annualized": metrics.get("volatility_annualized"),
+            }
+        return suggest_weights(candidates)
 
     @classmethod
     def _recommendations_from_decisions(cls, c: dict[str, Any]) -> dict[str, Any]:
