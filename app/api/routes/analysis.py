@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.dependencies import get_orchestrator
+from app.monitoring.workflow_status import PIPELINE_AGENTS
 from app.orchestration.state import AgentState
 from app.utils.logging import get_logger
 from app.utils.validators import validate_stock_symbol
@@ -104,6 +105,11 @@ workflows: dict = {}
 # Entries hold full analysis results (heavy); cap well below the status store.
 MAX_TRACKED_API_WORKFLOWS = 50
 
+# Analysis agents degrade gracefully and the pipeline still delivers a
+# schema-compliant report; every other pipeline node is critical.
+DEGRADABLE_AGENTS = {"technical_analysis", "fundamental_analysis", "sentiment_analysis"}
+CRITICAL_AGENTS = set(PIPELINE_AGENTS) - DEGRADABLE_AGENTS
+
 
 def _store_workflow(thread_id: str, entry: dict) -> None:
     """Insert a workflow entry, evicting when the cache is at capacity.
@@ -116,7 +122,7 @@ def _store_workflow(thread_id: str, entry: dict) -> None:
     evict_oldest_terminal(
         workflows,
         MAX_TRACKED_API_WORKFLOWS,
-        terminal_statuses=("completed", "failed"),
+        terminal_statuses=("completed", "failed", "partial"),
         timestamp_of=lambda e: e.get("completed_at") or e.get("started_at") or datetime.min,
     )
     workflows[thread_id] = entry
@@ -192,7 +198,8 @@ async def get_workflow_status(thread_id: str) -> WorkflowStatusResponse:
     current_agent = workflow.get("current_agent")
     current_step = workflow.get("current_step", 0)
     has_errors = workflow.get("has_errors", False)
-    is_complete = workflow.get("status") == "completed"
+    # A partial run is finished (degraded), not in flight.
+    is_complete = workflow.get("status") in ("completed", "partial")
 
     return WorkflowStatusResponse(
         thread_id=thread_id,
@@ -364,11 +371,17 @@ async def _execute_workflow(thread_id: str, request: StockAnalysisRequest):
         # dropped this entry mid-run; history still lands in the DB)
         entry = workflows.get(thread_id)
         if entry is not None:
-            entry["status"] = "completed"
+            failed_any = any(
+                status == "failed" for status in (result.get("agent_status") or {}).values()
+            )
+            # Mirror monitor/DB semantics: a degraded-but-finished run is
+            # `partial` — its report exists and stays servable from
+            # /result/{thread_id} instead of being overwritten by a 500 path.
+            entry["status"] = "partial" if failed_any else "completed"
             entry["result"] = result
             entry["completed_at"] = datetime.now()
 
-        logger.info(f"Workflow {thread_id} completed successfully")
+        logger.info(f"Workflow {thread_id} finished with status {entry and entry.get('status')}")
         logger.info(f"Final agent_status: {result.get('agent_status', {})}")
 
     except Exception as e:
@@ -415,19 +428,21 @@ async def _execute_workflow_impl(
     errors = result.get("errors", [])
     agent_status = result.get("agent_status", {})
     failed_agents = [name for name, status in agent_status.items() if status == "failed"]
+
+    # Only pipeline-critical failures abort the request. Analysis agents
+    # degrade gracefully: a run where sentiment failed but the report was
+    # still generated is a partial success — raising here would 500 the
+    # endpoint and hide a usable report that monitoring/DB already record
+    # as `partial`. Transient errors that succeeded on retry likewise
+    # leave records in `errors` without failing any agent.
+    critical_failures = [name for name in failed_agents if name in CRITICAL_AGENTS]
     execution_error = result.get("execution_metadata", {}).get("error")
-    if errors or failed_agents or execution_error:
-        if execution_error:
-            detail = execution_error
-        elif failed_agents:
-            detail = f"Workflow failed in agents: {', '.join(failed_agents)}"
-        else:
-            latest_error = errors[-1]
-            detail = (
-                latest_error.get("error", str(latest_error))
-                if isinstance(latest_error, dict)
-                else str(latest_error)
-            )
+    if execution_error or critical_failures:
+        detail = (
+            execution_error
+            if execution_error
+            else f"Workflow failed in agents: {', '.join(critical_failures)}"
+        )
         raise RuntimeError(detail)
 
     logger.info(f"Workflow {thread_id} result agent_status: {result.get('agent_status', {})}")
@@ -439,7 +454,7 @@ async def _execute_workflow_impl(
     workflow["agent_status"] = agent_status
     workflow["current_agent"] = result.get("current_agent")
     workflow["current_step"] = result.get("current_step", 0)
-    workflow["has_errors"] = False
+    workflow["has_errors"] = bool(failed_agents or errors)
 
     logger.info(
         f"Updated workflows[{thread_id}] with agent_status: {workflows[thread_id].get('agent_status', {})}"
