@@ -34,7 +34,12 @@ from app.tools.analysis.technical import (
     _generate_signals,
     _to_dataframe,
 )
-from app.tools.data.fetcher import fetch_historical, fetch_stock_data
+from app.tools.data.fetcher import (
+    benchmark_ticker_for,
+    fetch_benchmark_history,
+    fetch_historical,
+    fetch_stock_data,
+)
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -88,6 +93,23 @@ def data_unavailable_error(symbol: str) -> dict[str, Any]:
         "symbol": symbol,
         "data_available": False,
     }
+
+
+async def _attach_benchmark(market: dict[str, Any], symbol: str) -> dict[str, Any]:
+    """Attach the market's benchmark index to a ReAct market block.
+
+    Same contract as the pipeline data agent: benchmark present -> the risk
+    tools can regress beta/alpha/R²; fetch failure -> key absent, beta stays
+    None exactly as before benchmarks existed. The 30-min fetcher cache
+    keeps per-symbol ReAct calls from re-downloading the same index.
+    """
+    if not market:
+        return market
+    bench = await fetch_benchmark_history(benchmark_ticker_for(symbol))
+    if bench is None:
+        return market
+    market["benchmark_historical_data"] = bench
+    return market
 
 
 async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
@@ -147,7 +169,7 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
                 f"built market block from historical series ({len(hist['dates'])} bars)"
             )
             return {
-                "market_data": {symbol: market},
+                "market_data": {symbol: await _attach_benchmark(market, symbol)},
                 "financial_data": {symbol: {}},
                 "news_data": [],
             }
@@ -176,7 +198,7 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
             logger.warning(f"[auto_tools] historical fetch fallback failed for {symbol}: {e}")
 
     return {
-        "market_data": {symbol: market},
+        "market_data": {symbol: await _attach_benchmark(market, symbol)},
         "financial_data": {symbol: data.get("financial_data", {})},
         "news_data": data.get("news_data", []),
     }
@@ -407,22 +429,10 @@ class AssessRiskSimpleInput(BaseModel):
 
 @tool(args_schema=AssessRiskSimpleInput)
 async def assess_risk(symbol: str) -> dict[str, Any]:
-    """Calculate risk metrics (volatility, VaR, max drawdown, risk score).
+    """Calculate risk metrics (volatility, VaR/CVaR, beta, max drawdown, risk score).
     Automatically fetches the latest market data.
     """
-    import numpy as np
-
-    from app.tools.risk.assessment import (
-        _calculate_beta_from_histories,
-        _calculate_score,
-        _downside_risk,
-        _get_benchmark_history,
-        _max_drawdown,
-        _minimal_risk,
-        _position_size,
-        _score_to_level,
-        _warnings,
-    )
+    from app.tools.risk.assessment import assess_symbol
 
     data = await _fetch_and_split(symbol)
     if not data:
@@ -430,46 +440,11 @@ async def assess_risk(symbol: str) -> dict[str, Any]:
     if data.get("data_available") is False:
         return data
 
+    # The canonical shared computation — this tool only owns fetch + shell.
+    # Its previous inline copy had drifted from the engine: unguarded
+    # percentile VaR (no >=20-return guard) and no CVaR at all.
     market = data["market_data"].get(symbol, {})
-    hist = market.get("historical_data", {})
-    closes = np.array(hist.get("close", []))
-
-    if len(closes) < 20:
-        return _minimal_risk(market, symbol)
-
-    returns = np.diff(closes) / closes[:-1]
-    volatility = float(np.std(returns))
-    var_95 = float(np.percentile(returns, 5))
-    var_99 = float(np.percentile(returns, 1))
-    max_dd = _max_drawdown(closes)
-    downside = _downside_risk(returns)
-    beta = _calculate_beta_from_histories(hist, _get_benchmark_history(market))
-    beta_status = "available" if beta is not None else "insufficient_data"
-    risk_score = _calculate_score(volatility, max_dd, var_95, beta)
-    risk_level = _score_to_level(risk_score)
-
-    return {
-        "symbol": symbol,
-        "risk_score": risk_score,
-        "risk_level": risk_level,
-        "risk_score_status": "complete" if beta is not None else "partial",
-        "metrics": {
-            "volatility": volatility,
-            "volatility_annualized": float(volatility * np.sqrt(252)),
-            "var_95": var_95,
-            "var_99": var_99,
-            "max_drawdown": max_dd,
-            "downside_risk": downside,
-            "beta": beta,
-            "beta_status": beta_status,
-        },
-        "position_recommendation": {
-            "max_position_size": _position_size(risk_score) if beta is not None else None,
-            "stop_loss_percentage": float(volatility * 2 * 100),
-            "status": "available" if beta is not None else "insufficient_data",
-        },
-        "warnings": _warnings(risk_level, volatility, max_dd, beta_status),
-    }
+    return assess_symbol(symbol, market)
 
 
 class GetStockOverviewInput(BaseModel):

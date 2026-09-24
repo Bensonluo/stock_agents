@@ -100,6 +100,11 @@ async def test_auto_tool_requests_three_year_fallback_history(monkeypatch) -> No
     monkeypatch.setattr(auto_tools, "fetch_stock_data", fake_stock_data)
     monkeypatch.setattr(auto_tools, "fetch_historical", fake_history)
 
+    async def no_benchmark(ticker):
+        return None  # offline test: benchmark absence is the degraded case
+
+    monkeypatch.setattr(auto_tools, "fetch_benchmark_history", no_benchmark)
+
     await auto_tools._fetch_and_split("AAPL")
 
     assert requested_periods == ["3y"]

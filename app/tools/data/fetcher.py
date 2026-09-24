@@ -79,6 +79,55 @@ def _is_chinese_symbol(symbol: str) -> bool:
     return symbol.isdigit() and len(symbol) == 6
 
 
+# Benchmarks for beta/alpha/R² regression, shared with the pipeline data
+# agent: S&P 500 for international names, SSE Composite for A-shares.
+# Fetched through the shared 30-min cache so ReAct tool calls (one symbol
+# at a time) never re-fetch the same index within one analysis session.
+BENCHMARK_TICKERS = {"us": "^GSPC", "cn": "000001.SS"}
+BENCHMARK_HISTORY_PERIOD = "2y"
+
+
+def benchmark_ticker_for(symbol: str) -> str:
+    """S&P 500 for international symbols; SSE Composite for 6-digit A-shares."""
+    if _is_chinese_symbol(symbol):
+        return BENCHMARK_TICKERS["cn"]
+    return BENCHMARK_TICKERS["us"]
+
+
+def _sync_fetch_benchmark_history(yahoo_symbol: str) -> dict[str, Any] | None:
+    """Benchmark index history as a dates/close dict — the shape
+    ``aligned_returns`` regresses against (same as historical_data)."""
+    import yfinance as yf
+
+    df = yf.Ticker(yahoo_symbol).history(period=BENCHMARK_HISTORY_PERIOD, interval="1d")
+    if df.empty or "Close" not in df.columns:
+        return None
+    dates = [d.strftime("%Y-%m-%d") for d in df.index]
+    if not dates:
+        return None
+    return {"symbol": yahoo_symbol, "dates": dates, "close": [float(c) for c in df["Close"]]}
+
+
+async def fetch_benchmark_history(yahoo_symbol: str) -> dict[str, Any] | None:
+    """Cached benchmark history (30-min TTL); None when the fetch fails.
+
+    Only successful fetches are cached — a failed index call is retried on
+    the next tool invocation rather than poisoning the cache with None.
+    """
+    cache_key = f"bench_{yahoo_symbol}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        bench = await asyncio.to_thread(_sync_fetch_benchmark_history, yahoo_symbol)
+    except Exception as e:
+        logger.warning(f"Benchmark history unavailable for {yahoo_symbol}: {e}")
+        return None
+    if bench is not None:
+        _cache_set(cache_key, bench)
+    return bench
+
+
 def _is_hk_symbol(symbol: str) -> bool:
     """HK-listed codes: '0700.HK'/'00700.HK' suffixed, or bare 4-5 digit
     zero-padded codes ('0700', '00700')."""

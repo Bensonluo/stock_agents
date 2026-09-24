@@ -57,12 +57,16 @@ def _market(symbol: str) -> dict:
 
 
 class TestBenchmarkTickerSelection:
-    def test_six_digit_symbols_map_to_sse_composite(self, data_agent_module):
-        assert data_agent_module._benchmark_ticker_for("600000") == "000001.SS"
+    def test_six_digit_symbols_map_to_sse_composite(self):
+        from app.tools.data.fetcher import benchmark_ticker_for
 
-    def test_everything_else_maps_to_sp500(self, data_agent_module):
-        assert data_agent_module._benchmark_ticker_for("AAPL") == "^GSPC"
-        assert data_agent_module._benchmark_ticker_for("0700.HK") == "^GSPC"
+        assert benchmark_ticker_for("600000") == "000001.SS"
+
+    def test_everything_else_maps_to_sp500(self):
+        from app.tools.data.fetcher import benchmark_ticker_for
+
+        assert benchmark_ticker_for("AAPL") == "^GSPC"
+        assert benchmark_ticker_for("0700.HK") == "^GSPC"
 
 
 class TestBenchmarkAttach:
@@ -90,11 +94,11 @@ class TestBenchmarkAttach:
         )
         calls: list[str] = []
 
-        def fake_benchmark(ticker):
+        async def fake_benchmark(ticker):
             calls.append(ticker)
             return {"symbol": ticker, "dates": ["2026-01-02"], "close": [4800.0]}
 
-        monkeypatch.setattr(data_agent_module, "_sync_fetch_benchmark_history", fake_benchmark)
+        monkeypatch.setattr(data_agent_module, "fetch_benchmark_history", fake_benchmark)
 
         result = await agent.execute({"symbols": ["AAPL", "MSFT", "600000"]})
 
@@ -113,10 +117,11 @@ class TestBenchmarkAttach:
             data_agent_module, monkeypatch, lambda yahoo, sym, conv: _market(sym)
         )
 
-        def failing_benchmark(ticker):
-            raise RuntimeError("index feed unavailable")
+        async def failing_benchmark(ticker):
+            # What the shared fetcher returns when the index fetch fails.
+            return None
 
-        monkeypatch.setattr(data_agent_module, "_sync_fetch_benchmark_history", failing_benchmark)
+        monkeypatch.setattr(data_agent_module, "fetch_benchmark_history", failing_benchmark)
 
         result = await agent.execute({"symbols": ["AAPL"]})
 
@@ -129,11 +134,11 @@ class TestBenchmarkAttach:
     ) -> None:
         agent = data_agent_module.DataCollectionAgent()
         self._patch_per_symbol_fetches(data_agent_module, monkeypatch, lambda yahoo, sym, conv: {})
-        monkeypatch.setattr(
-            data_agent_module,
-            "_sync_fetch_benchmark_history",
-            lambda ticker: {"symbol": ticker, "dates": ["2026-01-02"], "close": [4800.0]},
-        )
+
+        async def canned_benchmark(ticker):
+            return {"symbol": ticker, "dates": ["2026-01-02"], "close": [4800.0]}
+
+        monkeypatch.setattr(data_agent_module, "fetch_benchmark_history", canned_benchmark)
 
         result = await agent.execute({"symbols": ["AAPL"]})
 
@@ -177,3 +182,44 @@ class TestAkShareMergePreservesBenchmark:
             "news_data": ["new"]
         }
         assert _merge_symbol_maps({}, {"news_data": ["fresh"]}) == {"news_data": ["fresh"]}
+
+
+class TestFetcherBenchmarkCache:
+    """The shared fetcher caches benchmarks so ReAct's per-symbol tool calls
+    download each index once per 30-min window, not once per symbol."""
+
+    def setup_method(self):
+        from app.tools.data import fetcher
+
+        self.fetcher = fetcher
+        fetcher._cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_second_call_is_served_from_cache(self, monkeypatch) -> None:
+        calls: list[str] = []
+
+        def fake_sync(ticker):
+            calls.append(ticker)
+            return {"symbol": ticker, "dates": ["2026-01-02"], "close": [4800.0]}
+
+        monkeypatch.setattr(self.fetcher, "_sync_fetch_benchmark_history", fake_sync)
+
+        first = await self.fetcher.fetch_benchmark_history("^GSPC")
+        second = await self.fetcher.fetch_benchmark_history("^GSPC")
+
+        assert calls == ["^GSPC"]  # one sync fetch, second call cached
+        assert first is second
+
+    @pytest.mark.asyncio
+    async def test_failed_fetch_returns_none_and_is_retried(self, monkeypatch) -> None:
+        calls: list[str] = []
+
+        def failing_sync(ticker):
+            calls.append(ticker)
+            raise RuntimeError("index feed down")
+
+        monkeypatch.setattr(self.fetcher, "_sync_fetch_benchmark_history", failing_sync)
+
+        assert await self.fetcher.fetch_benchmark_history("^GSPC") is None
+        assert await self.fetcher.fetch_benchmark_history("^GSPC") is None
+        assert len(calls) == 2  # failures are not cached as None
