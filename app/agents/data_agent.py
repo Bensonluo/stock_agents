@@ -26,9 +26,11 @@ _akshare_semaphore = asyncio.Semaphore(5)
 # Benchmark indices come from the same seam so pipeline and ReAct tools
 # share ONE cached implementation.
 from app.tools.data.fetcher import (  # noqa: E402
+    BENCHMARK_TICKERS,
     DEFAULT_HISTORY_DAYS,
     benchmark_ticker_for,
     fetch_benchmark_history,
+    fetch_cn_sector_benchmark,
     fetch_stock_data,
     sector_benchmark_ticker,
 )
@@ -494,6 +496,16 @@ class DataCollectionAgent(BaseAgent):
             bench = sector_benchmarks.get(ticker) if ticker else None
             if bench and market_data[symbol]:
                 market_data[symbol]["sector_benchmark_historical_data"] = bench
+
+        # CN industry benchmark: SPDR ETFs don't cover Chinese sector names,
+        # so A-shares get the East Money industry-board index instead — same
+        # dates/close shape the sector regression consumes. Failure leaves
+        # the key absent, exactly like the market benchmark above.
+        cn_symbols = [s for s in market_data if benchmark_ticker_for(s) == BENCHMARK_TICKERS["cn"]]
+        cn_benchmarks = await asyncio.gather(*(fetch_cn_sector_benchmark(s) for s in cn_symbols))
+        for s, bench in zip(cn_symbols, cn_benchmarks):
+            if bench and market_data[s]:
+                market_data[s]["sector_benchmark_historical_data"] = bench
 
         logger.info(
             f"Collected data for {len(market_data)} symbols, " f"{len(news_data)} news items"

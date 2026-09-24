@@ -223,3 +223,179 @@ class TestFetcherBenchmarkCache:
         assert await self.fetcher.fetch_benchmark_history("^GSPC") is None
         assert await self.fetcher.fetch_benchmark_history("^GSPC") is None
         assert len(calls) == 2  # failures are not cached as None
+
+
+class TestCnIndustryBenchmark:
+    """A-shares get the East Money industry-board index as their sector
+    benchmark — SPDR ETFs have no vocabulary for Chinese sector names."""
+
+    def setup_method(self):
+        from app.tools.data import fetcher
+
+        self.fetcher = fetcher
+        fetcher._cache.clear()
+
+    @staticmethod
+    def _info_df(industry: str | None):
+        import pandas as pd
+
+        items = [("股票代码", "600000"), ("总市值", "3.0e11")]
+        if industry is not None:
+            items.append(("行业", industry))
+        return pd.DataFrame(items, columns=["item", "value"])
+
+    @staticmethod
+    def _board_df():
+        import pandas as pd
+
+        return pd.DataFrame(
+            {
+                "日期": ["2026-01-02", "2026-01-03"],
+                "开盘": [10.0, 10.2],
+                "收盘": [10.0, 10.5],
+                "最高": [10.6, 10.7],
+                "最低": [9.9, 10.1],
+                "成交量": [1000, 1100],
+            }
+        )
+
+    def _install_fake_akshare(self, monkeypatch, info_df, board_df, calls):
+        import sys
+        from types import ModuleType
+
+        fake = ModuleType("akshare")
+
+        def stock_individual_info_em(symbol, timeout=None):
+            calls.append(("info", symbol))
+            return info_df
+
+        def stock_board_industry_hist_em(symbol, start_date, end_date, period, adjust):
+            calls.append(("board", symbol))
+            return board_df
+
+        fake.stock_individual_info_em = stock_individual_info_em
+        fake.stock_board_industry_hist_em = stock_board_industry_hist_em
+        monkeypatch.setitem(sys.modules, "akshare", fake)
+
+    def test_sync_name_extracts_the_industry_row(self, monkeypatch) -> None:
+        calls: list = []
+        self._install_fake_akshare(monkeypatch, self._info_df("银行"), self._board_df(), calls)
+
+        assert self.fetcher._sync_cn_industry_name("600000") == "银行"
+        # Missing 行业 row degrades to None, never an exception.
+        self._install_fake_akshare(monkeypatch, self._info_df(None), self._board_df(), calls)
+        assert self.fetcher._sync_cn_industry_name("600000") is None
+
+    def test_sync_history_maps_dates_and_closes(self, monkeypatch) -> None:
+        calls: list = []
+        self._install_fake_akshare(monkeypatch, self._info_df("银行"), self._board_df(), calls)
+
+        bench = self.fetcher._sync_cn_industry_history("银行")
+
+        assert bench == {
+            "symbol": "银行",
+            "dates": ["2026-01-02", "2026-01-03"],
+            "close": [10.0, 10.5],
+        }
+
+    @pytest.mark.asyncio
+    async def test_same_industry_symbols_share_one_board_fetch(self, monkeypatch) -> None:
+        calls: list = []
+        self._install_fake_akshare(monkeypatch, self._info_df("银行"), self._board_df(), calls)
+
+        first = await self.fetcher.fetch_cn_sector_benchmark("600000")
+        second = await self.fetcher.fetch_cn_sector_benchmark("600036")
+
+        # Per-symbol industry lookups (two), one shared board history.
+        assert [kind for kind, _ in calls] == ["info", "board", "info"]
+        assert first is second
+        assert first["symbol"] == "银行"
+
+    @pytest.mark.asyncio
+    async def test_board_failure_returns_none_and_is_retried(self, monkeypatch) -> None:
+        import sys
+        from types import ModuleType
+
+        fake = ModuleType("akshare")
+
+        def stock_individual_info_em(symbol, timeout=None):
+            return self._info_df("银行")
+
+        def stock_board_industry_hist_em(symbol, start_date, end_date, period, adjust):
+            raise RuntimeError("board feed down")
+
+        fake.stock_individual_info_em = stock_individual_info_em
+        fake.stock_board_industry_hist_em = stock_board_industry_hist_em
+        monkeypatch.setitem(sys.modules, "akshare", fake)
+
+        assert await self.fetcher.fetch_cn_sector_benchmark("600000") is None
+        # The industry name is cached; the failed board fetch is retried
+        # (only the name call is skipped on the second attempt).
+
+    @pytest.mark.asyncio
+    async def test_cn_symbol_gets_industry_benchmark_attached(
+        self, data_agent_module, monkeypatch
+    ) -> None:
+        agent = data_agent_module.DataCollectionAgent()
+        TestBenchmarkAttach._patch_per_symbol_fetches(
+            data_agent_module, monkeypatch, lambda yahoo, sym, conv: _market(sym)
+        )
+
+        async def canned_benchmark(ticker):
+            return {"symbol": ticker, "dates": ["2026-01-02"], "close": [4800.0]}
+
+        async def canned_cn(symbol):
+            return {"symbol": "银行", "dates": ["2026-01-02"], "close": [2400.0]}
+
+        monkeypatch.setattr(data_agent_module, "fetch_benchmark_history", canned_benchmark)
+        monkeypatch.setattr(data_agent_module, "fetch_cn_sector_benchmark", canned_cn)
+
+        result = await agent.execute({"symbols": ["AAPL", "600000"]})
+
+        us_block = result["market_data"]["AAPL"]
+        cn_block = result["market_data"]["600000"]
+        assert cn_block["sector_benchmark_historical_data"]["symbol"] == "银行"
+        # US symbols keep the SPDR path — no industry key fabricated for them.
+        assert "sector_benchmark_historical_data" not in us_block
+
+    @pytest.mark.asyncio
+    async def test_cn_benchmark_failure_leaves_key_absent(
+        self, data_agent_module, monkeypatch
+    ) -> None:
+        agent = data_agent_module.DataCollectionAgent()
+        TestBenchmarkAttach._patch_per_symbol_fetches(
+            data_agent_module, monkeypatch, lambda yahoo, sym, conv: _market(sym)
+        )
+
+        async def canned_benchmark(ticker):
+            return {"symbol": ticker, "dates": ["2026-01-02"], "close": [4800.0]}
+
+        async def failing_cn(symbol):
+            return None
+
+        monkeypatch.setattr(data_agent_module, "fetch_benchmark_history", canned_benchmark)
+        monkeypatch.setattr(data_agent_module, "fetch_cn_sector_benchmark", failing_cn)
+
+        result = await agent.execute({"symbols": ["600000"]})
+
+        cn_block = result["market_data"]["600000"]
+        assert "sector_benchmark_historical_data" not in cn_block
+        assert cn_block["benchmark_historical_data"]["symbol"] == "000001.SS"
+
+    @pytest.mark.asyncio
+    async def test_react_attach_benchmark_covers_cn_symbols(self, monkeypatch) -> None:
+        from app.tools.analysis import auto_tools
+
+        async def canned_benchmark(ticker):
+            return {"symbol": ticker, "dates": ["2026-01-02"], "close": [4800.0]}
+
+        async def canned_cn(symbol):
+            return {"symbol": "银行", "dates": ["2026-01-02"], "close": [2400.0]}
+
+        monkeypatch.setattr(auto_tools, "fetch_benchmark_history", canned_benchmark)
+        monkeypatch.setattr(auto_tools, "fetch_cn_sector_benchmark", canned_cn)
+
+        market = await auto_tools._attach_benchmark({"symbol": "600000"}, "600000")
+
+        assert market["benchmark_historical_data"]["symbol"] == "000001.SS"
+        assert market["sector_benchmark_historical_data"]["symbol"] == "银行"

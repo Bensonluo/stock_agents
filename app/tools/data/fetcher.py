@@ -153,6 +153,84 @@ async def fetch_benchmark_history(yahoo_symbol: str) -> dict[str, Any] | None:
     return bench
 
 
+def _sync_cn_industry_name(symbol: str) -> str | None:
+    """Industry board name for an A-share via East Money individual info."""
+    import akshare as ak
+
+    df = ak.stock_individual_info_em(symbol=symbol)
+    if df is None or df.empty or "item" not in df.columns:
+        return None
+    rows = df[df["item"] == "行业"]
+    if rows.empty:
+        return None
+    industry = str(rows.iloc[0]["value"]).strip()
+    return industry or None
+
+
+def _sync_cn_industry_history(industry: str) -> dict[str, Any] | None:
+    """East Money industry-board index history as a dates/close dict.
+
+    Same shape ``aligned_returns`` consumes for the sector regression —
+    board index closes regress against stock closes exactly like the SPDR
+    ETF path does for US sectors.
+    """
+    import akshare as ak
+
+    end = datetime.now()
+    start = end - timedelta(days=DEFAULT_HISTORY_DAYS)
+    df = ak.stock_board_industry_hist_em(
+        symbol=industry,
+        start_date=start.strftime("%Y%m%d"),
+        end_date=end.strftime("%Y%m%d"),
+        period="日k",
+        adjust="",
+    )
+    if df is None or df.empty or "收盘" not in df.columns:
+        return None
+    dates = [str(d) for d in df["日期"].tolist()]
+    if not dates:
+        return None
+    return {
+        "symbol": industry,
+        "dates": dates,
+        "close": [float(c) for c in df["收盘"].tolist()],
+    }
+
+
+async def fetch_cn_sector_benchmark(symbol: str) -> dict[str, Any] | None:
+    """CN industry-board benchmark for an A-share; None on any failure.
+
+    Two East Money calls behind the shared 30-min cache: symbol → industry
+    name (cached per symbol), industry → board history (cached per industry
+    so a same-industry portfolio pays one fetch). Only successes are cached,
+    matching the market-benchmark contract.
+    """
+    name_key = f"cn_industry_name_{symbol}"
+    industry = _cache_get(name_key)
+    if industry is None:
+        try:
+            industry = await asyncio.to_thread(_sync_cn_industry_name, symbol)
+        except Exception as e:
+            logger.warning(f"CN industry lookup failed for {symbol}: {e}")
+            return None
+        if not industry:
+            return None
+        _cache_set(name_key, industry)
+
+    hist_key = f"cn_industry_hist_{industry}"
+    bench = _cache_get(hist_key)
+    if bench is not None:
+        return bench
+    try:
+        bench = await asyncio.to_thread(_sync_cn_industry_history, industry)
+    except Exception as e:
+        logger.warning(f"CN industry board history failed for {industry}: {e}")
+        return None
+    if bench is not None:
+        _cache_set(hist_key, bench)
+    return bench
+
+
 def _is_hk_symbol(symbol: str) -> bool:
     """HK-listed codes: '0700.HK'/'00700.HK' suffixed, or bare 4-5 digit
     zero-padded codes ('0700', '00700')."""

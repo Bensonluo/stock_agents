@@ -37,8 +37,10 @@ from app.tools.analysis.technical import (
     _to_dataframe,
 )
 from app.tools.data.fetcher import (
+    BENCHMARK_TICKERS,
     benchmark_ticker_for,
     fetch_benchmark_history,
+    fetch_cn_sector_benchmark,
     fetch_historical,
     fetch_stock_data,
     sector_benchmark_ticker,
@@ -120,6 +122,13 @@ async def _attach_benchmark(market: dict[str, Any], symbol: str) -> dict[str, An
         sector_bench = await fetch_benchmark_history(sector_ticker)
         if sector_bench is not None:
             market["sector_benchmark_historical_data"] = sector_bench
+    # CN parity: the East Money industry board replaces the SPDR ETF
+    # mapping for A-shares (Chinese sector names have no US ETF
+    # vocabulary). Same key, same failure contract as above.
+    if benchmark_ticker_for(symbol) == BENCHMARK_TICKERS["cn"]:
+        cn_bench = await fetch_cn_sector_benchmark(symbol)
+        if cn_bench is not None:
+            market["sector_benchmark_historical_data"] = cn_bench
     return market
 
 
