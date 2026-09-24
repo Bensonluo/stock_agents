@@ -9,6 +9,8 @@ table fetch fails.
 from __future__ import annotations
 
 import sys
+import threading
+import time
 import types
 from typing import Any
 
@@ -199,3 +201,65 @@ class TestHistoryBars:
     async def test_empty_history_degrades_to_spot_only(self, monkeypatch):
         _, result = await _run(monkeypatch, ["600519"], hist_empty=True)
         assert "historical_data" not in result["market_data"]["600519"]
+
+
+class _SlowFakeAk(_FakeAk):
+    """Hist feed with real latency and thread-safe in-flight tracking.
+
+    The in-flight counter is the regression signal: if per-symbol fetching
+    ever reverts to a serial loop, no two hist calls overlap and
+    max_in_flight stays at 1.
+    """
+
+    def __init__(self, symbols: list[str]):
+        super().__init__()
+        self._symbols = list(symbols)
+        self._lock = threading.Lock()
+        self._in_flight = 0
+        self.max_in_flight = 0
+
+    def stock_zh_a_spot_em(self) -> pd.DataFrame:
+        self.spot_calls += 1
+        row = (100.0, 1.0, 1.0, 1_000, 1e8, 1.0, 101.0, 99.0, 100.0, 99.0)
+        return pd.DataFrame([dict(zip(_SPOT_COLUMNS, (sym, *row))) for sym in self._symbols])
+
+    def stock_zh_a_hist(self, symbol: str, **kwargs) -> pd.DataFrame:
+        with self._lock:
+            self._in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self._in_flight)
+        try:
+            time.sleep(0.02)  # long enough that concurrent calls genuinely overlap
+            return super().stock_zh_a_hist(symbol, **kwargs)
+        finally:
+            with self._lock:
+                self._in_flight -= 1
+
+
+class TestConcurrentPerSymbolFetch:
+    async def test_history_fetches_overlap_but_respect_the_semaphore(self, monkeypatch):
+        """Per-symbol work must fan out concurrently, capped at 5 in flight."""
+        symbols = ["600000", "600001", "600002", "600003", "600004", "600005"]
+        fake = _SlowFakeAk(symbols)
+        _install_fake_ak(monkeypatch, fake)
+        agent = AkShareDataAgent("akshare_data")
+        agent.llm = None
+
+        result = await agent.execute({"symbols": symbols})
+
+        assert fake.spot_calls == 1
+        assert 2 <= fake.max_in_flight <= 5  # overlapped, but bounded
+        assert set(result["market_data"]) == set(symbols)
+        assert set(result["financial_data"]) == set(symbols)
+
+    async def test_output_order_follows_request_order(self, monkeypatch):
+        """gather preserves input order, so market_data keys stay deterministic."""
+        symbols = ["300750", "600519", "000001"]
+        fake = _SlowFakeAk(symbols)
+        _install_fake_ak(monkeypatch, fake)
+        agent = AkShareDataAgent("akshare_data")
+        agent.llm = None
+
+        result = await agent.execute({"symbols": symbols})
+
+        assert list(result["market_data"]) == symbols
+        assert list(result["financial_data"]) == symbols

@@ -16,6 +16,11 @@ logger = get_logger(__name__)
 # Semaphore to cap concurrent yfinance calls and avoid rate-limiting
 _yfinance_semaphore = asyncio.Semaphore(5)
 
+# Same idea for AkShare's East Money endpoints: bounded concurrency keeps
+# multi-symbol A-share runs from hammering the source while still fetching
+# per-symbol history/financials in parallel instead of one-by-one.
+_akshare_semaphore = asyncio.Semaphore(5)
+
 # Single definition of the shared history window (also used by the ReAct
 # fetcher) — changing the warm-up horizon must not require two edits.
 from app.tools.data.fetcher import DEFAULT_HISTORY_DAYS, fetch_stock_data  # noqa: E402
@@ -625,8 +630,8 @@ class AkShareDataAgent(BaseAgent):
         # One spot-table round-trip for ALL symbols; slices are local.
         spot_df = await self._fetch_akshare_spot_table(ak)
 
-        for symbol in cn_symbols:
-            # Fetch stock info
+        async def _collect(symbol: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+            """Per-symbol history + financials; both degrade to None alone."""
             stock_info = await self._fetch_akshare_stock_info(symbol, spot_df)
             if stock_info:
                 # Daily bars unlock full technical analysis; without them
@@ -635,10 +640,16 @@ class AkShareDataAgent(BaseAgent):
                 if history:
                     stock_info["historical_data"] = history
                     stock_info["as_of"] = history["dates"][-1]
-                market_data[symbol] = stock_info
 
-            # Fetch financial data
-            stock_financials = await self._fetch_akshare_financials(symbol, ak)
+            financials = await self._fetch_akshare_financials(symbol, ak)
+            return stock_info, financials
+
+        # Per-symbol work runs concurrently (bounded by _akshare_semaphore);
+        # gather preserves cn_symbols order for deterministic output.
+        collected = await asyncio.gather(*(_collect(s) for s in cn_symbols))
+        for symbol, (stock_info, stock_financials) in zip(cn_symbols, collected):
+            if stock_info:
+                market_data[symbol] = stock_info
             if stock_financials:
                 financial_data[symbol] = stock_financials
 
@@ -653,7 +664,8 @@ class AkShareDataAgent(BaseAgent):
     async def _fetch_akshare_spot_table(self, ak):
         """Fetch the shared spot table; None when the source is unreachable."""
         try:
-            return await asyncio.to_thread(_sync_fetch_akshare_spot_table, ak)
+            async with _akshare_semaphore:
+                return await asyncio.to_thread(_sync_fetch_akshare_spot_table, ak)
         except Exception as e:
             logger.error(f"Error fetching AkShare spot table: {e}")
             return None
@@ -669,7 +681,8 @@ class AkShareDataAgent(BaseAgent):
             Dictionary containing stock data
         """
         try:
-            return await asyncio.to_thread(_sync_fetch_akshare_stock_info, symbol, spot_df)
+            async with _akshare_semaphore:
+                return await asyncio.to_thread(_sync_fetch_akshare_stock_info, symbol, spot_df)
         except Exception as e:
             logger.error(f"Error fetching AkShare data for {symbol}: {e}")
             return None
@@ -685,7 +698,8 @@ class AkShareDataAgent(BaseAgent):
             Dictionary containing financial data
         """
         try:
-            return await asyncio.to_thread(_sync_fetch_akshare_financials, symbol, ak)
+            async with _akshare_semaphore:
+                return await asyncio.to_thread(_sync_fetch_akshare_financials, symbol, ak)
         except Exception as e:
             logger.error(f"Error fetching AkShare financials for {symbol}: {e}")
             return None
@@ -701,7 +715,8 @@ class AkShareDataAgent(BaseAgent):
             Historical data dict (yfinance-compatible), or None on failure
         """
         try:
-            return await asyncio.to_thread(_sync_fetch_akshare_history, symbol, ak)
+            async with _akshare_semaphore:
+                return await asyncio.to_thread(_sync_fetch_akshare_history, symbol, ak)
         except Exception as e:
             logger.error(f"Error fetching AkShare history for {symbol}: {e}")
             return None
