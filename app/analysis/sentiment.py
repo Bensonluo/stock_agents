@@ -1,12 +1,14 @@
 """Canonical news-sentiment scoring (V2 plan §5.1 — one implementation for pipeline and ReAct).
 
 Keyword-count scoring over news headlines/summaries with normalization, trend
-and cross-symbol aggregation. This is deliberately simple lexicon scoring;
-entity linking, decay and event classification arrive with Phase 4 data.
+and cross-symbol aggregation. Articles are weighted by recency (14-day
+half-life): equal-weight scoring let a two-year-old press release vote as
+loudly as today's headline.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from typing import Any
 
 POSITIVE_WORDS = {
@@ -69,9 +71,56 @@ def empty_sentiment() -> dict[str, Any]:
     }
 
 
-def score_news(news: list[dict[str, Any]]) -> dict[str, Any]:
-    """Score one symbol's news list into the canonical per-symbol block."""
-    total_score = 0
+def parse_published(value: Any) -> date | None:
+    """Best-effort article publish date: ISO string or unix seconds.
+
+    yfinance serves both shapes (content.pubDate ISO strings, legacy
+    providerPublishTime epoch ints); anything unparseable yields None so
+    callers can fall back to full recency weight.
+    """
+    if value is None:
+        return None
+    if isinstance(value, int | float):
+        try:
+            return datetime.fromtimestamp(float(value), tz=UTC).date()
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isdigit():
+            try:
+                return datetime.fromtimestamp(float(text), tz=UTC).date()
+            except (OverflowError, OSError, ValueError):
+                return None
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+    return None
+
+
+def recency_weight(published: date | None, *, now: date | None = None) -> float:
+    """Time-decay weight for an article: 14-day half-life.
+
+    Unknown publish dates keep full weight — better to trust the article
+    than to assume it is ancient. Future dates clamp to 1.0.
+    """
+    if published is None:
+        return 1.0
+    reference = now or datetime.now(UTC).date()
+    age_days = max(0, (reference - published).days)
+    return 0.5 ** (age_days / 14.0)
+
+
+def score_news(news: list[dict[str, Any]], *, now: date | None = None) -> dict[str, Any]:
+    """Score one symbol's news list into the canonical per-symbol block.
+
+    Each article's keyword score enters the sum scaled by its recency
+    weight (see recency_weight), divided by the raw article count: fresh
+    news reproduces the old equal-weight mean exactly, while stale-only
+    feeds dilute toward neutral instead of shouting as today's view.
+    """
+    total_score = 0.0
     analyzed_count = 0
     recent_scores: list[int] = []
 
@@ -81,7 +130,8 @@ def score_news(news: list[dict[str, Any]]) -> dict[str, Any]:
             1 for word in NEGATIVE_WORDS if word in text
         )
         if score != 0:
-            total_score += score
+            weight = recency_weight(parse_published(article.get("published")), now=now)
+            total_score += score * weight
             analyzed_count += 1
             recent_scores.append(score)
 
