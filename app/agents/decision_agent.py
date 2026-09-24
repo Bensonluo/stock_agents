@@ -72,6 +72,7 @@ class DecisionMakingAgent(StatelessAgent):
                     fundamental.get(symbol, {}) if isinstance(fundamental, dict) else fundamental,
                     sentiment.get(symbol, {}) if isinstance(sentiment, dict) else sentiment,
                     risk.get(symbol, {}) if isinstance(risk, dict) else risk,
+                    market_regime=market_regime,
                 )
                 if decision:
                     results[symbol] = decision
@@ -114,6 +115,8 @@ class DecisionMakingAgent(StatelessAgent):
         fundamental: dict,
         sentiment: dict,
         risk: dict,
+        *,
+        market_regime: dict | None = None,
     ) -> dict[str, Any]:
         """Make investment decision for a single symbol.
 
@@ -171,7 +174,8 @@ class DecisionMakingAgent(StatelessAgent):
             "position_size": position_size,
             "price_targets": price_targets,
             "rationale": rationale,
-            "warnings": self._generate_decision_warnings(action, risk, confidence),
+            "warnings": self._generate_decision_warnings(action, risk, confidence)
+            + _regime_warnings(action, market_regime),
         }
 
     def _extract_technical_score(self, technical: dict) -> float:
@@ -479,3 +483,40 @@ def _market_context_line(regime: dict | None) -> str | None:
         + "; ".join(parts)
         + "."
     )
+
+
+def _regime_warnings(action: str, regime: dict | None) -> list[str]:
+    """Buy-side risk warnings from the market regime (iteration 76 block).
+
+    Pure annotation, in the liquidity / sector_relative tradition: the
+    regime can only APPEND warning strings — never an input to the
+    action, score, confidence, or position size (all decided before
+    this runs). Sells/holds get nothing: the regime's edge case is a
+    recommendation to add risk into a hostile market.
+    """
+    if not isinstance(regime, dict) or regime.get("status") != "ok" or "buy" not in action:
+        return []
+
+    warnings: list[str] = []
+    if regime.get("trend") == "bear":
+        vs_sma = regime.get("price_vs_sma200")
+        where = (
+            f" ({vs_sma:+.1%} vs its 200-day average)" if isinstance(vs_sma, int | float) else ""
+        )
+        warnings.append(
+            "Counter-trend entry: the benchmark is in a bear regime"
+            f"{where} — counter-trend buys historically carry lower hit rates."
+        )
+    if regime.get("volatility_regime") == "elevated":
+        ratio = regime.get("vol_ratio_20d_vs_full")
+        scale = f" ({ratio:.1f}x its full-window level)" if isinstance(ratio, int | float) else ""
+        warnings.append(
+            f"Market volatility is elevated{scale} — expect wider swings and size accordingly."
+        )
+    drawdown = regime.get("drawdown_from_52w_high")
+    if isinstance(drawdown, int | float) and drawdown <= -0.20:
+        warnings.append(
+            f"Benchmark sits {abs(drawdown):.1%} below its 52-week high — "
+            "falling-knife risk; prefer scaling in over a single entry."
+        )
+    return warnings
