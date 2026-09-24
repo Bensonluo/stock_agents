@@ -1,6 +1,8 @@
 'use client'
 
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { BacktestForm } from '@/components/backtest/BacktestForm'
+import { WalkForwardForm } from '@/components/backtest/WalkForwardForm'
 
 export default function BacktestPage() {
   return (
@@ -12,7 +14,18 @@ export default function BacktestPage() {
         </p>
       </div>
 
-      <BacktestForm />
+      <Tabs defaultValue="single" className="w-full">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="single">单次回测</TabsTrigger>
+          <TabsTrigger value="walkforward">Walk-forward 选参</TabsTrigger>
+        </TabsList>
+        <TabsContent value="single" className="mt-4">
+          <BacktestForm />
+        </TabsContent>
+        <TabsContent value="walkforward" className="mt-4">
+          <WalkForwardForm />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

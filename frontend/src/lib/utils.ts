@@ -99,6 +99,20 @@ export const API = {
     return response.json() as Promise<StrategiesResponse>
   },
 
+  runWalkForward: async (data: WalkForwardRequest) => {
+    const response = await fetch(`${API_BASE_URL}/api/backtest/v2/walkforward`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Walk-forward failed' }))
+      const message = typeof error.detail === 'string' ? error.detail : 'Walk-forward failed'
+      throw new Error(message)
+    }
+    return response.json() as Promise<WalkForwardResponse>
+  },
+
   // Decision-layer signal quality endpoints
   getDecisionIC: async (horizonBars = 20) => {
     const response = await fetch(`${API_BASE_URL}/api/history/ic?horizon_bars=${horizonBars}`)
@@ -301,6 +315,64 @@ export interface BacktestResponse {
   equity: Array<{ date: string; value: number }>
   null_benchmark?: NullBenchmark | null
   execution_time: number
+}
+
+export interface DeflatedSharpe {
+  status: string
+  dsr: number
+  sharpe_annualized: number
+  sr0_annualized: number
+  n_trials: number
+  trial_sharpe_std_annualized: number
+  oos_bars: number
+  skew: number
+  kurtosis: number
+}
+
+export interface WalkForwardWindow {
+  test_start: string
+  test_end: string
+  chosen_params: Record<string, number>
+  train_score: number | null
+  train_results: Array<{
+    params: Record<string, number>
+    score: number | null
+    sharpe: number | null
+  }>
+  test_metrics: Record<string, number | null>
+  test_return: number | null
+}
+
+export interface WalkForwardAggregate {
+  windows_run: number
+  oos_return_mean: number | null
+  oos_sharpe_mean: number | null
+  losing_windows: number
+  worst_window: { test_start: string; test_end: string; test_return: number } | null
+  param_stability: number | null
+  deflated_sharpe: DeflatedSharpe | null
+  error?: string
+}
+
+export interface WalkForwardRequest {
+  symbol: string
+  strategy: 'sma_crossover' | 'rsi_strategy' | 'macd_strategy'
+  start_date: string
+  end_date: string
+  param_grid: Record<string, number[]>
+  train_bars: number
+  test_bars: number
+  initial_cash?: number
+  market?: 'us' | 'cn'
+  selection_metric?: 'sharpe' | 'cagr'
+}
+
+export interface WalkForwardResponse {
+  windows: WalkForwardWindow[]
+  aggregate: WalkForwardAggregate
+  configs_tested: number
+  manifest?: Record<string, unknown>
+  execution_time?: number
 }
 
 export interface StrategiesResponse {
