@@ -14,6 +14,7 @@ from app.analysis.risk.engine import (
     sortino_ratio,
     stress_scenarios,
     to_returns,
+    var_historical,
     volatility_percentile,
 )
 
@@ -31,5 +32,6 @@ __all__ = [
     "sortino_ratio",
     "stress_scenarios",
     "to_returns",
+    "var_historical",
     "volatility_percentile",
 ]

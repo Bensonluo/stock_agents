@@ -73,3 +73,47 @@ def test_tool_does_not_return_default_score_for_insufficient_prices() -> None:
     assert result["risk_score"] is None
     assert result["risk_level"] == "insufficient_data"
     assert result["position_recommendation"]["max_position_size"] is None
+
+
+def _hist(closes: list[float]) -> dict:
+    days = len(closes)
+    dates = [(date(2026, 1, 1) + timedelta(days=i)).isoformat() for i in range(days)]
+    return {"symbol": "TEST", "historical_data": {"dates": dates, "close": closes}}
+
+
+class TestVarGuardConsistency:
+    def test_var_matches_canonical_engine_when_data_sufficient(self) -> None:
+        from app.analysis.risk import to_returns, var_historical
+
+        closes = [100.0 + i * 0.5 + (i % 3) for i in range(60)]
+        result = assess_risk.invoke({"market_data": {"TEST": _hist(closes)}})["TEST"]
+
+        expected = var_historical(to_returns(np.array(closes)), level=0.95)
+        assert result["metrics"]["var_95"] == expected
+        assert result["metrics"]["var_99"] == var_historical(
+            to_returns(np.array(closes)), level=0.99
+        )
+
+    def test_var_and_cvar_agree_on_the_insufficient_boundary(self) -> None:
+        """20 closes = 19 returns: VaR must be None exactly where CVaR is.
+
+        The old inline np.percentile computed a 19-sample quantile here
+        while cvar_historical returned None on the same input — one data
+        regime, two different answers.
+        """
+        closes = [100.0 + (i % 5) for i in range(20)]
+        result = assess_risk.invoke({"market_data": {"TEST": _hist(closes)}})["TEST"]
+
+        assert result["metrics"]["var_95"] is None
+        assert result["metrics"]["var_99"] is None
+        assert result["metrics"]["cvar_95"] is None
+        # No VaR -> no risk score -> honest level, not an invented number
+        assert result["risk_score"] is None
+        assert result["risk_level"] == "insufficient_data"
+
+    def test_one_more_bar_unlocks_var(self) -> None:
+        closes = [100.0 + (i % 5) for i in range(21)]
+        result = assess_risk.invoke({"market_data": {"TEST": _hist(closes)}})["TEST"]
+
+        assert result["metrics"]["var_95"] is not None
+        assert result["risk_score"] is not None

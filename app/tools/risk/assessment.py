@@ -16,6 +16,7 @@ from app.analysis.risk import (
     sortino_ratio,
     stress_scenarios,
     to_returns,
+    var_historical,
     volatility_percentile,
 )
 from app.utils.logging import get_logger
@@ -65,8 +66,11 @@ def _assess_symbol(symbol: str, data: dict) -> dict[str, Any]:
 
     returns = to_returns(closes)
     volatility = float(np.std(returns))
-    var_95 = float(np.percentile(returns, 5))
-    var_99 = float(np.percentile(returns, 1))
+    # VaR/CVaR all come from the canonical historical-simulation helpers,
+    # so the min-data guard (>= 20 returns) applies uniformly instead of
+    # VaR being computed on 19 samples while CVaR is None on the same input.
+    var_95 = var_historical(returns, level=0.95)
+    var_99 = var_historical(returns, level=0.99)
     cvar_95 = cvar_historical(returns, level=0.95)
     max_dd = max_drawdown(closes)
     downside = downside_deviation(returns)
