@@ -99,6 +99,13 @@ export const API = {
     return response.json() as Promise<StrategiesResponse>
   },
 
+  // Decision-layer signal quality endpoints
+  getDecisionIC: async (horizonBars = 20) => {
+    const response = await fetch(`${API_BASE_URL}/api/history/ic?horizon_bars=${horizonBars}`)
+    if (!response.ok) throw new Error('Failed to get decision IC')
+    return response.json() as Promise<DecisionICResponse>
+  },
+
   // Monitoring endpoints
   getHealth: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/health`)
@@ -296,6 +303,25 @@ export interface StrategiesResponse {
     description: string
     parameters: Record<string, string>
   }>
+}
+
+export interface DecisionICResponse {
+  method: string
+  horizon_bars: number
+  records_examined: number
+  runs_evaluated: number
+  runs_pending_maturity: number
+  runs_skipped: number
+  per_run: Array<{ thread_id: string; date: string; symbols: number; ic: number }>
+  caveat: string
+  status: 'ok' | 'insufficient_history'
+  runs?: number
+  ic_mean?: number
+  ic_std?: number | null
+  icir?: number | null
+  t_stat?: number | null
+  ic_positive_rate?: number
+  execution_time?: number
 }
 
 export interface SystemHealth {

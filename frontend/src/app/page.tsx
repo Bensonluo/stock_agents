@@ -15,6 +15,7 @@ import {
   Swords, ShieldCheck, Scale, FlaskConical,
 } from 'lucide-react'
 import { API } from '@/lib/utils'
+import { SignalQualityCard } from '@/components/history/SignalQualityCard'
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') + '/api'
 
@@ -337,7 +338,8 @@ export default function HomePage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="history">
+          <TabsContent value="history" className="space-y-6">
+            <SignalQualityCard />
             <Card className="shadow-lg shadow-slate-900/5">
               <CardHeader>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
