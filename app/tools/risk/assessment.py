@@ -19,6 +19,7 @@ from app.analysis.risk import (
     var_historical,
     volatility_percentile,
 )
+from app.config import get_settings
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -80,8 +81,9 @@ def _assess_symbol(symbol: str, data: dict) -> dict[str, Any]:
     benchmark_history = _get_benchmark_history(data)
     stock_returns, benchmark_returns = _paired_returns(hist, benchmark_history)
     beta = calculate_beta(stock_returns, benchmark_returns)
+    risk_free = get_settings().risk_free_rate_annual
     relative = (
-        relative_risk_metrics(stock_returns, benchmark_returns)
+        relative_risk_metrics(stock_returns, benchmark_returns, risk_free_rate_annual=risk_free)
         if benchmark_returns is not None
         else {}
     )
@@ -109,6 +111,9 @@ def _assess_symbol(symbol: str, data: dict) -> dict[str, Any]:
             "beta": relative.get("beta", beta),
             "beta_status": beta_status,
             "alpha_annualized": relative.get("alpha_annualized"),
+            "alpha_risk_free_rate_annual": (
+                round(risk_free, 4) if benchmark_returns is not None else None
+            ),
             "r_squared": relative.get("r_squared"),
             "correlation": relative.get("correlation"),
         },

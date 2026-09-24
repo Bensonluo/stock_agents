@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     report_llm_timeout: float = 60.0
     # LLM semantic per-article news scoring (keyword scorer stays the floor)
     llm_sentiment_enabled: bool = False
+    # Jensen's alpha risk-free rate (annualized, cash T-bill level; alpha only)
+    risk_free_rate_annual: float = 0.04
     # Eval harness: LLM-as-judge opt-in (deterministic rubric is always on in tests)
     eval_llm_judge: bool = False
 

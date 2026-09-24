@@ -89,6 +89,60 @@ class TestRelativeMetrics:
         assert calculate_beta(np.full(10, 0.01), np.full(10, 0.01)) is None
 
 
+class TestJensenAlpha:
+    """Jensen's alpha above a configurable risk-free rate."""
+
+    def _pair(self, n: int = 40) -> tuple[np.ndarray, np.ndarray]:
+        benchmark = np.array([0.01 if i % 2 == 0 else -0.01 for i in range(n)])
+        stock = benchmark * 2 + 0.001  # beta 2, constant daily edge over beta
+        return stock, benchmark
+
+    def test_default_rf_zero_is_bit_for_bit_old_alpha(self) -> None:
+        stock, benchmark = self._pair()
+
+        assert relative_risk_metrics(stock, benchmark) == relative_risk_metrics(
+            stock, benchmark, risk_free_rate_annual=0.0
+        )
+
+    def test_hand_computed_jensen_alpha(self) -> None:
+        stock, benchmark = self._pair()
+
+        metrics = relative_risk_metrics(stock, benchmark, risk_free_rate_annual=0.04)
+
+        # Raw alpha = 0.001 * 252 = 0.252; Jensen = 0.252 - 0.04 * (1 - 2) = 0.292
+        assert metrics["beta"] == pytest.approx(2.0, abs=1e-6)
+        assert metrics["alpha_annualized"] == pytest.approx(0.292, abs=1e-4)
+
+    def test_beta_one_leaves_alpha_rf_invariant(self) -> None:
+        _stock, benchmark = self._pair()
+        beta_one = benchmark + 0.0005
+
+        raw = relative_risk_metrics(beta_one, benchmark)
+        jensen = relative_risk_metrics(beta_one, benchmark, risk_free_rate_annual=0.04)
+
+        assert raw["beta"] == pytest.approx(1.0, abs=1e-6)
+        assert jensen["alpha_annualized"] == pytest.approx(raw["alpha_annualized"], abs=1e-6)
+
+    def test_assess_symbol_wires_settings_rf(self, monkeypatch) -> None:
+        from app.tools.risk import assessment
+
+        class _Settings:
+            risk_free_rate_annual = 0.04
+
+        monkeypatch.setattr(assessment, "get_settings", lambda: _Settings())
+        stock, benchmark = self._pair()
+        result = assessment._assess_symbol(
+            "TEST",
+            {
+                "historical_data": _history(stock),
+                "benchmark_historical_data": _history(benchmark),
+            },
+        )
+
+        assert result["metrics"]["alpha_annualized"] == pytest.approx(0.292, abs=1e-4)
+        assert result["metrics"]["alpha_risk_free_rate_annual"] == 0.04
+
+
 class TestStressAndPortfolio:
     def test_stress_scenarios_scale_with_beta(self) -> None:
         stress = stress_scenarios(1.5)

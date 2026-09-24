@@ -159,9 +159,18 @@ def calculate_beta(
 
 
 def relative_risk_metrics(
-    stock_returns: np.ndarray, benchmark_returns: np.ndarray
+    stock_returns: np.ndarray,
+    benchmark_returns: np.ndarray,
+    *,
+    risk_free_rate_annual: float = 0.0,
 ) -> dict[str, float | None]:
-    """Beta, annualized alpha, R² and correlation from paired returns.
+    """Beta, annualized alpha (Jensen's), R² and correlation from paired returns.
+
+    Alpha uses the textbook excess-return form: mean(R_stock − R_f) −
+    beta · mean(R_bench − R_f), annualized by 252 — equivalently the old
+    raw alpha minus ``risk_free_rate_annual · (1 − beta)``. With the default
+    ``risk_free_rate_annual=0.0`` every value is bit-identical to the
+    raw-return alpha; with beta = 1 the two definitions coincide.
 
     Any metric whose evidence is inadequate comes back as None instead of a
     default value.
@@ -178,8 +187,10 @@ def relative_risk_metrics(
         return {"beta": None, "alpha_annualized": None, "r_squared": None, "correlation": None}
 
     correlation = float(np.corrcoef(stock, benchmark)[0, 1])
-    # Annualized excess of the stock over what beta explains of the benchmark.
-    alpha = float((np.mean(stock) - beta * np.mean(benchmark)) * 252)
+    # Annualized excess of the stock over what beta explains of the benchmark,
+    # both measured above the risk-free rate.
+    daily_rf = float(risk_free_rate_annual) / 252.0
+    alpha = float((np.mean(stock) - daily_rf - beta * (np.mean(benchmark) - daily_rf)) * 252)
 
     return {
         "beta": round(beta, 4),
