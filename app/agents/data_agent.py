@@ -40,6 +40,30 @@ def _yfinance_debt_to_equity_ratio(value: Any) -> float | None:
     return float(value) / 100.0
 
 
+def _pct_to_ratio(value: Any) -> float | None:
+    """Convert an AkShare percentage (31.0 for 31%) to a decimal ratio."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:  # NaN — AkShare marks missing periods this way
+        return None
+    return number / 100.0
+
+
+def _debt_to_equity_from_asset_ratio(pct: Any) -> float | None:
+    """Debt/equity from AkShare's debt-to-ASSETS percentage.
+
+    D/E = (D/A) / (1 − D/A) — the same balance sheet, converted because the
+    scoring thresholds are equity-based. A ratio of 0 or ≥ 1 means wiped-out
+    equity: D/E is undefined there, not merely huge.
+    """
+    fraction = _pct_to_ratio(pct)
+    if fraction is None or not 0.0 < fraction < 1.0:
+        return None
+    return fraction / (1.0 - fraction)
+
+
 def convert_to_yahoo_symbol(symbol: str) -> str:
     """Convert local symbol format to Yahoo Finance format.
 
@@ -337,11 +361,16 @@ def _sync_fetch_akshare_financials(symbol: str, ak) -> dict[str, Any] | None:
     return {
         "symbol": symbol,
         "metrics": {
-            "roe": latest.get("净资产收益率"),
-            "roa": latest.get("总资产净利率"),
-            "gross_margin": latest.get("销售毛利率"),
-            "net_margin": latest.get("销售净利率"),
-            "debt_to_asset": latest.get("资产负债率"),
+            # Canonical names + ratio units — the same keys and thresholds
+            # the yfinance path emits and scoring.py buckets. The old renamed
+            # keys (net_margin) scored zero, and percent-valued ROE maxed
+            # every threshold it touched.
+            "roe": _pct_to_ratio(latest.get("净资产收益率")),
+            "roa": _pct_to_ratio(latest.get("总资产净利率")),
+            "gross_margin": _pct_to_ratio(latest.get("销售毛利率")),
+            "profit_margin": _pct_to_ratio(latest.get("销售净利率")),
+            "debt_to_asset": _pct_to_ratio(latest.get("资产负债率")),
+            "debt_to_equity": _debt_to_equity_from_asset_ratio(latest.get("资产负债率")),
             "current_ratio": latest.get("流动比率"),
             "quick_ratio": latest.get("速动比率"),
         },

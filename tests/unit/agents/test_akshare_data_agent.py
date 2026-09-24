@@ -17,7 +17,13 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from app.agents.data_agent import AkShareDataAgent
+from app.agents.data_agent import (
+    AkShareDataAgent,
+    _debt_to_equity_from_asset_ratio,
+    _pct_to_ratio,
+    _sync_fetch_akshare_financials,
+)
+from app.analysis.fundamental.scoring import analyze_fundamental_scoring
 
 pytestmark = pytest.mark.asyncio
 
@@ -263,3 +269,47 @@ class TestConcurrentPerSymbolFetch:
 
         assert list(result["market_data"]) == symbols
         assert list(result["financial_data"]) == symbols
+
+
+async def test_financial_metrics_use_canonical_names_and_ratio_units() -> None:
+    """CN financials must speak the same keys/units as the yfinance path."""
+    metrics = _sync_fetch_akshare_financials("600519", _FakeAk())["metrics"]
+
+    assert metrics["roe"] == 0.31  # 31% as a ratio, not the raw percent
+    assert metrics["roa"] == 0.19
+    assert metrics["gross_margin"] == 0.91
+    assert metrics["profit_margin"] == 0.49  # canonical name, not net_margin
+    assert metrics["debt_to_asset"] == 0.21
+    assert metrics["debt_to_equity"] == pytest.approx(0.21 / 0.79)
+    assert metrics["current_ratio"] == 4.2
+    assert "net_margin" not in metrics
+
+
+async def test_debt_to_equity_conversion_edges() -> None:
+    assert _debt_to_equity_from_asset_ratio(50.0) == 1.0
+    assert _debt_to_equity_from_asset_ratio(100.0) is None  # wiped-out equity
+    assert _debt_to_equity_from_asset_ratio(0.0) is None
+    assert _debt_to_equity_from_asset_ratio(None) is None
+    assert _pct_to_ratio(float("nan")) is None  # AkShare missing periods
+    assert _pct_to_ratio("--") is None
+
+
+async def test_canonical_cn_metrics_actually_score() -> None:
+    """Mapped keys must land in scoring buckets — renamed keys scored zero."""
+    metrics = _sync_fetch_akshare_financials("600519", _FakeAk())["metrics"]
+
+    result = analyze_fundamental_scoring({"600519": {"metrics": metrics}})["600519"]
+
+    # roe 0.31 -> 40, roa 0.19 -> 20, profit_margin 0.49 -> 20
+    assert result["profitability"]["score"] == 80
+    # d/e 0.266 -> 40, current 4.2 -> 30, quick 3.9 -> 30
+    assert result["financial_health"]["score"] == 100
+
+
+async def test_ratio_units_land_in_the_right_bucket() -> None:
+    """8% ROE is a +10 bucket as 0.08; the raw percent 8.0 maxed every tier."""
+    scored = analyze_fundamental_scoring({"S": {"metrics": {"roe": _pct_to_ratio(8.0)}}})
+
+    profitability = scored["S"]["profitability"]
+    assert profitability["score"] == 10
+    assert profitability["details"] == {"roe": 0.08}
