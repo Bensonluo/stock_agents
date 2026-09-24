@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+from time import monotonic
 from typing import Any
 
 import pandas as pd
 import pytest
 
+import app.services.ic_service as ic_service_module
 from app.services.ic_service import (
+    REPLAY_SERIES_TTL,
     evaluate_confidence_calibration,
     evaluate_decision_ic,
     evaluate_ic_decay,
@@ -400,3 +403,65 @@ class TestConfidenceCalibration:
             await evaluate_confidence_calibration(
                 horizon_bars=0, records=[], fetch_history=_fetcher({})
             )
+
+
+class TestReplaySeriesCache:
+    """Production-path caching over the shared fetcher — daily data needs
+    no per-view freshness, but failures must never be remembered."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_cache(self):
+        ic_service_module._replay_cache.clear()
+        yield
+        ic_service_module._replay_cache.clear()
+
+    async def test_second_call_hits_the_cache(self, monkeypatch) -> None:
+        calls: list[tuple[str, str]] = []
+
+        async def fake_fetch(symbol: str, period: str) -> dict[str, Any]:
+            calls.append((symbol, period))
+            return {"dates": ["2026-01-01"], "close": [100.0]}
+
+        monkeypatch.setattr(ic_service_module, "fetch_historical", fake_fetch)
+        first = await ic_service_module._cached_default_fetch("AAPL")
+        second = await ic_service_module._cached_default_fetch("AAPL")
+        assert first is second  # same object — a hit, not a refetch
+        assert calls == [("AAPL", "5y")]
+
+    async def test_expired_entry_refetches(self, monkeypatch) -> None:
+        calls: list[str] = []
+
+        async def fake_fetch(symbol: str, period: str) -> dict[str, Any]:
+            calls.append(symbol)
+            return {"dates": ["2026-01-01"], "close": [100.0]}
+
+        monkeypatch.setattr(ic_service_module, "fetch_historical", fake_fetch)
+        ic_service_module._replay_cache["AAPL"] = (
+            monotonic() - (REPLAY_SERIES_TTL + 1),
+            {"dates": ["2025-01-01"], "close": [50.0]},
+        )
+        data = await ic_service_module._cached_default_fetch("AAPL")
+        assert calls == ["AAPL"]  # stale entry discarded, refetched
+        assert data["dates"] == ["2026-01-01"]
+
+    async def test_failure_is_never_cached(self, monkeypatch) -> None:
+        calls: list[str] = []
+
+        async def fake_fetch(symbol: str, period: str) -> dict[str, Any] | None:
+            calls.append(symbol)
+            return None
+
+        monkeypatch.setattr(ic_service_module, "fetch_historical", fake_fetch)
+        assert await ic_service_module._cached_default_fetch("AAPL") is None
+        assert await ic_service_module._cached_default_fetch("AAPL") is None
+        # A transient outage must not poison 30 minutes of replays.
+        assert calls == ["AAPL", "AAPL"]
+        assert "AAPL" not in ic_service_module._replay_cache
+
+    async def test_injected_fetchers_bypass_the_cache(self) -> None:
+        # records provided + no fetcher -> pass-through default; the caching
+        # path engages only on the production (DB) branch, so test doubles
+        # can never leak results across tests through the global cache.
+        records, fetcher = ic_service_module._resolve_inputs([], 10, None)
+        assert records == []
+        assert fetcher is not ic_service_module._cached_default_fetch

@@ -10,8 +10,9 @@ The replay core is horizon-generic: one pass over the records computes
 entry bars once and evaluates every requested horizon against the same
 fetched series, so the decay curve (IC as the forward window lengthens)
 costs no extra network work. Price history is fetched once per unique
-symbol (the shared fetcher cache applies on top) and injected fetchers
-keep the service testable offline.
+symbol per call, and the production path sits on a 30-min service cache
+(``_cached_default_fetch``) — daily data needs no per-view freshness.
+Injected fetchers bypass that cache and keep the service testable offline.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from __future__ import annotations
 import json
 from bisect import bisect_left
 from collections.abc import Awaitable, Callable
+from time import monotonic
 from typing import Any
 
 from app.analysis.forecast_calibration import (
@@ -60,6 +62,15 @@ CALIBRATION_CAVEAT = (
     "Brier here measures how far it is from behaving like one."
 )
 
+# Replay price fetches are evaluation reads of daily data. The shared
+# fetcher's 60s TTL is a freshness budget for live analysis; applying it
+# here would refetch every symbol's 5y history on each panel view (the
+# quality card alone fires three replay endpoints). Cache at the service
+# layer instead. Failures are never cached — a transient fetch outage
+# must not poison 30 minutes of replays.
+REPLAY_SERIES_TTL = 1800.0
+_replay_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+
 HistoryFetcher = Callable[[str], Awaitable[dict[str, Any] | None]]
 
 # Per-horizon replay accumulators.
@@ -70,6 +81,23 @@ def _new_bucket() -> _Bucket:
     return {"evaluated": [], "pending": 0, "skipped": 0, "dimension_ics": {}}
 
 
+async def _cached_default_fetch(symbol: str) -> dict[str, Any] | None:
+    """Production fetch path: 30-min service cache over the shared fetcher.
+
+    Injected fetchers (tests) never pass through here — a global cache over
+    test doubles would leak results across tests. Only successful fetches
+    are cached; ``None`` retries on the next call.
+    """
+    now = monotonic()
+    hit = _replay_cache.get(symbol)
+    if hit is not None and now - hit[0] < REPLAY_SERIES_TTL:
+        return hit[1]
+    data = await fetch_historical(symbol, IC_HISTORY_PERIOD)
+    if data is not None:
+        _replay_cache[symbol] = (now, data)
+    return data
+
+
 def _resolve_inputs(
     records: list[AnalysisRecord] | None,
     limit: int,
@@ -77,8 +105,10 @@ def _resolve_inputs(
 ) -> tuple[list[AnalysisRecord], HistoryFetcher]:
     if records is None:
         records = get_database().list_records(status="completed", limit=limit)
-    if fetch_history is None:
-
+        fetch_history = _cached_default_fetch
+    elif fetch_history is None:
+        # Pre-fetched records but no fetcher (offline tests): keep the
+        # pass-through default rather than the caching path.
         async def _default_fetch(symbol: str) -> dict[str, Any] | None:
             return await fetch_historical(symbol, IC_HISTORY_PERIOD)
 
