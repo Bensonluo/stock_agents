@@ -21,6 +21,7 @@ const AGENTS = [
   { key: 'fundamental_analysis', name: 'Fundamental Analysis', icon: BarChart3 },
   { key: 'sentiment_analysis', name: 'Sentiment Analysis', icon: MessageSquare },
   { key: 'risk_assessment', name: 'Risk Assessment', icon: Shield },
+  { key: 'research_synthesis', name: 'Research Synthesis', icon: Zap },
   { key: 'decision_making', name: 'Decision Making', icon: Brain },
   { key: 'report_generation', name: 'Report Generation', icon: FileText },
 ]
@@ -38,6 +39,7 @@ interface WorkflowState {
   status: string
   agents: Record<string, AgentState>
   current_agent: string | null
+  running_agents?: string[]
   progress: number
   updated_at: string
 }
@@ -319,6 +321,21 @@ function PipelineMonitor({ threadId }: { threadId: string }) {
           </CardHeader>
           <CardContent>
             <Progress value={workflow.progress} className="h-2" />
+            {(workflow.running_agents?.length ?? 0) > 1 && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  并行执行中 · {workflow.running_agents!.length} 个智能体
+                </span>
+                {workflow.running_agents!.map(a => (
+                  <span
+                    key={a}
+                    className="px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-xs text-blue-600"
+                  >
+                    {AGENTS.find(x => x.key === a)?.name || a}
+                  </span>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

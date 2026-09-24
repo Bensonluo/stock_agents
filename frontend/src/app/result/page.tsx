@@ -76,6 +76,7 @@ const AGENT_NAMES: Record<string, string> = {
   fundamental_analysis: '基本面分析',
   sentiment_analysis: '情绪分析',
   risk_assessment: '风险评估',
+  research_synthesis: '研究综合',
   decision_making: '决策制定',
   report_generation: '报告生成'
 }
@@ -87,6 +88,7 @@ const AGENT_ICONS: Record<string, any> = {
   fundamental_analysis: PieChart,
   sentiment_analysis: Newspaper,
   risk_assessment: Shield,
+  research_synthesis: Zap,
   decision_making: Brain,
   report_generation: FileText
 }
