@@ -308,8 +308,10 @@ class DecisionMakingAgent(StatelessAgent):
         """
         warnings = []
 
-        # Low confidence warning
-        if confidence < 50:
+        # Low confidence warning (confidence is 0-1 from derive_recommendation;
+        # the old < 50 threshold compared against a 0-100 scale that no longer
+        # exists, so the warning fired on every decision and meant nothing)
+        if confidence < 0.5:
             warnings.append(
                 "Low confidence in this recommendation. Consider waiting for clearer signals."
             )
@@ -367,7 +369,7 @@ class DecisionMakingAgent(StatelessAgent):
             for symbol, decision in decisions.items():
                 summary_parts.append(
                     f"{symbol}: {decision['action']} "
-                    f"(confidence: {decision['confidence']:.0f}%, "
+                    f"(confidence: {decision['confidence']:.0f%}, "
                     f"score: {decision['score']:.0f})"
                 )
 

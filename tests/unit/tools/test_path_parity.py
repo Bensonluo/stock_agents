@@ -177,3 +177,67 @@ class TestDecisionParity:
         assert decision["action"] == canonical["action"]
         assert decision["confidence"] == canonical["confidence"]
         assert decision["score"] == canonical["composite_score"]
+
+
+class TestStaleConfidenceCap:
+    """Stale bars cap decision conviction inside the shared formula."""
+
+    def _decide(self, technical: dict) -> dict:
+        from app.services.report_service import derive_recommendation
+
+        fundamental = analyze_fundamental_scoring(
+            {"TEST": _financial()}, {"TEST": {"current_price": 150.0}}
+        )["TEST"]
+        return derive_recommendation(
+            "TEST",
+            fundamental,
+            technical,
+            {"sentiment": "positive", "score": 22},
+            {"risk_level": "medium", "position_recommendation": {"max_position_size": 10}},
+        )
+
+    def test_stale_bars_cap_confidence_not_action(self) -> None:
+        fresh = self._decide({"signals": {"trend": "bullish"}, "sentiment": {"score": 35}})
+        stale = self._decide(
+            {
+                "signals": {"trend": "bullish"},
+                "sentiment": {"score": 35},
+                "freshness": {"as_of": "2026-01-10", "age_days": 250, "stale": True},
+            }
+        )
+
+        assert stale["action"] == fresh["action"]  # the view stands, dated
+        assert stale["confidence"] == 0.4
+        assert fresh["confidence"] > 0.4  # every band floor (0.5) clears the cap
+        assert "stale" in stale["reasoning"]
+
+    def test_fresh_freshness_leaves_confidence_untouched(self) -> None:
+        base = self._decide({"signals": {"trend": "bullish"}, "sentiment": {"score": 35}})
+        fresh = self._decide(
+            {
+                "signals": {"trend": "bullish"},
+                "sentiment": {"score": 35},
+                "freshness": {"as_of": "2026-09-24", "age_days": 0, "stale": False},
+            }
+        )
+
+        assert fresh == base  # annotation must not perturb the formula
+
+
+class TestDecisionWarnings:
+    """Warnings consume the 0-1 confidence scale the formula actually emits."""
+
+    def _warnings(self, confidence: float) -> list[str]:
+        module = _load_agent_module("decision_agent.py", "decision_agent_warnings")
+        agent = module.DecisionMakingAgent()
+        return agent._generate_decision_warnings("buy", {}, confidence)
+
+    def test_normal_confidence_is_quiet(self) -> None:
+        assert not any("Low confidence" in w for w in self._warnings(0.72))
+
+    def test_hold_band_floor_is_quiet(self) -> None:
+        assert not any("Low confidence" in w for w in self._warnings(0.5))
+
+    def test_stale_cap_and_degraded_paths_warn(self) -> None:
+        assert any("Low confidence" in w for w in self._warnings(0.4))  # stale cap
+        assert any("Low confidence" in w for w in self._warnings(0.0))  # degraded hold

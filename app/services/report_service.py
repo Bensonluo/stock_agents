@@ -518,6 +518,13 @@ def _risk_to_score(risk_level: str) -> int:
     }.get(str(risk_level).lower(), 50)
 
 
+# Signals computed on stale bars (suspension, broken feed) cannot support
+# full conviction. The composite still reflects the bars' own date; the
+# cap makes the recommendation say "dated view", and pushes confidence
+# below the low-confidence warning threshold.
+STALE_CONFIDENCE_CAP = 0.4
+
+
 def derive_recommendation(
     symbol: str,
     fundamental: dict,
@@ -573,6 +580,14 @@ def derive_recommendation(
         f"technical {tech_trend}/{tech_score:+.0f}, "
         f"sentiment {sent_score:+.0f}, risk {risk_level})"
     )
+
+    # Stale price data caps conviction at both seams' shared formula so the
+    # pipeline decision agent and the ReAct report path stay in agreement.
+    # Fresh or absent freshness leaves confidence untouched.
+    freshness = technical.get("freshness") or {}
+    if freshness.get("stale"):
+        confidence = min(confidence, STALE_CONFIDENCE_CAP)
+        reasoning += f"; price data stale as of {freshness.get('as_of', 'unknown date')}"
 
     return {
         "action": action,
