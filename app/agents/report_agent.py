@@ -89,6 +89,10 @@ class ReportGenerationAgent(StatelessAgent):
             "executive_summary": executive_summary,
             "sections": sections,
             "llm_report": llm_report,
+            # The decision agent's LLM synthesis (regime-aware since
+            # iteration 77) used to die in state — nothing read it. It is
+            # narrative only; every number below stays deterministic.
+            "decision_synthesis": state.get("decision", {}).get("llm_summary") or None,
             "metadata": {
                 "symbols": symbols,
                 "query": query,

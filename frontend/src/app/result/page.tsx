@@ -948,6 +948,16 @@ function ReactReport({ answer, report: structuredReport }: {
         )
       })()}
 
+      {/* 决策综合叙事（LLM · 市场状态感知，纯叙事不改数字） */}
+      {report.decision_synthesis?.synthesis && (
+        <div className="p-4 border border-indigo-100 bg-indigo-50/50 rounded-lg">
+          <p className="text-xs font-medium text-indigo-600 mb-1">
+            决策综合{report.decision_synthesis.top_pick ? ` · 首选 ${report.decision_synthesis.top_pick}` : ''}
+          </p>
+          <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">{report.decision_synthesis.synthesis}</p>
+        </div>
+      )}
+
       {/* 市场概览 */}
       {filterEntries(overviewEntries).length > 0 && (
         <SectionCard icon={Database} title="市场概览">

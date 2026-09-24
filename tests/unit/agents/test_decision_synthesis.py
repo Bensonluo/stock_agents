@@ -9,9 +9,11 @@ rendering and the top_pick tie-break.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
-from app.agents.decision_agent import DecisionMakingAgent
+from app.agents.decision_agent import DecisionMakingAgent, _market_context_line
 
 pytestmark = pytest.mark.asyncio
 
@@ -73,3 +75,84 @@ async def test_portfolio_summary_counts_zero_evidence_holds() -> None:
     assert summary["hold_recommendations"] == 1
     assert summary["buy_recommendations"] == 1
     assert summary["avg_confidence"] == pytest.approx(0.4)
+
+
+_REGIME = {
+    "status": "ok",
+    "bars": 300,
+    "trend": "bull",
+    "volatility_regime": "elevated",
+    "drawdown_from_52w_high": -0.0312,
+    "price_vs_sma200": 0.0641,
+    "vol_ratio_20d_vs_full": 1.4,
+}
+
+
+class TestRegimeAwareSynthesis:
+    async def test_market_context_line_renders_the_regime(self) -> None:
+        line = _market_context_line(_REGIME)
+
+        assert line is not None
+        assert "uptrend" in line
+        assert "+6.4%" in line
+        assert "elevated" in line
+        assert "1.4x" in line
+        assert "3.1%" in line
+
+    def test_market_context_refuses_unknown_regimes(self) -> None:
+        assert _market_context_line(None) is None
+        assert _market_context_line({"status": "insufficient_history"}) is None
+        # ok block with nothing classifiable to say
+        assert _market_context_line({"status": "ok", "bars": 70}) is None
+
+    async def test_synthesis_prompt_carries_market_context(self) -> None:
+        agent, stub = _agent_with_stub()
+
+        await agent._llm_decision_synthesis(
+            {"AAA": {"action": "buy", "confidence": 0.7, "score": 72.0}}, _REGIME
+        )
+
+        assert "Market context:" in stub.prompts[0]
+        assert "uptrend" in stub.prompts[0]
+
+    async def test_synthesis_prompt_without_regime_is_unchanged(self) -> None:
+        agent, stub = _agent_with_stub()
+
+        await agent._llm_decision_synthesis(
+            {"AAA": {"action": "buy", "confidence": 0.7, "score": 72.0}}
+        )
+
+        assert "Market context" not in stub.prompts[0]
+
+    async def test_process_extracts_regime_from_risk_state(self) -> None:
+        agent, stub = _agent_with_stub()
+        agent.llm = stub  # make the synthesis branch fire
+        agent._make_decision = AsyncMock(
+            return_value={  # type: ignore[method-assign]
+                "symbol": "AAA",
+                "action": "buy",
+                "confidence": 0.7,
+                "score": 72.0,
+                "component_scores": {},
+                "position_size": {},
+                "price_targets": {},
+                "rationale": "",
+                "warnings": [],
+            }
+        )
+
+        result = await agent.process(
+            {
+                "symbols": ["AAA"],
+                "technical_analysis": {},
+                "fundamental_analysis": {},
+                "sentiment_analysis": {},
+                "risk_assessment": {
+                    "risk_by_symbol": {"AAA": {}},
+                    "market_regime": _REGIME,
+                },
+            }
+        )
+
+        assert result["llm_summary"]["synthesis"] == "Balanced portfolio summary."
+        assert "Market context:" in stub.prompts[0]

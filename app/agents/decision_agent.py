@@ -48,8 +48,10 @@ class DecisionMakingAgent(StatelessAgent):
         risk_assessment = state.get("risk_assessment", {})
         if risk_assessment and isinstance(risk_assessment, dict):
             risk = risk_assessment.get("risk_by_symbol", risk_assessment)
+            market_regime = risk_assessment.get("market_regime")
         else:
             risk = {}
+            market_regime = None
 
         if not symbols:
             logger.warning("No symbols for decision making")
@@ -96,7 +98,7 @@ class DecisionMakingAgent(StatelessAgent):
         # Use LLM for final decision synthesis if available
         llm_summary = None
         if self.llm and results:
-            llm_summary = await self._llm_decision_synthesis(results)
+            llm_summary = await self._llm_decision_synthesis(results, market_regime)
 
         return {
             "decisions": results,
@@ -377,11 +379,15 @@ class DecisionMakingAgent(StatelessAgent):
             "avg_confidence": sum(d["confidence"] for d in decisions.values()) / len(decisions),
         }
 
-    async def _llm_decision_synthesis(self, decisions: dict) -> dict[str, str]:
+    async def _llm_decision_synthesis(
+        self, decisions: dict, market_regime: dict | None = None
+    ) -> dict[str, str]:
         """Use LLM to synthesize decisions.
 
         Args:
             decisions: Decisions by symbol
+            market_regime: Benchmark regime block (iteration 76) — context
+                for the narrative, never an input to any score
 
         Returns:
             LLM synthesis
@@ -400,16 +406,19 @@ class DecisionMakingAgent(StatelessAgent):
                     f"score: {score_str})"
                 )
 
+            context = _market_context_line(market_regime)
+            context_block = f"{context}\n\n" if context else ""
+
             prompt = f"""Synthesize these investment decisions into a brief portfolio summary:
 
 {chr(10).join(summary_parts)}
 
-Provide:
+{context_block}Provide:
 1. Overall portfolio strategy (2-3 sentences)
 2. Top pick and reasoning
 3. Main risks to watch
 
-Keep it concise and actionable."""
+Keep it concise and actionable. Frame the strategy in the market context above when provided."""
 
             response = await self.invoke_llm(prompt)
 
@@ -428,3 +437,45 @@ Keep it concise and actionable."""
         except Exception as e:
             logger.error(f"LLM decision synthesis failed: {e}")
             return {}
+
+
+_TREND_WORDS = {"bull": "an uptrend", "bear": "a downtrend", "neutral": "a range"}
+_VOL_WORDS = {"elevated": "elevated", "calm": "calm", "normal": "normal"}
+
+
+def _market_context_line(regime: dict | None) -> str | None:
+    """One-line market context for the synthesis prompt; None when unknown.
+
+    Reads the iteration-76 regime block (annotation-only). Narrative
+    context for the LLM — deliberately NOT an input to any score,
+    weight, or position size.
+    """
+    if not isinstance(regime, dict) or regime.get("status") != "ok":
+        return None
+    parts: list[str] = []
+    trend = regime.get("trend")
+    if trend in _TREND_WORDS:
+        vs_sma = regime.get("price_vs_sma200")
+        detail = (
+            f" ({vs_sma:+.1%} vs its 200-day average)" if isinstance(vs_sma, int | float) else ""
+        )
+        parts.append(f"the benchmark is in {_TREND_WORDS[trend]}{detail}")
+    vol = regime.get("volatility_regime")
+    if vol in _VOL_WORDS:
+        ratio = regime.get("vol_ratio_20d_vs_full")
+        detail = (
+            f" (recent volatility {ratio:.1f}x the full-window level)"
+            if isinstance(ratio, int | float)
+            else ""
+        )
+        parts.append(f"volatility is {vol}{detail}")
+    drawdown = regime.get("drawdown_from_52w_high")
+    if isinstance(drawdown, int | float):
+        parts.append(f"{abs(drawdown):.1%} below its 52-week high")
+    if not parts:
+        return None
+    return (
+        f"Market context: benchmark series over {regime.get('bars', '?')} bars — "
+        + "; ".join(parts)
+        + "."
+    )

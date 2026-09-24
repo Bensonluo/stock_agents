@@ -110,3 +110,24 @@ class TestFinancialDataWiring:
         await _agent().process(state)
 
         assert captured["financial_data"] == {"AAPL": {"earnings_dates": [{"date": "2099-01-01"}]}}
+
+
+class TestDecisionSynthesisSurfacing:
+    async def test_decision_llm_summary_reaches_the_report(self):
+        """The synthesis used to die in state — nothing read the key."""
+        state = _state()
+        state["decision"]["llm_summary"] = {
+            "synthesis": "Cautious accumulation in an elevated-volatility tape.",
+            "top_pick": "AAPL",
+        }
+
+        report = await _agent().process(state)
+
+        assert report["decision_synthesis"] == {
+            "synthesis": "Cautious accumulation in an elevated-volatility tape.",
+            "top_pick": "AAPL",
+        }
+
+    async def test_missing_synthesis_passes_through_as_none(self):
+        report = await _agent().process(_state())
+        assert report["decision_synthesis"] is None
