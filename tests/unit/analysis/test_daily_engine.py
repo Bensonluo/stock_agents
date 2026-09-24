@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from datetime import UTC, datetime
 
 import pandas as pd
 import pytest
@@ -128,3 +129,76 @@ class TestDeduplication:
         assert tool_result["AAPL"]["indicators"] == direct["indicators"]
         assert tool_result["AAPL"]["signals"] == direct["signals"]
         assert tool_result["AAPL"]["sentiment"] == direct["sentiment"]
+
+
+class TestFreshness:
+    """Stale bars (suspension, broken feed) must be labeled, not silent."""
+
+    def _hist_ending(self, days_before_today: int, bars: int = 60) -> dict[str, list]:
+        end = pd.Timestamp(datetime.now(UTC).date()) - pd.Timedelta(days=days_before_today)
+        closes = [100.0 * (1.002**i) for i in range(bars)]
+        return {
+            "dates": [d.isoformat() for d in pd.bdate_range(end=end, periods=bars)],
+            "open": closes,
+            "high": [c * 1.01 for c in closes],
+            "low": [c * 0.99 for c in closes],
+            "close": closes,
+            "volume": [1_000_000.0] * bars,
+        }
+
+    def test_current_bars_not_stale(self) -> None:
+        result = analyze_daily(self._hist_ending(0), symbol="AAPL")
+        freshness = result["freshness"]
+
+        assert freshness["stale"] is False
+        assert freshness["age_days"] <= 4  # weekend + holiday slack
+        assert freshness["as_of"] == result["as_of"][:10]
+
+    def test_old_bars_flagged_stale(self) -> None:
+        result = analyze_daily(self._hist_ending(60), symbol="AAPL")
+
+        assert result["freshness"]["stale"] is True
+        assert result["freshness"]["age_days"] >= 55
+
+    def test_staleness_annotation_changes_no_signals(self) -> None:
+        fresh = analyze_daily(self._hist_ending(0), symbol="AAPL")
+        stale = analyze_daily(self._hist_ending(60), symbol="AAPL")
+
+        assert stale["status"] == "available"
+        assert stale["signals"] == fresh["signals"]
+        assert stale["sentiment"] == fresh["sentiment"]
+
+    def test_boundary_exactly_14_days_is_fresh(self) -> None:
+        from app.analysis.technical import assess_freshness
+
+        now = datetime(2026, 9, 24, tzinfo=UTC)
+        at_limit = assess_freshness(datetime(2026, 9, 10, tzinfo=UTC), now=now)
+        over_limit = assess_freshness(datetime(2026, 9, 9, tzinfo=UTC), now=now)
+
+        assert at_limit["stale"] is False
+        assert over_limit["stale"] is True
+
+
+class TestReportFreshness:
+    """The report's technical section must surface the stale flag."""
+
+    def _section(self, analysis: dict) -> dict:
+        from app.services.report_service import ReportService
+
+        return ReportService._technical({"symbols": ["X"], "technical_analysis": {"X": analysis}})
+
+    def test_stale_flag_reaches_report_section(self) -> None:
+        section = self._section(
+            {
+                "signals": {},
+                "sentiment": {"score": 0},
+                "freshness": {"as_of": "2026-01-10", "age_days": 250, "stale": True},
+            }
+        )
+
+        assert section["by_symbol"]["X"]["freshness"]["stale"] is True
+
+    def test_missing_freshness_omits_key(self) -> None:
+        section = self._section({"signals": {}, "sentiment": {"score": 0}})
+
+        assert "freshness" not in section["by_symbol"]["X"]

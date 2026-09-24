@@ -126,7 +126,7 @@ class ReportService:
             sentiment = analysis.get("sentiment", {})
             score = sentiment.get("score", 0)
             signals = analysis.get("signals", {})
-            by_symbol[symbol] = {
+            entry = {
                 "trend": signals.get("trend", "neutral"),
                 "rsi": signals.get("rsi", "neutral"),
                 "macd": signals.get("macd", "neutral"),
@@ -135,6 +135,12 @@ class ReportService:
                 "sentiment_score": score,
                 "weekly_trend": compact_weekly_view(analysis.get("weekly_sma")),
             }
+            # Stale feeds (suspension, broken source) must be visible in the
+            # final report, not silently presented as current signals.
+            freshness = analysis.get("freshness")
+            if freshness:
+                entry["freshness"] = freshness
+            by_symbol[symbol] = entry
             if score > 20:
                 bullish += 1
             elif score < -20:

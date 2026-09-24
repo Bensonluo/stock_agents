@@ -6,6 +6,7 @@ indicators both the pipeline agent and ReAct tools consume.
 
 from app.analysis.technical.daily import (
     analyze_daily,
+    assess_freshness,
     calculate_indicators,
     calculate_sentiment,
     find_support_resistance,
@@ -23,6 +24,7 @@ from app.analysis.technical.engine import (
 __all__ = [
     "WEEKLY_SMA_WINDOWS",
     "analyze_daily",
+    "assess_freshness",
     "calculate_indicators",
     "calculate_sentiment",
     "compact_weekly_view",

@@ -22,6 +22,27 @@ from app.domain.schemas import MetricEvidence
 # Below this many daily bars the daily indicators are meaningless.
 MIN_DAILY_BARS = 20
 
+# Bars older than this many calendar days mean the feed stopped updating
+# (suspension, delisting, broken source) — analysis must say so, not stay
+# silent. Normal gaps (weekends + holidays) stay well under it.
+STALE_AFTER_DAYS = 14
+
+
+def assess_freshness(
+    as_of: datetime,
+    *,
+    now: datetime | None = None,
+    stale_after_days: int = STALE_AFTER_DAYS,
+) -> dict[str, Any]:
+    """Classify bar age so stale feeds are visible, not silently current."""
+    reference = now or datetime.now(UTC)
+    age_days = (reference - as_of).days
+    return {
+        "as_of": as_of.date().isoformat(),
+        "age_days": age_days,
+        "stale": age_days > stale_after_days,
+    }
+
 
 def to_dataframe(hist: Mapping[str, Any]) -> pd.DataFrame:
     """Daily history dict -> OHLCV DataFrame indexed by date."""
@@ -312,6 +333,7 @@ def analyze_daily(
             current_price if current_price is not None else float(df["close"].iloc[-1])
         ),
         "as_of": as_of.isoformat(),
+        "freshness": assess_freshness(as_of),
         "indicators": indicators,
         "signals": signals,
         "support": support,
