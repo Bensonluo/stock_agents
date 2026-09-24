@@ -83,6 +83,23 @@ _RESERVED_STATE_KEYS = (
 )
 
 
+def _merge_symbol_maps(existing: dict, incoming: dict) -> dict:
+    """Merge agent output maps keyed by symbol (e.g. ``market_data``).
+
+    Incoming values win per symbol, but a symbol dict from the earlier pass
+    keeps keys the incoming pass did not set — the benchmark block the
+    yfinance agent attached survives AkShare replacing a CN symbol's data
+    wholesale, so beta keeps working on the merged A-share path.
+    """
+    merged = dict(existing)
+    for key, value in incoming.items():
+        old = merged.get(key)
+        merged[key] = (
+            {**old, **value} if isinstance(old, dict) and isinstance(value, dict) else value
+        )
+    return merged
+
+
 class MultiAgentOrchestrator:
     """Multi-agent orchestrator for stock analysis workflow.
 
@@ -669,7 +686,7 @@ class MultiAgentOrchestrator:
                     continue
                 existing = view.get(key)
                 if isinstance(existing, dict) and isinstance(value, dict):
-                    merged[key] = {**existing, **value}
+                    merged[key] = _merge_symbol_maps(existing, value)
                 else:
                     merged[key] = value
             return merged

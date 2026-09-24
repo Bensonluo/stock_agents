@@ -25,6 +25,41 @@ _akshare_semaphore = asyncio.Semaphore(5)
 # fetcher) — changing the warm-up horizon must not require two edits.
 from app.tools.data.fetcher import DEFAULT_HISTORY_DAYS, fetch_stock_data  # noqa: E402
 
+# Benchmarks for beta/alpha/R² regression in the risk stage, fetched once per
+# run (never per symbol): S&P 500 for international names, SSE Composite for
+# A-shares. Without these the risk engine can compute VaR/CVaR/volatility but
+# beta is permanently insufficient_data — the engine supported benchmarks all
+# along, the data layer just never supplied them.
+BENCHMARK_TICKERS = {"us": "^GSPC", "cn": "000001.SS"}
+
+# Two years of daily benchmark bars ≈ 500 observations — plenty for the
+# 20-return minimum the risk helpers enforce, and one index round-trip.
+BENCHMARK_HISTORY_PERIOD = "2y"
+
+
+def _benchmark_ticker_for(symbol: str) -> str:
+    """S&P 500 for international symbols; SSE Composite for 6-digit A-shares."""
+    if symbol.isdigit() and len(symbol) == 6:
+        return BENCHMARK_TICKERS["cn"]
+    return BENCHMARK_TICKERS["us"]
+
+
+def _sync_fetch_benchmark_history(yahoo_symbol: str) -> dict[str, Any] | None:
+    """Synchronous benchmark index history; None when the fetch yields nothing.
+
+    Returns a dates/close dict shaped exactly like a symbol's
+    ``historical_data`` block — what ``aligned_returns`` regresses against.
+    """
+    ticker = yf.Ticker(yahoo_symbol)
+    hist = ticker.history(period=BENCHMARK_HISTORY_PERIOD, interval="1d")
+    if hist.empty or "Close" not in hist.columns:
+        return None
+    dates = [d.strftime("%Y-%m-%d") for d in hist.index]
+    closes = [float(c) for c in hist["Close"].tolist()]
+    if not dates:
+        return None
+    return {"symbol": yahoo_symbol, "dates": dates, "close": closes}
+
 
 def _yfinance_debt_to_equity_ratio(value: Any) -> float | None:
     """Convert yfinance's percentage-valued debtToEquity to a decimal ratio."""
@@ -421,6 +456,18 @@ class DataCollectionAgent(BaseAgent):
         # Merge duplicate articles (same link/title) across symbol fetches
         news_data = _dedup_news(news_data)
 
+        # One benchmark series per represented market (max two extra
+        # round-trips per run) so the risk stage can regress beta/alpha/R².
+        # A failed fetch just leaves the key absent — beta degrades exactly
+        # as it did before benchmarks existed.
+        tickers = sorted({_benchmark_ticker_for(s) for s in symbols})
+        fetched = await asyncio.gather(*(self._fetch_benchmark_history(t) for t in tickers))
+        benchmarks = dict(zip(tickers, fetched))
+        for symbol, data in market_data.items():
+            bench = benchmarks.get(_benchmark_ticker_for(symbol))
+            if bench and data:
+                market_data[symbol]["benchmark_historical_data"] = bench
+
         logger.info(
             f"Collected data for {len(market_data)} symbols, " f"{len(news_data)} news items"
         )
@@ -498,6 +545,15 @@ class DataCollectionAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Error fetching market data for {symbol}: {e}")
             return {}
+
+    async def _fetch_benchmark_history(self, yahoo_symbol: str) -> dict[str, Any] | None:
+        """Benchmark history via the shared yfinance semaphore; None on failure."""
+        try:
+            async with _yfinance_semaphore:
+                return await asyncio.to_thread(_sync_fetch_benchmark_history, yahoo_symbol)
+        except Exception as e:
+            logger.warning(f"Benchmark history unavailable for {yahoo_symbol}: {e}")
+            return None
 
     async def _fetch_financial_data(self, symbol: str) -> dict[str, Any]:
         """Fetch financial data for a symbol.
