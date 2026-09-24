@@ -35,6 +35,7 @@ from app.tools.data.fetcher import (  # noqa: E402
     fetch_stock_data,
     sector_benchmark_ticker,
 )
+from app.tools.data.fetcher import dedup_news as _dedup_news  # noqa: E402
 
 
 def _yfinance_debt_to_equity_ratio(value: Any) -> float | None:
@@ -287,34 +288,6 @@ def _sync_fetch_news(yahoo_symbol: str, symbol: str) -> list[dict[str, Any]]:
             )
 
     return articles
-
-
-def _dedup_news(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Merge duplicate articles (same link, else title) across symbol fetches.
-
-    yfinance returns the same article under every related ticker, so a
-    multi-symbol run collects one copy per symbol; un-merged copies
-    double-count in score_news's mean and crowd the LLM's 5-headline
-    window. The first copy wins and absorbs later copies' related_symbols
-    so cross-symbol attribution survives the merge.
-    """
-    merged: dict[str, dict[str, Any]] = {}
-    order: list[str] = []
-    for article in articles:
-        key = article.get("link") or article.get("title")
-        if not key:
-            continue  # no link and no title: nothing to attribute or score
-        if key not in merged:
-            merged[key] = {**article}
-            order.append(key)
-        else:
-            kept = merged[key]
-            related = list(kept.get("related_symbols") or [])
-            for sym in article.get("related_symbols") or []:
-                if sym not in related:
-                    related.append(sym)
-            kept["related_symbols"] = related
-    return [merged[key] for key in order]
 
 
 def _sync_fetch_akshare_spot_table(ak):

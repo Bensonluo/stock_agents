@@ -183,7 +183,7 @@ def score_news(
         if article_scores is not None:
             score = int(article_scores[index])
         else:
-            text = (article.get("title", "") + " " + article.get("summary", "")).lower()
+            text = ((article.get("title") or "") + " " + (article.get("summary") or "")).lower()
             score = sum(1 for word in POSITIVE_WORDS if word in text) - sum(
                 1 for word in NEGATIVE_WORDS if word in text
             )

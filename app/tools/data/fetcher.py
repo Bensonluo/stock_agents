@@ -271,6 +271,97 @@ def fetch_cn_news(symbol: str) -> list[dict[str, Any]] | None:
     return articles or None
 
 
+def dedup_news(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge duplicate articles (same link, else title) across feeds/symbols.
+
+    yfinance returns the same article under every related ticker, and East
+    Money syndicates wire stories yfinance also carries, so multi-source
+    fetches collect one copy per source; un-merged copies double-count in
+    score_news's mean and crowd the LLM's 5-headline window. The first copy
+    wins and absorbs later copies' related_symbols so cross-symbol
+    attribution survives the merge. Shared by the pipeline's execute() and
+    the ReAct tools' fetch seam.
+    """
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for article in articles:
+        key = article.get("link") or article.get("title")
+        if not key:
+            continue  # no link and no title: nothing to attribute or score
+        if key not in merged:
+            merged[key] = {**article}
+            order.append(key)
+        else:
+            kept = merged[key]
+            related = list(kept.get("related_symbols") or [])
+            for sym in article.get("related_symbols") or []:
+                if sym not in related:
+                    related.append(sym)
+            kept["related_symbols"] = related
+    return [merged[key] for key in order]
+
+
+def yfinance_news_articles(items: list[dict[str, Any]], symbol: str) -> list[dict[str, Any]]:
+    """Map raw yfinance news items to the canonical article shape.
+
+    The pipeline's ``_sync_fetch_news`` and the fetcher's yfinance provider
+    consume the same raw items; the canonical keys (link/published/
+    related_symbols) are what recency decay and dedup read. Title-less
+    items are dropped — there is nothing to score or attribute.
+    """
+    articles: list[dict[str, Any]] = []
+    for item in items:
+        content = item.get("content", {})
+        title = content.get("title") or item.get("title")
+        if not title:
+            continue
+        link = None
+        if content.get("canonicalUrl"):
+            link = content["canonicalUrl"].get("url")
+        if not link and item.get("link"):
+            link = item.get("link")
+        provider = content.get("provider", {})
+        related = list(item.get("relatedTickers") or [])
+        if symbol not in related:
+            related.append(symbol)
+        articles.append(
+            {
+                "title": title,
+                "link": link,
+                "published": content.get("pubDate") or item.get("providerPublishTime"),
+                "source": provider.get("displayName") or item.get("publisher"),
+                "summary": content.get("summary") or item.get("summary"),
+                "related_symbols": related,
+                "original_symbol": symbol,
+            }
+        )
+    return articles
+
+
+def finnhub_news_articles(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Map Finnhub /company-news items to the canonical article shape.
+
+    Finnhub's raw keys (headline/url/datetime) are renamed to the canonical
+    ones so recency decay (parse_published reads epoch ints) and dedup (link
+    key) work without provider-specific branching downstream.
+    """
+    articles: list[dict[str, Any]] = []
+    for item in items:
+        title = item.get("headline")
+        if not title:
+            continue
+        articles.append(
+            {
+                "title": title,
+                "link": item.get("url"),
+                "published": item.get("datetime"),
+                "source": item.get("source"),
+                "summary": item.get("summary"),
+            }
+        )
+    return articles
+
+
 def _is_hk_symbol(symbol: str) -> bool:
     """HK-listed codes: '0700.HK'/'00700.HK' suffixed, or bare 4-5 digit
     zero-padded codes ('0700', '00700')."""
@@ -384,18 +475,7 @@ async def _yfinance_fetch(symbol: str) -> dict[str, Any] | None:
 
             news_data = []
             try:
-                for item in (ticker.news or [])[:10]:
-                    content = item.get("content", {})
-                    title = content.get("title") or item.get("title")
-                    if title:
-                        news_data.append(
-                            {
-                                "title": title,
-                                "summary": content.get("summary") or item.get("summary"),
-                                "source": (content.get("provider") or {}).get("displayName")
-                                or item.get("publisher"),
-                            }
-                        )
+                news_data = yfinance_news_articles((ticker.news or [])[:10], symbol)
             except Exception:
                 pass
 
@@ -1016,18 +1096,7 @@ async def _finnhub_fetch(symbol: str) -> dict[str, Any] | None:
         },
     }
 
-    news_data = []
-    if isinstance(news, list):
-        for item in news[:10]:
-            news_data.append(
-                {
-                    "title": item.get("headline"),
-                    "summary": item.get("summary"),
-                    "source": item.get("source"),
-                    "datetime": item.get("datetime"),
-                    "url": item.get("url"),
-                }
-            )
+    news_data = finnhub_news_articles(news[:10]) if isinstance(news, list) else []
 
     logger.info(f"[finnhub] OK for {symbol}")
     return {"market_data": market_data, "financial_data": financial_data, "news_data": news_data}

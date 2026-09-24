@@ -4,6 +4,7 @@ These wrap the existing analysis functions but automatically fetch data
 from the multi-source fetcher, so the LLM only needs to pass a symbol string.
 """
 
+import asyncio
 from typing import Any
 
 from langchain_core.tools import tool
@@ -39,7 +40,9 @@ from app.tools.analysis.technical import (
 from app.tools.data.fetcher import (
     BENCHMARK_TICKERS,
     benchmark_ticker_for,
+    dedup_news,
     fetch_benchmark_history,
+    fetch_cn_news,
     fetch_cn_sector_benchmark,
     fetch_historical,
     fetch_stock_data,
@@ -132,6 +135,26 @@ async def _attach_benchmark(market: dict[str, Any], symbol: str) -> dict[str, An
     return market
 
 
+async def _augment_news(symbol: str, articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """ReAct news seam: East Money feed for A-shares + cross-source dedup.
+
+    A-shares get the native CN feed appended (yfinance covers them sparsely
+    and in English); the merged list then folds cross-source syndication
+    through the same first-copy-wins dedup the pipeline's execute() applies,
+    so both paths score one copy per story.
+    """
+    combined = list(articles)
+    if symbol.isdigit() and len(symbol) == 6:
+        try:
+            cn_articles = await asyncio.to_thread(fetch_cn_news, symbol)
+        except Exception as e:
+            logger.warning(f"[auto_tools] CN news feed failed for {symbol}: {e}")
+            cn_articles = None
+        if cn_articles:
+            combined = combined + cn_articles
+    return dedup_news(combined)
+
+
 async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
     """Fetch stock data and split into components.
 
@@ -191,7 +214,7 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
             return {
                 "market_data": {symbol: await _attach_benchmark(market, symbol)},
                 "financial_data": {symbol: {}},
-                "news_data": [],
+                "news_data": await _augment_news(symbol, []),
             }
         return None
 
@@ -220,7 +243,7 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
     return {
         "market_data": {symbol: await _attach_benchmark(market, symbol)},
         "financial_data": {symbol: data.get("financial_data", {})},
-        "news_data": data.get("news_data", []),
+        "news_data": await _augment_news(symbol, data.get("news_data", [])),
     }
 
 
