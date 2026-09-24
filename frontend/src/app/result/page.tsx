@@ -1216,7 +1216,7 @@ function ReactReport({ answer, report: structuredReport }: {
                     {hasMetrics && (
                       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                         {r.beta != null && (
-                          <div className="flex justify-between"><span className="text-slate-500">β（大盘）</span><span className="font-medium">{formatNumber(r.beta, 2)}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500">β（大盘）</span><span className="font-medium">{formatNumber(r.beta, 2)}{r.beta_ci_95_low != null && r.beta_ci_95_high != null && <span className="ml-1 font-normal text-slate-400">CI {formatNumber(r.beta_ci_95_low, 2)}–{formatNumber(r.beta_ci_95_high, 2)}</span>}</span></div>
                         )}
                         {r.volatility != null && (
                           <div className="flex justify-between"><span className="text-slate-500">年化波动率</span><span className="font-medium">{formatPercent(r.volatility)}</span></div>

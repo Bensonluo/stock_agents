@@ -257,6 +257,8 @@ class ReportService:
                 "risk_level": analysis.get("risk_level", "medium"),
                 "risk_score": score,
                 "beta": metrics.get("beta"),
+                "beta_ci_95_low": metrics.get("beta_ci_95_low"),
+                "beta_ci_95_high": metrics.get("beta_ci_95_high"),
                 "volatility": metrics.get("volatility_annualized"),
                 "var_95": metrics.get("var_95"),
                 "max_drawdown": metrics.get("max_drawdown"),

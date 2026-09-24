@@ -20,6 +20,10 @@ from app.domain.schemas import MetricEvidence
 
 # Beta/alpha need at least this many aligned return observations.
 MIN_BETA_OBSERVATIONS = 20
+# Bootstrap replications for the beta confidence interval. 1000 is the
+# standard adequacy point for a 95% percentile interval (tail quantities
+# would need an order of magnitude more, but this interval is central).
+BOOTSTRAP_ITERATIONS = 1000
 # Rolling window (days) for the short-term volatility regime percentile.
 VOL_REGIME_WINDOW = 20
 # Liquidity: trailing days averaged into ADV, and the minimum overlapping
@@ -162,6 +166,54 @@ def calculate_beta(
     return float(beta) if np.isfinite(beta) else None
 
 
+def bootstrap_beta_ci(
+    stock_returns: np.ndarray,
+    benchmark_returns: np.ndarray,
+    *,
+    iterations: int = BOOTSTRAP_ITERATIONS,
+    seed: int = 42,
+    min_observations: int = MIN_BETA_OBSERVATIONS,
+) -> tuple[float, float] | None:
+    """Percentile bootstrap 95% confidence interval for beta.
+
+    (stock, benchmark) pairs are resampled JOINTLY, with replacement, so the
+    correlation structure that beta measures survives the resampling. The
+    seed defaults to a fixed value: the interval is a numerical property of
+    the data, and a deterministic function of the input keeps reports and
+    tests reproducible run over run.
+    """
+    stock = np.asarray(stock_returns, dtype=float)
+    benchmark = np.asarray(benchmark_returns, dtype=float)
+    if stock.ndim != 1 or benchmark.ndim != 1 or len(stock) != len(benchmark):
+        return None
+    finite = np.isfinite(stock) & np.isfinite(benchmark)
+    stock, benchmark = stock[finite], benchmark[finite]
+    if len(stock) < min_observations:
+        return None
+    if float(np.var(benchmark, ddof=1)) <= np.finfo(float).eps:
+        return None  # the same degeneracy that voids the point estimate
+
+    rng = np.random.default_rng(seed)
+    n = len(stock)
+    idx = rng.integers(0, n, size=(iterations, n))
+    sampled = benchmark[idx]
+    sampled_var = sampled.var(axis=1, ddof=1)
+    # Per-row covariance via E[xy] - E[x]E[y] scaled to the unbiased n/(n-1).
+    sampled_cov = (
+        ((stock[idx] * sampled).mean(axis=1) - stock[idx].mean(axis=1) * sampled.mean(axis=1))
+        * n
+        / (n - 1)
+    )
+    betas = sampled_cov / sampled_var
+    betas = betas[np.isfinite(betas)]  # zero-variance resamples divide by ~0
+    if len(betas) < iterations // 2:
+        return None
+    return (
+        round(float(np.percentile(betas, 2.5)), 4),
+        round(float(np.percentile(betas, 97.5)), 4),
+    )
+
+
 def relative_risk_metrics(
     stock_returns: np.ndarray,
     benchmark_returns: np.ndarray,
@@ -183,12 +235,20 @@ def relative_risk_metrics(
     benchmark = np.asarray(benchmark_returns, dtype=float)
     finite = np.isfinite(stock) & np.isfinite(benchmark)
     stock, benchmark = stock[finite], benchmark[finite]
+    insufficient = {
+        "beta": None,
+        "beta_ci_95_low": None,
+        "beta_ci_95_high": None,
+        "alpha_annualized": None,
+        "r_squared": None,
+        "correlation": None,
+    }
     if len(stock) < MIN_BETA_OBSERVATIONS:
-        return {"beta": None, "alpha_annualized": None, "r_squared": None, "correlation": None}
+        return insufficient
 
     beta = calculate_beta(stock, benchmark)
     if beta is None:
-        return {"beta": None, "alpha_annualized": None, "r_squared": None, "correlation": None}
+        return insufficient
 
     correlation = float(np.corrcoef(stock, benchmark)[0, 1])
     # Annualized excess of the stock over what beta explains of the benchmark,
@@ -196,8 +256,11 @@ def relative_risk_metrics(
     daily_rf = float(risk_free_rate_annual) / 252.0
     alpha = float((np.mean(stock) - daily_rf - beta * (np.mean(benchmark) - daily_rf)) * 252)
 
+    ci = bootstrap_beta_ci(stock, benchmark)
     return {
         "beta": round(beta, 4),
+        "beta_ci_95_low": ci[0] if ci else None,
+        "beta_ci_95_high": ci[1] if ci else None,
         "alpha_annualized": round(alpha, 4),
         "r_squared": round(correlation**2, 4),
         "correlation": round(correlation, 4),

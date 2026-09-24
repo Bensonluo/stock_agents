@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from app.analysis.risk import (
+    bootstrap_beta_ci,
     calculate_beta,
     concentration_hhi,
     correlation_matrix,
@@ -80,10 +81,72 @@ class TestRelativeMetrics:
 
         assert metrics == {
             "beta": None,
+            "beta_ci_95_low": None,
+            "beta_ci_95_high": None,
             "alpha_annualized": None,
             "r_squared": None,
             "correlation": None,
         }
+
+    def test_metrics_block_carries_the_beta_ci(self) -> None:
+        benchmark = np.array([(-1 if i % 4 == 0 else 1) * (0.002 + i * 0.0005) for i in range(120)])
+        stock = benchmark * 1.6
+
+        metrics = relative_risk_metrics(stock, benchmark)
+
+        assert metrics["beta_ci_95_low"] is not None
+        assert metrics["beta_ci_95_high"] is not None
+        assert metrics["beta_ci_95_low"] <= metrics["beta"] <= metrics["beta_ci_95_high"]
+
+
+class TestBootstrapBetaCi:
+    """Percentile CI on the hedge ratio — beta is an estimate, not a fact."""
+
+    @staticmethod
+    def _noisy_pair(
+        n: int, true_beta: float, noise_scale: float, seed: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(seed)
+        benchmark = rng.normal(0.001, 0.01, size=n)
+        stock = true_beta * benchmark + rng.normal(0, noise_scale, size=n)
+        return stock, benchmark
+
+    def test_interval_brackets_the_point_estimate(self) -> None:
+        stock, benchmark = self._noisy_pair(250, 1.5, 0.008, seed=7)
+
+        ci = bootstrap_beta_ci(stock, benchmark)
+        beta = calculate_beta(stock, benchmark)
+
+        assert ci is not None and beta is not None
+        assert ci[0] <= beta <= ci[1]
+
+    def test_deterministic_for_same_input(self) -> None:
+        stock, benchmark = self._noisy_pair(80, 1.2, 0.01, seed=3)
+
+        assert bootstrap_beta_ci(stock, benchmark) == bootstrap_beta_ci(stock, benchmark)
+
+    def test_width_shrinks_with_more_aligned_data(self) -> None:
+        # Same underlying relationship; 500 bars should pin beta tighter
+        # than 40. Fixed seeds freeze both widths, so the pin is stable.
+        short = self._noisy_pair(40, 1.0, 0.01, seed=11)
+        long = self._noisy_pair(500, 1.0, 0.01, seed=11)
+
+        ci_short = bootstrap_beta_ci(*short)
+        ci_long = bootstrap_beta_ci(*long)
+
+        assert ci_short is not None and ci_long is not None
+        assert (ci_short[1] - ci_short[0]) > (ci_long[1] - ci_long[0])
+
+    def test_zero_variance_benchmark_returns_none(self) -> None:
+        stock = np.full(30, 0.01)
+
+        assert bootstrap_beta_ci(stock, np.full(30, 0.005)) is None
+
+    def test_below_min_observations_returns_none(self) -> None:
+        rng = np.random.default_rng(1)
+        bench = rng.normal(0, 0.01, size=10)
+
+        assert bootstrap_beta_ci(bench * 1.3, bench) is None
 
     def test_calculate_beta_needs_min_observations(self) -> None:
         assert calculate_beta(np.full(10, 0.01), np.full(10, 0.01)) is None
