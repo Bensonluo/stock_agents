@@ -5,6 +5,11 @@ the TRAIN segment only, then run once on the unseen TEST segment. The output
 reports every window (including failures), the parameter choices across
 windows (stability), and how many configurations were tested — the
 overfitting telemetry the methodology requires.
+
+The aggregate also carries the Deflated Sharpe Ratio (Bailey & López de
+Prado, JPM 2014): the winner of a max-of-N configuration search must clear
+the expected maximum of N noise trials, not zero. ``configs_tested`` says
+how much selection pressure was applied; the DSR prices it.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from typing import Any
 import pandas as pd
 
 from app.backtest.costs import CostModel
+from app.backtest.dsr import deflated_sharpe_ratio
 from app.backtest.engine import run_backtest
 
 
@@ -54,6 +60,10 @@ def walk_forward(
         for values in itertools.product(*param_grid.values())
     ]
     windows: list[dict[str, Any]] = []
+    # DSR inputs: the delivered OOS return stream (concatenated across test
+    # segments) and the per-configuration train Sharpes (the selection pool).
+    oos_returns: list[float] = []
+    trial_sharpes: list[float] = []
     start = 0
     while start + train_bars + test_bars <= len(data):
         train = data.iloc[start : start + train_bars]
@@ -76,11 +86,14 @@ def walk_forward(
                 "test_return": oos.metrics.get("total_return"),
             }
         )
+        if oos.equity is not None:
+            oos_returns.extend(float(r) for r in oos.equity.pct_change().dropna())
+        trial_sharpes.extend(t["sharpe"] for t in train_results if t["sharpe"] is not None)
         start += test_bars
 
     return {
         "windows": windows,
-        "aggregate": _aggregate(windows, param_grid),
+        "aggregate": _aggregate(windows, param_grid, oos_returns, trial_sharpes, len(combos)),
         "configs_tested": len(combos) * len(windows),
     }
 
@@ -103,16 +116,36 @@ def _select_params(
             train, strategy=strategy, cost_model=cost_model, initial_cash=initial_cash, **combo
         )
         score = result.metrics.get(selection_metric)
+        sharpe = result.metrics.get("sharpe")
         numeric = float(score) if isinstance(score, int | float) else -float("inf")
-        train_results.append({"params": combo, "score": None if score is None else float(score)})
+        # "sharpe" is recorded regardless of the selection metric: the DSR's
+        # trial pool is the dispersion of train Sharpes across configurations.
+        train_results.append(
+            {
+                "params": combo,
+                "score": None if score is None else float(score),
+                "sharpe": float(sharpe) if isinstance(sharpe, int | float) else None,
+            }
+        )
         if numeric > best_score:
             best_score, best_params = numeric, combo
 
     return best_params, (None if best_score == -float("inf") else best_score), train_results
 
 
-def _aggregate(windows: list[dict[str, Any]], param_grid: dict[str, list[Any]]) -> dict[str, Any]:
-    """Out-of-sample aggregates including the failures, not just the mean."""
+def _aggregate(
+    windows: list[dict[str, Any]],
+    param_grid: dict[str, list[Any]],
+    oos_daily_returns: list[float],
+    trial_sharpes: list[float],
+    n_configurations: int,
+) -> dict[str, Any]:
+    """Out-of-sample aggregates including the failures, not just the mean.
+
+    ``oos_daily_returns`` is the concatenated per-bar return stream of the
+    delivered (test-segment) equity curves — deliberately a distinct name
+    from the per-window total-return local below, which it must not shadow.
+    """
     if not windows:
         return {"error": "no complete windows"}
 
@@ -146,4 +179,7 @@ def _aggregate(windows: list[dict[str, Any]], param_grid: dict[str, list[Any]]) 
             {k: worst[k] for k in ("test_start", "test_end", "test_return")} if worst else None
         ),
         "param_stability": round(modal_count / len(windows), 4) if windows else None,
+        "deflated_sharpe": deflated_sharpe_ratio(
+            oos_daily_returns, trial_sharpes, n_configurations
+        ),
     }
