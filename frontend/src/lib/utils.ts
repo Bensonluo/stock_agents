@@ -305,6 +305,15 @@ export interface StrategiesResponse {
   }>
 }
 
+export interface DimensionSummary {
+  runs: number
+  ic_mean: number
+  ic_std: number | null
+  icir: number | null
+  t_stat: number | null
+  ic_positive_rate: number
+}
+
 export interface DecisionICResponse {
   method: string
   horizon_bars: number
@@ -313,6 +322,7 @@ export interface DecisionICResponse {
   runs_pending_maturity: number
   runs_skipped: number
   per_run: Array<{ thread_id: string; date: string; symbols: number; ic: number }>
+  dimensions?: Record<string, DimensionSummary | null>
   caveat: string
   status: 'ok' | 'insufficient_history'
   runs?: number

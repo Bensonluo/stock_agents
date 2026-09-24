@@ -6,6 +6,7 @@ import pytest
 
 from app.analysis.ic import (
     MIN_IC_SYMBOLS,
+    decision_dimension_scores,
     decision_scores,
     ic_summary,
     information_coefficient,
@@ -39,6 +40,48 @@ class TestDecisionScores:
     def test_missing_decisions_returns_empty(self) -> None:
         assert decision_scores({}) == {}
         assert decision_scores({"decision": {}}) == {}
+
+
+class TestDecisionDimensionScores:
+    def test_pipeline_shape_with_per_dimension_gaps(self) -> None:
+        result = {
+            "decision": {
+                "decisions": {
+                    "AAPL": {
+                        "symbol": "AAPL",
+                        "score": 72.0,
+                        "component_scores": {"technical": 60.0, "fundamental": 80.0},
+                    },
+                    "MSFT": {
+                        "symbol": "MSFT",
+                        "score": 48.5,
+                        "component_scores": {"technical": 55.0, "fundamental": None},
+                    },
+                }
+            }
+        }
+        # MSFT's missing fundamental score simply drops it from that
+        # dimension's cross-section — not a neutral vote.
+        assert decision_dimension_scores(result) == {
+            "technical": {"AAPL": 60.0, "MSFT": 55.0},
+            "fundamental": {"AAPL": 80.0},
+        }
+
+    def test_missing_components_return_empty(self) -> None:
+        assert decision_dimension_scores({}) == {}
+        assert decision_dimension_scores({"decision": {"decisions": {"A": {"score": 1.0}}}}) == {}
+
+    def test_response_list_shape(self) -> None:
+        result = {
+            "decisions": [
+                {
+                    "symbol": "AAPL",
+                    "composite_score": 61.0,
+                    "component_scores": {"sentiment": -20.0},
+                }
+            ]
+        }
+        assert decision_dimension_scores(result) == {"sentiment": {"AAPL": -20.0}}
 
 
 class TestInformationCoefficient:

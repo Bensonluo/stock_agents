@@ -32,21 +32,8 @@ def decision_scores(result: dict[str, Any]) -> dict[str, float]:
     recommendations). Unscored entries (zero-evidence runs emit ``None``)
     are skipped — missing evidence is not a neutral vote.
     """
-    decisions = (result.get("decision") or {}).get("decisions")
-    if decisions is None:
-        decisions = result.get("decisions")
-
-    if isinstance(decisions, dict):
-        items: Any = decisions.items()
-    elif isinstance(decisions, list):
-        items = ((d.get("symbol"), d) for d in decisions if isinstance(d, dict))
-    else:
-        return {}
-
     scores: dict[str, float] = {}
-    for symbol, decision in items:
-        if not symbol or not isinstance(decision, dict):
-            continue
+    for symbol, decision in _decision_entries(result):
         value = decision.get("score")
         if not _is_score(value):
             value = decision.get("composite_score")
@@ -54,6 +41,46 @@ def decision_scores(result: dict[str, Any]) -> dict[str, float]:
             continue
         scores[str(symbol)] = float(value)
     return scores
+
+
+def decision_dimension_scores(result: dict[str, Any]) -> dict[str, dict[str, float]]:
+    """Extract ``{dimension: {symbol: component score}}`` per analysis dimension.
+
+    Reads ``component_scores`` (technical / fundamental / sentiment) emitted
+    alongside the composite. A symbol missing one dimension simply does not
+    vote in that dimension's cross-section — the same honest-refusal
+    semantics as the composite. Runs recorded before component tracking
+    (or without any usable component) return ``{}``.
+    """
+    vectors: dict[str, dict[str, float]] = {}
+    for symbol, decision in _decision_entries(result):
+        components = decision.get("component_scores")
+        if not isinstance(components, dict):
+            continue
+        for dimension, value in components.items():
+            if not _is_score(value):
+                continue
+            vectors.setdefault(str(dimension), {})[str(symbol)] = float(value)
+    return vectors
+
+
+def _decision_entries(result: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Normalize both stored decision shapes into ``(symbol, decision)`` pairs."""
+    decisions = (result.get("decision") or {}).get("decisions")
+    if decisions is None:
+        decisions = result.get("decisions")
+
+    entries: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(decisions, dict):
+        pairs: Any = decisions.items()
+    elif isinstance(decisions, list):
+        pairs = ((d.get("symbol"), d) for d in decisions if isinstance(d, dict))
+    else:
+        return entries
+    for symbol, decision in pairs:
+        if symbol and isinstance(decision, dict):
+            entries.append((str(symbol), decision))
+    return entries
 
 
 def information_coefficient(

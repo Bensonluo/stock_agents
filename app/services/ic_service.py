@@ -20,6 +20,7 @@ from typing import Any
 
 from app.analysis.ic import (
     MIN_IC_SYMBOLS,
+    decision_dimension_scores,
     decision_scores,
     ic_summary,
     information_coefficient,
@@ -89,6 +90,7 @@ async def evaluate_decision_ic(
     evaluated: list[dict[str, Any]] = []
     pending = 0
     skipped = 0
+    dimension_ics: dict[str, list[float]] = {}
 
     for record in records:
         try:
@@ -141,6 +143,14 @@ async def evaluate_decision_ic(
             }
         )
 
+        # Dimension attribution over the same forward returns — which of
+        # technical / fundamental / sentiment actually carries the ranking.
+        dimensions = decision_dimension_scores(result)
+        for dimension, dim_scores in dimensions.items():
+            dim_ic = information_coefficient(dim_scores, forward)
+            if dim_ic is not None:
+                dimension_ics.setdefault(dimension, []).append(dim_ic)
+
     summary = ic_summary([run["ic"] for run in evaluated])
     payload: dict[str, Any] = {
         "method": "spearman_rank_ic",
@@ -150,6 +160,10 @@ async def evaluate_decision_ic(
         "runs_pending_maturity": pending,
         "runs_skipped": skipped,
         "per_run": evaluated[-20:],
+        "dimensions": {
+            dimension: ic_summary(ics) if ics else None
+            for dimension, ics in sorted(dimension_ics.items())
+        },
         "caveat": "Historical runs were produced by evolving decision formulas; "
         "IC aggregates across vintages.",
     }

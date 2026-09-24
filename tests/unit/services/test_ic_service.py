@@ -161,3 +161,62 @@ class TestEvaluateDecisionIC:
     async def test_horizon_must_be_positive(self) -> None:
         with pytest.raises(ValueError, match="horizon"):
             await evaluate_decision_ic(horizon_bars=0, records=[], fetch_history=_fetcher({}))
+
+    async def test_dimension_attribution_splits_aligned_and_inverted(self) -> None:
+        dates = _bdates(300)
+        run_idx = 239
+        series = {
+            sym: (dates, _two_phase_closes(dates, run_idx, rate))
+            for sym, rate in zip("ABCD", (0.001, 0.002, 0.003, 0.004))
+        }
+        scored = dict(zip("ABCD", (20.0, 42.0, 61.0, 83.0)))
+        decisions = {
+            sym: {
+                "symbol": sym,
+                "action": "hold",
+                "score": score,
+                "component_scores": {
+                    "technical": score,  # aligned with the forward ordering
+                    "fundamental": 100.0 - score,  # inverted
+                    "sentiment": 50.0,  # rank-constant -> refused
+                },
+            }
+            for sym, score in scored.items()
+        }
+        record = AnalysisRecord(
+            thread_id="t6",
+            symbols="[]",
+            query="q",
+            status="completed",
+            result=json.dumps({"decision": {"decisions": decisions}}),
+            created_at=f"{dates[run_idx]}T10:00:00",
+            updated_at=f"{dates[run_idx]}T10:00:00",
+            execution_time=0.0,
+        )
+        result = await evaluate_decision_ic(
+            horizon_bars=20, records=[record], fetch_history=_fetcher(series)
+        )
+        dimensions = result["dimensions"]
+        assert dimensions["technical"]["ic_mean"] == 1.0
+        assert dimensions["fundamental"]["ic_mean"] == -1.0
+        # Rank-constant input is refused rather than fabricated as zero —
+        # the dimension simply never accumulates an IC.
+        assert "sentiment" not in dimensions
+
+    async def test_dimensions_absent_for_legacy_runs(self) -> None:
+        # Records stored before component tracking have no component_scores;
+        # the composite IC still evaluates, dimensions stay empty.
+        dates = _bdates(300)
+        run_idx = 239
+        series = {
+            sym: (dates, _two_phase_closes(dates, run_idx, rate))
+            for sym, rate in zip("ABCD", (0.001, 0.002, 0.003, 0.004))
+        }
+        record = _record(
+            "t7", f"{dates[run_idx]}T10:00:00", dict(zip("ABCD", (20.0, 40.0, 60.0, 80.0)))
+        )
+        result = await evaluate_decision_ic(
+            horizon_bars=20, records=[record], fetch_history=_fetcher(series)
+        )
+        assert result["status"] == "ok"
+        assert result["dimensions"] == {}

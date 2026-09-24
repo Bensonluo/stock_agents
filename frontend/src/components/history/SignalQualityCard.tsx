@@ -18,6 +18,12 @@ const HORIZONS = [
   { value: '60', label: '60 交易日' },
 ]
 
+const DIMENSION_LABELS: Record<string, string> = {
+  technical: '技术面',
+  fundamental: '基本面',
+  sentiment: '情绪面',
+}
+
 function fmt(value: number | null | undefined, digits = 3): string {
   return typeof value === 'number' ? value.toFixed(digits) : '—'
 }
@@ -47,6 +53,9 @@ export function SignalQualityCard() {
 
   const isSignal = typeof ic?.t_stat === 'number' && ic.t_stat >= 2
   const isAntiSignal = typeof ic?.t_stat === 'number' && ic.t_stat <= -2
+  const dimEntries = Object.entries(ic?.dimensions ?? {}).filter(
+    (entry): entry is [string, NonNullable<typeof entry[1]>] => entry[1] !== null
+  )
   const verdict = isSignal
     ? { text: '决策分数的相对排序显著预测了前向收益（t ≥ 2）', cls: 'text-emerald-600 dark:text-emerald-400' }
     : isAntiSignal
@@ -142,6 +151,40 @@ export function SignalQualityCard() {
                     </span>
                   </div>
                 ))}
+              </div>
+            )}
+            {dimEntries.length > 0 && (
+              <div className="space-y-1">
+                <div className="text-xs font-medium text-muted-foreground">
+                  维度归因 · 各维度对同一前向收益的秩 IC
+                </div>
+                {dimEntries.map(([dimension, summary]) => (
+                  <div
+                    key={dimension}
+                    className="flex items-center justify-between text-xs py-1 border-b border-border/40 last:border-0"
+                  >
+                    <span className="text-muted-foreground">
+                      {DIMENSION_LABELS[dimension] ?? dimension} · {summary.runs} run
+                    </span>
+                    <span className="flex items-center gap-3">
+                      <span className="text-muted-foreground">IC {fmt(summary.ic_mean)}</span>
+                      <span
+                        className={
+                          typeof summary.t_stat === 'number' && summary.t_stat >= 2
+                            ? 'font-semibold text-emerald-600 dark:text-emerald-400'
+                            : typeof summary.t_stat === 'number' && summary.t_stat <= -2
+                              ? 'font-semibold text-red-500'
+                              : 'font-semibold'
+                        }
+                      >
+                        t {fmt(summary.t_stat, 2)}
+                      </span>
+                    </span>
+                  </div>
+                ))}
+                <p className="text-[11px] text-muted-foreground/70 pt-1">
+                  复合分权重（基本面 45 / 技术面 30 / 情绪面 15）的实证对账——哪个维度真的在排序收益。
+                </p>
               </div>
             )}
           </>
