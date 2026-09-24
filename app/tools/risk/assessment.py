@@ -94,6 +94,7 @@ def _assess_symbol(symbol: str, data: dict) -> dict[str, Any]:
     risk_level = _score_to_level(risk_score)
     beta_status = "available" if beta is not None else "insufficient_data"
     liquidity = _liquidity_block(symbol, average_dollar_volume(hist))
+    sector_relative = _sector_relative_block(symbol, data)
 
     return {
         "symbol": symbol,
@@ -121,6 +122,7 @@ def _assess_symbol(symbol: str, data: dict) -> dict[str, Any]:
         },
         "stress_scenarios": stress,
         "liquidity": liquidity,
+        "sector_relative": sector_relative,
         "position_recommendation": {
             "max_position_size": _position_size(risk_score) if beta is not None else None,
             "stop_loss_percentage": float(volatility * 2 * 100),
@@ -159,6 +161,42 @@ def _get_benchmark_history(data: dict) -> dict | None:
         return None
     nested = benchmark.get("historical_data")
     return nested if isinstance(nested, dict) else benchmark
+
+
+def _sector_relative_block(symbol: str, data: dict) -> dict[str, Any]:
+    """Beta/alpha/R² of the symbol against its own sector ETF.
+
+    Annotation-only companion to the market-benchmark regression: a stock
+    can look quiet against the whole market yet carry sector-concentrated
+    risk (or vice versa). The risk score and position sizing never read
+    this block — same annotation-only contract as ``liquidity``.
+    """
+    sector = data.get("sector")
+    sector_history = data.get("sector_benchmark_historical_data")
+    if not isinstance(sector_history, dict):
+        return {"sector": sector, "status": "insufficient_data"}
+
+    ticker = sector_history.get("symbol")
+    stock, bench = _paired_returns(data.get("historical_data", {}), sector_history)
+    if bench is None:
+        return {
+            "sector": sector,
+            "benchmark_ticker": ticker,
+            "status": "insufficient_data",
+        }
+
+    relative = relative_risk_metrics(
+        stock, bench, risk_free_rate_annual=get_settings().risk_free_rate_annual
+    )
+    return {
+        "sector": sector,
+        "benchmark_ticker": ticker,
+        "beta_sector": relative.get("beta"),
+        "alpha_annualized_sector": relative.get("alpha_annualized"),
+        "r_squared_sector": relative.get("r_squared"),
+        "correlation_sector": relative.get("correlation"),
+        "status": "available",
+    }
 
 
 def _calculate_score(

@@ -30,6 +30,7 @@ from app.tools.data.fetcher import (  # noqa: E402
     benchmark_ticker_for,
     fetch_benchmark_history,
     fetch_stock_data,
+    sector_benchmark_ticker,
 )
 
 
@@ -475,6 +476,24 @@ class DataCollectionAgent(BaseAgent):
             bench = benchmarks.get(benchmark_ticker_for(symbol))
             if bench and data:
                 market_data[symbol]["benchmark_historical_data"] = bench
+
+        # Sector-relative annotation: one extra series per mapped sector
+        # (11 SPDR ETFs cover yfinance's sector vocabulary, shared 30-min
+        # cache dedups across runs). The sector field is US-path-only
+        # today — CN names carry no sector and stay on the market
+        # benchmark; unmapped or failed fetches leave the key absent
+        # exactly like the market benchmark above.
+        sector_tickers = {
+            s: sector_benchmark_ticker((data or {}).get("sector"))
+            for s, data in market_data.items()
+        }
+        wanted = sorted({t for t in sector_tickers.values() if t})
+        sector_fetched = await asyncio.gather(*(fetch_benchmark_history(t) for t in wanted))
+        sector_benchmarks = dict(zip(wanted, sector_fetched))
+        for symbol, ticker in sector_tickers.items():
+            bench = sector_benchmarks.get(ticker) if ticker else None
+            if bench and market_data[symbol]:
+                market_data[symbol]["sector_benchmark_historical_data"] = bench
 
         logger.info(
             f"Collected data for {len(market_data)} symbols, " f"{len(news_data)} news items"

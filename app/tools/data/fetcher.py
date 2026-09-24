@@ -86,12 +86,37 @@ def _is_chinese_symbol(symbol: str) -> bool:
 BENCHMARK_TICKERS = {"us": "^GSPC", "cn": "000001.SS"}
 BENCHMARK_HISTORY_PERIOD = "2y"
 
+# yfinance sector string -> SPDR sector ETF. Sector-relative regression
+# (beta against your own industry, not just the broad index) only
+# annotates when the sector is known AND maps — CN spot rows carry no
+# sector, so A-shares simply stay on the market benchmark.
+SECTOR_BENCHMARK_ETFS = {
+    "Technology": "XLK",
+    "Financial Services": "XLF",
+    "Energy": "XLE",
+    "Healthcare": "XLV",
+    "Consumer Cyclical": "XLY",
+    "Consumer Defensive": "XLP",
+    "Industrials": "XLI",
+    "Basic Materials": "XLB",
+    "Utilities": "XLU",
+    "Real Estate": "XLRE",
+    "Communication Services": "XLC",
+}
+
 
 def benchmark_ticker_for(symbol: str) -> str:
     """S&P 500 for international symbols; SSE Composite for 6-digit A-shares."""
     if _is_chinese_symbol(symbol):
         return BENCHMARK_TICKERS["cn"]
     return BENCHMARK_TICKERS["us"]
+
+
+def sector_benchmark_ticker(sector: str | None) -> str | None:
+    """SPDR sector ETF for a yfinance sector string; None when unmapped."""
+    if not sector:
+        return None
+    return SECTOR_BENCHMARK_ETFS.get(str(sector).strip())
 
 
 def _sync_fetch_benchmark_history(yahoo_symbol: str) -> dict[str, Any] | None:
