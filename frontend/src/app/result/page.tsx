@@ -1103,6 +1103,17 @@ function ReactReport({ answer, report: structuredReport }: {
                   <p className="font-medium mb-1">{sym}</p>
                   <div className="flex justify-between"><span className="text-slate-500">情绪</span><span className="font-medium">{sentimentZh(s.sentiment)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">得分</span><span className={cn('font-medium', (s.score || 0) >= 0 ? 'text-green-600' : 'text-red-600')}>{formatNumber(s.score, 0)}</span></div>
+                  {s.trend && s.trend !== 'no_data' && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">趋势</span>
+                      <span className={cn('font-medium', s.trend === 'improving' ? 'text-green-600' : s.trend === 'deteriorating' ? 'text-red-600' : 'text-slate-500')}>
+                        {s.trend === 'improving' ? '好转' : s.trend === 'deteriorating' ? '恶化' : '平稳'}
+                      </span>
+                    </div>
+                  )}
+                  {s.article_count != null && s.article_count > 0 && (
+                    <div className="flex justify-between"><span className="text-slate-500">样本</span><span className="text-slate-600">{s.article_count} 篇报道</span></div>
+                  )}
                 </div>
               ))}
             </div>
