@@ -24,6 +24,20 @@ function formatNumber(num: number | undefined, decimals = 2): string {
   return (num as number).toFixed(decimals)
 }
 
+// 格式化比率（0.31 → "31.0%"；VaR/回撤为负值原样带符号）
+function formatPercent(num: number | undefined | null, decimals = 1): string {
+  if (num === undefined || num === null || isNaN(num)) return '-'
+  return `${(num * 100).toFixed(decimals)}%`
+}
+
+// 格式化成交额（按币种本地化缩写：1500000 → "150万" / "1.5M"）
+function formatAdv(num: number | undefined | null, currency: string): string {
+  if (num === undefined || num === null || isNaN(num)) return '-'
+  if (currency === 'CNY') return `${(num / 10000).toFixed(0)}万`
+  if (num >= 1e9) return `${(num / 1e9).toFixed(1)}B`
+  return `${(num / 1e6).toFixed(1)}M`
+}
+
 // 格式化货币
 function formatCurrency(num: number | undefined): string {
   if (num === undefined || num === null || isNaN(num as number)) return '-'
@@ -1044,6 +1058,7 @@ function ReactReport({ answer, report: structuredReport }: {
               {filterEntries(Object.entries(risk.by_symbol)).map(([sym, r]: [string, any]) => {
                 const rs = riskStyle(r.risk_level)
                 const rscore = scoreOf(r.risk_score)
+                const hasMetrics = r.beta != null || r.volatility != null || r.var_95 != null || r.max_drawdown != null
                 return (
                   <div key={sym} className="p-3 bg-slate-50 rounded-lg space-y-2 text-sm">
                     <div className="flex items-center justify-between">
@@ -1056,9 +1071,51 @@ function ReactReport({ answer, report: structuredReport }: {
                         <Progress value={rscore} className="h-2" />
                       </div>
                     )}
+                    {hasMetrics && (
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                        {r.beta != null && (
+                          <div className="flex justify-between"><span className="text-slate-500">β（大盘）</span><span className="font-medium">{formatNumber(r.beta, 2)}</span></div>
+                        )}
+                        {r.volatility != null && (
+                          <div className="flex justify-between"><span className="text-slate-500">年化波动率</span><span className="font-medium">{formatPercent(r.volatility)}</span></div>
+                        )}
+                        {r.var_95 != null && (
+                          <div className="flex justify-between"><span className="text-slate-500">VaR 95%（日）</span><span className="font-medium text-red-600">{formatPercent(r.var_95)}</span></div>
+                        )}
+                        {r.max_drawdown != null && (
+                          <div className="flex justify-between"><span className="text-slate-500">最大回撤</span><span className="font-medium">{formatPercent(r.max_drawdown)}</span></div>
+                        )}
+                        {r.alpha_annualized != null && (
+                          <div className="flex justify-between"><span className="text-slate-500">年化 α</span><span className={cn('font-medium', r.alpha_annualized >= 0 ? 'text-green-600' : 'text-red-600')}>{formatPercent(r.alpha_annualized)}</span></div>
+                        )}
+                      </div>
+                    )}
+                    {r.liquidity?.status === 'available' && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500">流动性（20日均成交额）</span>
+                        <span className={cn('font-medium', r.liquidity.level === 'thin' ? 'text-amber-600' : 'text-green-600')}>
+                          {r.liquidity.level === 'thin' ? '偏薄' : '充足'} · {formatAdv(r.liquidity.adv_20d, r.liquidity.currency)} {r.liquidity.currency}
+                        </span>
+                      </div>
+                    )}
+                    {r.sector_relative?.status === 'available' && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500">行业相对（{r.sector_relative.benchmark_ticker}）</span>
+                        <span className="font-medium">β {formatNumber(r.sector_relative.beta_sector, 2)} · R² {formatNumber(r.sector_relative.r_squared_sector, 2)}</span>
+                      </div>
+                    )}
                   </div>
                 )
               })}
+              {risk.portfolio_risk?.correlations?.status === 'available' && (
+                <div className="p-3 border border-slate-200 rounded-lg space-y-1 text-xs">
+                  <div className="flex justify-between"><span className="text-slate-500">组合平均两两相关</span><span className="font-medium">{formatNumber(risk.portfolio_risk.avg_pairwise_correlation, 2)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">分散化评分</span><span className="font-medium">{formatNumber(risk.portfolio_risk.diversification_score, 0)} / 100</span></div>
+                  <p className="text-slate-400">
+                    {risk.portfolio_risk.correlations.pairs?.length || 0} 对相关系数 · {risk.portfolio_risk.correlations.aligned_days ?? '-'} 个交易日对齐
+                  </p>
+                </div>
+              )}
             </div>
           </SectionCard>
         )}
