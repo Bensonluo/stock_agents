@@ -10,6 +10,15 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from app.analysis.fundamental import financial_quality
+from app.analysis.sentiment import (
+    calculate_overall as _calculate_overall,
+)
+from app.analysis.sentiment import (
+    empty_sentiment as _empty_sentiment,
+)
+from app.analysis.sentiment import (
+    score_news,
+)
 from app.analysis.technical import weekly_sma_summary
 from app.analysis.valuation import scenario_valuation
 from app.tools.analysis.fundamental import (
@@ -19,13 +28,6 @@ from app.tools.analysis.fundamental import (
     _analyze_valuation,
     _calculate_overall_score,
     _recommendation,
-)
-from app.tools.analysis.sentiment import (
-    NEGATIVE_WORDS,
-    POSITIVE_WORDS,
-    _calculate_overall,
-    _calculate_trend,
-    _empty_sentiment,
 )
 from app.tools.analysis.technical import (
     _calculate_indicators,
@@ -384,36 +386,10 @@ async def analyze_sentiment(symbol: str) -> dict[str, Any]:
     if not symbol_news:
         symbol_news = news_data
 
-    total_score, analyzed, recent_scores = 0, 0, []
-    for article in symbol_news:
-        text = (article.get("title", "") + " " + article.get("summary", "")).lower()
-        score = sum(1 for w in POSITIVE_WORDS if w in text) - sum(
-            1 for w in NEGATIVE_WORDS if w in text
-        )
-        if score != 0:
-            total_score += score
-            analyzed += 1
-            recent_scores.append(score)
-
-    normalized = max(-100, min(100, (total_score / analyzed) * 20)) if analyzed > 0 else 0
-    if normalized >= 40:
-        sentiment = "very_positive"
-    elif normalized >= 15:
-        sentiment = "positive"
-    elif normalized <= -40:
-        sentiment = "very_negative"
-    elif normalized <= -15:
-        sentiment = "negative"
-    else:
-        sentiment = "neutral"
-
-    result = {
-        "sentiment": sentiment,
-        "score": normalized,
-        "article_count": analyzed,
-        "recent_scores": recent_scores[-10:],
-        "trend": _calculate_trend(recent_scores),
-    }
+    # The canonical shared computation — this tool only owns fetch + shell.
+    # Its previous inline keyword copy had drifted from the canonical module
+    # (no recency decay since iteration 24).
+    result = score_news(symbol_news)
 
     return {
         "symbol": symbol,

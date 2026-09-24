@@ -6,7 +6,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from app.agents.base import StatelessAgent
-from app.analysis.sentiment import calculate_overall, calculate_trend, empty_sentiment, score_news
+from app.analysis.sentiment import (
+    calculate_overall,
+    calculate_trend,
+    empty_sentiment,
+    score_news,
+    score_news_with_llm,
+)
+from app.config import get_settings
 from app.orchestration.state import AgentState
 from app.utils.llm_json import ainvoke_json
 from app.utils.logging import get_logger
@@ -99,7 +106,15 @@ class SentimentAnalysisAgent(StatelessAgent):
         }
 
     async def _analyze_news_sentiment(self, news: list[dict]) -> dict[str, Any]:
-        """Score one symbol's news via the canonical sentiment module."""
+        """Score one symbol's news via the canonical sentiment module.
+
+        With ``llm_sentiment_enabled`` and an LLM present, per-article scores
+        come from semantic scoring (keyword-compatible units, ``scoring``
+        provenance key in the block); any failure degrades back to the
+        deterministic keyword scorer.
+        """
+        if get_settings().llm_sentiment_enabled and self.llm:
+            return await score_news_with_llm(news, self.llm)
         return score_news(news)
 
     async def _llm_sentiment_analysis(self, symbol: str, news: list[dict]) -> dict[str, Any]:
