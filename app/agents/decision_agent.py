@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from app.agents.base import StatelessAgent
+from app.analysis.sizing import RISK_BUDGET_PCT, STOP_MULTIPLE, atr_position_size
 from app.orchestration.state import AgentState
 from app.services.report_service import derive_recommendation
 from app.utils.logging import get_logger
@@ -146,6 +147,7 @@ class DecisionMakingAgent(StatelessAgent):
         position_size = self._calculate_position_size(
             final_score,
             risk.get("position_recommendation", {}),
+            technical,
         )
 
         # Get entry/exit points
@@ -216,26 +218,45 @@ class DecisionMakingAgent(StatelessAgent):
 
         return sentiment.get("score", 0.0)
 
-    def _calculate_position_size(self, score: float, risk_rec: dict) -> dict[str, float]:
+    def _calculate_position_size(
+        self, score: float, risk_rec: dict, technical: dict | None = None
+    ) -> dict[str, float]:
         """Calculate recommended position size.
+
+        Volatility-first: when ATR% is available, size = risk budget /
+        stop distance (2xATR), so every position risks the same portfolio
+        slice regardless of how choppy the stock is. Without ATR (spot-only
+        symbols, degraded runs) the conviction bands below apply.
 
         Args:
             score: Decision score
             risk_rec: Risk recommendation
+            technical: Per-symbol technical analysis (indicators.atr_pct)
 
         Returns:
             Position size details
         """
-        # Base position size from conviction
-        abs_score = abs(score)
-        if abs_score >= 50:
-            base_size = 20  # 20% of portfolio max
-        elif abs_score >= 25:
-            base_size = 15
-        elif abs_score >= 10:
-            base_size = 10
+        atr_pct = (technical or {}).get("indicators", {}).get("atr_pct")
+        vol_size = atr_position_size(atr_pct)
+
+        if vol_size is not None:
+            base_size = vol_size
+            rationale = (
+                f"Volatility-sized: {RISK_BUDGET_PCT:g}% portfolio risk over a "
+                f"{STOP_MULTIPLE:g}xATR stop (ATR {atr_pct:.2f}%/day)"
+            )
         else:
-            base_size = 5
+            # Base position size from conviction
+            abs_score = abs(score)
+            if abs_score >= 50:
+                base_size = 20  # 20% of portfolio max
+            elif abs_score >= 25:
+                base_size = 15
+            elif abs_score >= 10:
+                base_size = 10
+            else:
+                base_size = 5
+            rationale = f"Based on conviction ({abs_score:.0f}/100) and risk limits"
 
         # Cap by risk recommendation. Degraded risk payloads can carry an
         # explicit None — .get's default only fires when the key is absent.
@@ -246,7 +267,7 @@ class DecisionMakingAgent(StatelessAgent):
 
         return {
             "percentage_of_portfolio": final_size,
-            "sizing_rationale": f"Based on conviction ({abs_score:.0f}/100) and risk limits",
+            "sizing_rationale": rationale,
         }
 
     def _calculate_price_targets(self, technical: dict, risk: dict) -> dict[str, Any]:
