@@ -387,13 +387,17 @@ class DecisionMakingAgent(StatelessAgent):
             LLM synthesis
         """
         try:
-            # Prepare summary
+            # Prepare summary. Zero-evidence runs carry score=None — render
+            # it as "n/a" instead of letting {None:.0f} raise and swallow
+            # the whole synthesis into the except branch.
             summary_parts = []
             for symbol, decision in decisions.items():
+                score = decision["score"]
+                score_str = f"{score:.0f}" if isinstance(score, int | float) else "n/a"
                 summary_parts.append(
                     f"{symbol}: {decision['action']} "
-                    f"(confidence: {decision['confidence']:.0f%}, "
-                    f"score: {decision['score']:.0f})"
+                    f"(confidence: {decision['confidence']:.0%}, "
+                    f"score: {score_str})"
                 )
 
             prompt = f"""Synthesize these investment decisions into a brief portfolio summary:
@@ -411,7 +415,14 @@ Keep it concise and actionable."""
 
             return {
                 "synthesis": response[:500],
-                "top_pick": max(decisions.items(), key=lambda x: x[1]["score"])[0],
+                "top_pick": max(
+                    decisions.items(),
+                    key=lambda item: (
+                        item[1]["score"]
+                        if isinstance(item[1]["score"], int | float)
+                        else -float("inf")
+                    ),
+                )[0],
             }
 
         except Exception as e:
