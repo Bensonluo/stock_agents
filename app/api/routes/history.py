@@ -14,6 +14,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from app.services.ic_service import evaluate_decision_ic
 from app.storage.database import AnalysisRecord, get_database
 
 logger = logging.getLogger(__name__)
@@ -210,6 +211,32 @@ async def search_history(
     logger.info(f"[History API] 搜索到 {len(items)} 条记录")
 
     return {"items": items, "keyword": keyword, "count": len(items)}
+
+
+@router.get("/ic")
+async def decision_layer_ic(
+    horizon_bars: int = Query(20, ge=1, le=250, description="前向窗口（交易日数）"),
+    limit: int = Query(200, ge=1, le=1000, description="检查的最近完成记录数"),
+):
+    """
+    决策层信号质量：历史推荐的秩 IC / ICIR
+
+    把已完成运行的每 symbol 复合分与实现的前向收益做 Spearman 秩相关
+    （逐运行 IC），聚合为 ICIR 与 t 统计量 —— 「过去的推荐到底准不准」
+    从自评变成可测量。历史不足时如实返回 insufficient_history。
+    """
+    from time import time
+
+    start = time()
+    try:
+        result = await evaluate_decision_ic(horizon_bars=horizon_bars, limit=limit)
+        result["execution_time"] = round(time() - start, 3)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[History API] IC 评估失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/{thread_id}")
