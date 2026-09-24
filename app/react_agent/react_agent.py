@@ -206,9 +206,11 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
         "symbols": symbols,
     }
 
-    # D3: fetch_stock_data returns nested {symbol: {market_data, financial_data, news_data}}
+    # D3: fetch_stock_data_tool returns nested {symbol: {market_data, financial_data, news_data}}
     # Report expects flat data["market_data"][symbol] = {company_name, ...}, etc.
-    fetch = tr.get("fetch_stock_data", {})
+    # Key must be the registry tool name — the executor indexes tool_results
+    # by the name the LLM actually called.
+    fetch = tr.get("fetch_stock_data_tool", {})
     if isinstance(fetch, dict) and fetch:
         market_data = {
             sym: (r.get("market_data") or {}) for sym, r in fetch.items() if isinstance(r, dict)
