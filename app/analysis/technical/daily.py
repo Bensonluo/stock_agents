@@ -147,15 +147,27 @@ def _rsi(close: pd.Series, period: int = 14) -> float | None:
 
 
 def _atr(df: pd.DataFrame, period: int = 14) -> float | None:
-    """Average True Range; None when OHLC or warm-up is missing."""
+    """ATR(14) with Wilder smoothing — the definition charting platforms use.
+
+    Seed: SMA of the first `period` true ranges, then the recursive smoothing
+    atr = (prev_atr * (period-1) + tr) / period (same scheme as _rsi above).
+    The old simple rolling mean spiked after one jumpy bar and fed 2xATR stop
+    distances no chart would corroborate.
+    """
     if len(df) <= period or not {"high", "low", "close"}.issubset(df.columns):
         return None
     high_low = df["high"] - df["low"]
     high_close = np.abs(df["high"] - df["close"].shift())
     low_close = np.abs(df["low"] - df["close"].shift())
     true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    atr = true_range.rolling(period).mean().iloc[-1]
-    return round(float(atr), 6) if pd.notna(atr) else None
+    # Row 0's shifted terms are NaN; max(axis=1) skips them, so TR[0] is the
+    # high-low range — exactly Wilder's own seeding bar.
+    tr = true_range.to_numpy()
+    atr = float(tr[:period].mean())
+    for i in range(period, len(tr)):
+        atr = (atr * (period - 1) + tr[i]) / period
+    # Unavailable values are None, never NaN (engine contract).
+    return round(float(atr), 6) if np.isfinite(atr) else None
 
 
 def generate_signals(df: pd.DataFrame, indicators: dict[str, Any]) -> dict[str, str]:

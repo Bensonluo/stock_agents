@@ -275,3 +275,113 @@ class TestWilderRsi:
 
         assert 0 <= wilder <= 100
         assert abs(wilder - float(simple)) > 0.5
+
+
+class TestWilderAtr:
+    """ATR(14) uses Wilder smoothing — SMA seed then exponential recursion —
+    the definition every charting platform shows (TradingView ta.atr is RMA).
+    ATR feeds the 2xATR stop-distance position sizing, so its smoothing must
+    match what a user's chart corroborates."""
+
+    @staticmethod
+    def _atr_frame(highs: list[float], lows: list[float], closes: list[float]) -> pd.DataFrame:
+        from app.analysis.technical.daily import _atr as impl
+
+        return impl(
+            pd.DataFrame({"high": highs, "low": lows, "close": closes}, dtype=float), period=3
+        )
+
+    def test_hand_computed_wilder_example(self) -> None:
+        # TRs [1.0, 1.0, 2.0, 1.5, 2.0], period 3 (prev-close terms dominate
+        # rows 1/2/4: |11.0-10.0|, |12.5-10.5|, |13.0-11.0|):
+        # seed = mean(1.0, 1.0, 2.0) = 4/3
+        # step 1.5: (4/3*2 + 1.5)/3 = 1.3889
+        # step 2.0: (1.3889*2 + 2.0)/3 = 1.5926
+        atr = self._atr_frame(
+            highs=[10.5, 11.0, 12.5, 12.0, 13.0],
+            lows=[9.5, 10.2, 11.0, 10.5, 11.8],
+            closes=[10.0, 10.5, 11.5, 11.0, 12.0],
+        )
+        assert atr == pytest.approx(1.592593, abs=1e-6)
+
+    def test_matches_ewm_reference_implementation(self) -> None:
+        # Wilder smoothing is an EMA with alpha=1/period seeded by the SMA of
+        # the first `period` true ranges — an independent vectorized
+        # formulation must agree with the loop implementation.
+        closes = [100 + 2 * math.sin(i / 5) + (i % 7) * 0.3 - 0.9 for i in range(120)]
+        highs = [c + 0.5 + (i % 5) * 0.1 for i, c in enumerate(closes)]
+        lows = [c - 0.4 - (i % 3) * 0.15 for i, c in enumerate(closes)]
+        period = 14
+
+        close_s = pd.Series(closes)
+        tr = pd.concat(
+            [
+                pd.Series(highs) - pd.Series(lows),
+                (pd.Series(highs) - close_s.shift()).abs(),
+                (pd.Series(lows) - close_s.shift()).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+        seed = float(tr.iloc[:period].mean())
+        padded = pd.concat([pd.Series([seed]), tr.iloc[period:]])
+        ref = padded.ewm(alpha=1 / period, adjust=False).mean().iloc[-1]
+
+        from app.analysis.technical.daily import _atr as impl
+
+        df = pd.DataFrame({"high": highs, "low": lows, "close": closes})
+        # The engine rounds to 6 decimals; the reference agrees to that digit.
+        assert impl(df, period=period) == pytest.approx(float(ref), abs=1e-6)
+
+    def test_first_bar_true_range_is_high_low(self) -> None:
+        # Row 0 has no previous close; its TR is the high-low range
+        # (Wilder's own seeding bar), not a skipped/NaN bar.
+        atr = self._atr_frame(
+            highs=[11.0, 11.0, 11.0, 11.0],
+            lows=[9.0, 10.0, 10.0, 10.0],
+            closes=[10.0, 10.0, 10.0, 10.0],
+        )
+        # TRs [2.0, 1.0, 1.0, 1.0], period 3: seed 4/3 -> (4/3*2+1)/3 = 1.2222
+        assert atr == pytest.approx(1.222222, abs=1e-6)
+
+    def test_warmup_guard(self) -> None:
+        from app.analysis.technical.daily import _atr as impl
+
+        three = pd.DataFrame(
+            {"high": [11.0] * 3, "low": [9.0] * 3, "close": [10.0] * 3}, dtype=float
+        )
+        assert impl(three, period=3) is None
+        # period+1 bars = seed + one smoothing step, the minimum viable ATR.
+        four = pd.DataFrame(
+            {"high": [11.0] * 4, "low": [9.0] * 4, "close": [10.0] * 4}, dtype=float
+        )
+        assert impl(four, period=3) is not None
+
+    def test_smoothing_differs_from_simple_rolling_mean(self) -> None:
+        # The upgrade's whole point: a volatility burst ~25 bars back has
+        # already fallen out of the simple 14-bar rolling mean but Wilder's
+        # exponential weights still carry it — the two formulas disagree on
+        # identical bars.
+        closes = [100 + 2 * math.sin(i / 5) + (i % 7) * 0.3 - 0.9 for i in range(120)]
+        spread = [2.5 if 80 <= i <= 92 else 0.5 for i in range(120)]
+        highs = [c + s for c, s in zip(closes, spread)]
+        lows = [c - s for c, s in zip(closes, spread)]
+        period = 14
+
+        close_s = pd.Series(closes)
+        tr = pd.concat(
+            [
+                pd.Series(highs) - pd.Series(lows),
+                (pd.Series(highs) - close_s.shift()).abs(),
+                (pd.Series(lows) - close_s.shift()).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+        simple = float(tr.rolling(period).mean().iloc[-1])
+
+        from app.analysis.technical.daily import _atr as impl
+
+        wilder = impl(pd.DataFrame({"high": highs, "low": lows, "close": closes}), period=period)
+
+        assert wilder is not None
+        # simple forgets the burst (~1.21), Wilder still tastes it (~1.57)
+        assert abs(wilder - simple) > 0.1
