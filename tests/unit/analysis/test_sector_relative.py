@@ -226,3 +226,53 @@ class TestSectorBenchmarkAttach:
 
         assert "sector_benchmark_historical_data" not in result["market_data"]["AAPL"]
         assert result["market_data"]["AAPL"]["benchmark_historical_data"]["symbol"] == "^GSPC"
+
+
+class TestReActAttach:
+    """The ReAct seam (_attach_benchmark) mirrors the pipeline contract:
+    market benchmark always attempted, sector ETF only for mapped sectors,
+    failures leave keys absent."""
+
+    @pytest.mark.asyncio
+    async def test_mapped_sector_gets_both_benchmarks(self, monkeypatch) -> None:
+        from app.tools.analysis import auto_tools
+
+        async def fake_bench(ticker):
+            return {"symbol": ticker, "dates": ["2026-01-02"], "close": [100.0]}
+
+        monkeypatch.setattr(auto_tools, "fetch_benchmark_history", fake_bench)
+
+        out = await auto_tools._attach_benchmark({"symbol": "AAPL", "sector": "Technology"}, "AAPL")
+
+        assert out["benchmark_historical_data"]["symbol"] == "^GSPC"
+        assert out["sector_benchmark_historical_data"]["symbol"] == "XLK"
+
+    @pytest.mark.asyncio
+    async def test_sectorless_block_gets_market_benchmark_only(self, monkeypatch) -> None:
+        from app.tools.analysis import auto_tools
+
+        async def fake_bench(ticker):
+            return {"symbol": ticker, "dates": ["2026-01-02"], "close": [100.0]}
+
+        monkeypatch.setattr(auto_tools, "fetch_benchmark_history", fake_bench)
+
+        out = await auto_tools._attach_benchmark({"symbol": "600000"}, "600000")
+
+        assert out["benchmark_historical_data"]["symbol"] == "000001.SS"
+        assert "sector_benchmark_historical_data" not in out
+
+    @pytest.mark.asyncio
+    async def test_sector_fetch_failure_keeps_market_benchmark(self, monkeypatch) -> None:
+        from app.tools.analysis import auto_tools
+
+        async def half_failing(ticker):
+            if ticker == "XLK":
+                return None
+            return {"symbol": ticker, "dates": ["2026-01-02"], "close": [100.0]}
+
+        monkeypatch.setattr(auto_tools, "fetch_benchmark_history", half_failing)
+
+        out = await auto_tools._attach_benchmark({"symbol": "AAPL", "sector": "Technology"}, "AAPL")
+
+        assert out["benchmark_historical_data"]["symbol"] == "^GSPC"
+        assert "sector_benchmark_historical_data" not in out

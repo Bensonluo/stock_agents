@@ -41,6 +41,7 @@ from app.tools.data.fetcher import (
     fetch_benchmark_history,
     fetch_historical,
     fetch_stock_data,
+    sector_benchmark_ticker,
 )
 from app.utils.logging import get_logger
 
@@ -108,9 +109,17 @@ async def _attach_benchmark(market: dict[str, Any], symbol: str) -> dict[str, An
     if not market:
         return market
     bench = await fetch_benchmark_history(benchmark_ticker_for(symbol))
-    if bench is None:
-        return market
-    market["benchmark_historical_data"] = bench
+    if bench is not None:
+        market["benchmark_historical_data"] = bench
+    # Sector-relative annotation (same contract as the pipeline data
+    # agent): only when the market block carries a mapped sector does the
+    # extra ETF fetch happen; the 30-min cache makes it free across the
+    # per-symbol tool calls of one analysis.
+    sector_ticker = sector_benchmark_ticker(market.get("sector"))
+    if sector_ticker:
+        sector_bench = await fetch_benchmark_history(sector_ticker)
+        if sector_bench is not None:
+            market["sector_benchmark_historical_data"] = sector_bench
     return market
 
 
