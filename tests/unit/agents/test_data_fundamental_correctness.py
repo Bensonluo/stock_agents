@@ -146,3 +146,25 @@ def test_empty_fundamentals_do_not_generate_strong_sell() -> None:
     assert overall["score"] is None
     assert overall["status"] == "insufficient_data"
     assert agent._generate_recommendation(overall) == "insufficient_data"
+
+
+def test_earnings_dates_survive_the_financial_fetch(monkeypatch) -> None:
+    """The stored calendar keeps its dates — the whole point of the fix.
+
+    ``to_dict("records")`` dropped the DatetimeIndex, leaving EPS estimates
+    attached to nothing; earnings_records resets the index first.
+    """
+    ticker = _FakeTicker({"trailingPE": 10.0})
+    ticker.earnings_dates = pd.DataFrame(
+        {"EPS Estimate": [1.2, 1.3], "Surprise(%)": [4.0, -1.0]},
+        index=pd.DatetimeIndex(["2026-06-30", "2026-09-30"]),
+    )
+    monkeypatch.setattr(data_agent.yf, "Ticker", lambda _symbol: ticker)
+
+    financial = data_agent._sync_fetch_financial_data("AAPL", "AAPL", lambda _df: {})
+
+    assert [record["date"] for record in financial["earnings_dates"]] == [
+        "2026-06-30",
+        "2026-09-30",
+    ]
+    assert financial["earnings_dates"][0]["eps_estimate"] == 1.2

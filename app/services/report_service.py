@@ -13,6 +13,7 @@ import math
 from datetime import datetime
 from typing import Any
 
+from app.analysis.events import next_earnings_window
 from app.analysis.fundamental import compact_quality_view
 from app.analysis.portfolio import suggest_weights
 from app.analysis.technical import compact_weekly_view
@@ -107,6 +108,7 @@ class ReportService:
             "query": data.get("query", ""),
             "symbols": symbols,
             "market_data": market,
+            "financial_data": data.get("financial_data") or {},
             "technical_analysis": data.get("technical_analysis") or {},
             "fundamental_analysis": data.get("fundamental_analysis") or {},
             "sentiment_flat": sentiment,
@@ -139,6 +141,14 @@ class ReportService:
                 "market_cap": mkt.get("market_cap"),
                 "as_of": mkt.get("as_of"),
             }
+            # Scheduled-uncertainty disclosure (annotation-only, same
+            # convention as liquidity/sector_relative): the composite score
+            # never reads it. Absent calendar → key omitted entirely.
+            earnings = next_earnings_window(
+                (c["financial_data"].get(symbol) or {}).get("earnings_dates")
+            )
+            if earnings:
+                summary[symbol]["earnings"] = earnings
         return {
             "symbols_analyzed": c["symbols"],
             "analysis_date": datetime.now().strftime("%Y-%m-%d"),

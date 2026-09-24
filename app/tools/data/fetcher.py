@@ -4,6 +4,7 @@ Provider chain: yfinance -> finnhub -> akshare -> direct Yahoo Finance API -> st
 """
 
 import asyncio
+import math
 import time
 from datetime import datetime, timedelta
 from typing import Any
@@ -380,6 +381,54 @@ def finnhub_news_articles(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return articles
 
 
+# yfinance's earnings_dates columns, mapped to the canonical record keys.
+_EARNINGS_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    "eps_estimate": ("EPS Estimate", "EPS estimate", "epsEstimate"),
+    "eps_actual": ("Reported EPS", "Surprise EPS"),
+    "surprise_pct": ("Surprise(%)", "Surprise Pct"),
+}
+
+
+def _earnings_value(value: Any) -> float | None:
+    """A finite float or None — NaN/None must not leak into JSON payloads."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def earnings_records(frame: Any) -> list[dict[str, Any]]:
+    """yfinance ``ticker.earnings_dates`` frame → canonical records.
+
+    ``to_dict("records")`` on this frame drops the DatetimeIndex entirely —
+    the date is the only column that matters downstream (the next-earnings
+    window), so the conversion here resets the index first and keeps each
+    date as an ISO string. Value columns map through the alias table; a
+    missing column simply omits its key. None/empty frames give ``[]``.
+    """
+    if frame is None or getattr(frame, "empty", False):
+        return []
+    try:
+        records: list[dict[str, Any]] = []
+        columns = {str(name) for name in frame.columns}
+        for index, row in frame.iterrows():
+            try:
+                day = pd.Timestamp(index).date().isoformat()
+            except (TypeError, ValueError):
+                continue
+            record: dict[str, Any] = {"date": day}
+            for key, aliases in _EARNINGS_COLUMN_ALIASES.items():
+                for alias in aliases:
+                    if alias in columns:
+                        record[key] = _earnings_value(row[alias])
+                        break
+            records.append(record)
+        return records
+    except Exception:
+        return []
+
+
 def _is_hk_symbol(symbol: str) -> bool:
     """HK-listed codes: '0700.HK'/'00700.HK' suffixed, or bare 4-5 digit
     zero-padded codes ('0700', '00700')."""
@@ -429,11 +478,15 @@ async def _yfinance_fetch(symbol: str) -> dict[str, Any] | None:
         end_date = datetime.now()
         start_date = end_date - timedelta(days=DEFAULT_HISTORY_DAYS)
         hist = ticker.history(start=start_date, end=end_date)
-        return info, hist, ticker
+        try:
+            earnings = ticker.earnings_dates
+        except Exception:  # annotation-only data must never sink the provider
+            earnings = None
+        return info, hist, ticker, earnings
 
     for attempt in range(2):
         try:
-            info, hist, ticker = await asyncio.to_thread(_sync)
+            info, hist, ticker, earnings = await asyncio.to_thread(_sync)
 
             market_data = {}
             if not hist.empty:
@@ -490,6 +543,9 @@ async def _yfinance_fetch(symbol: str) -> dict[str, Any] | None:
                 "revenue_growth": "ratio",
                 "earnings_growth": "ratio",
             }
+            # Event calendar: date-surviving records (see earnings_records)
+            # so the report can disclose the next earnings window.
+            financial_data["earnings_dates"] = earnings_records(earnings)
 
             news_data = []
             try:

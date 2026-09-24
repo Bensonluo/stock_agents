@@ -977,6 +977,17 @@ function ReactReport({ answer, report: structuredReport }: {
                     <p className="text-xs text-slate-500">市值</p>
                     <p className="font-medium">{formatMarketCap(info.market_cap, info.currency || currencyForSymbol(sym))}</p>
                   </div>
+                  {info.earnings?.next_earnings_date != null && (
+                    <div>
+                      <p className="text-xs text-slate-500">下次财报</p>
+                      <p className={cn('font-medium', info.earnings.days_until <= 7 ? 'text-amber-600' : 'text-slate-600')}>
+                        {info.earnings.next_earnings_date}
+                        <span className="ml-1 font-normal text-slate-400">
+                          （{info.earnings.days_until === 0 ? '今天' : `${info.earnings.days_until} 天后`}）
+                        </span>
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -1502,6 +1513,20 @@ function MarketOverview({ data }: { data: any }) {
                     {(info.change_percent || 0) >= 0 ? '+' : ''}{formatNumber(info.change_percent, 2)}%
                   </p>
                 </div>
+                {info.earnings?.next_earnings_date != null && (
+                  <div className="col-span-2 flex justify-between">
+                    <span className="text-slate-500">下次财报</span>
+                    <span className={cn(
+                      "font-medium",
+                      info.earnings.days_until <= 7 ? "text-amber-600" : "text-slate-600"
+                    )}>
+                      {info.earnings.next_earnings_date}
+                      <span className="ml-1 font-normal text-slate-400">
+                        （{info.earnings.days_until === 0 ? '今天' : `${info.earnings.days_until} 天后`}）
+                      </span>
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           ))}

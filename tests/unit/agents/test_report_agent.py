@@ -87,3 +87,26 @@ class TestInvokeLlmContentHandling:
     async def test_string_content_passthrough(self):
         agent = _agent(llm=_StubLLM(content="plain"))
         assert await agent.invoke_llm("hi") == "plain"
+
+
+class TestFinancialDataWiring:
+    async def test_process_passes_financial_data_to_the_section_builder(self, monkeypatch):
+        """The pipeline report path must forward financial_data (earnings
+        calendar) — previously dropped at the report entrance."""
+        from app.services.report_service import ReportService
+
+        captured = {}
+        original = ReportService.build_sections.__func__
+
+        def _capture(cls, data):
+            captured.update(data)
+            return original(cls, data)
+
+        monkeypatch.setattr(ReportService, "build_sections", classmethod(_capture))
+
+        state = _state()
+        state["financial_data"] = {"AAPL": {"earnings_dates": [{"date": "2099-01-01"}]}}
+
+        await _agent().process(state)
+
+        assert captured["financial_data"] == {"AAPL": {"earnings_dates": [{"date": "2099-01-01"}]}}

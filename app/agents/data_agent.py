@@ -29,6 +29,7 @@ from app.tools.data.fetcher import (  # noqa: E402
     BENCHMARK_TICKERS,
     DEFAULT_HISTORY_DAYS,
     benchmark_ticker_for,
+    earnings_records,
     fetch_benchmark_history,
     fetch_cn_news,
     fetch_cn_sector_benchmark,
@@ -193,9 +194,9 @@ def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -
     cash_flow = ticker.cashflow
     info = ticker.info
 
-    earnings_dates = []
-    if ticker.earnings_dates is not None:
-        earnings_dates = ticker.earnings_dates.to_dict("records")
+    # to_dict("records") drops the DatetimeIndex — the date is the one
+    # column the event window needs; earnings_records keeps it.
+    earnings_dates = earnings_records(ticker.earnings_dates)
 
     return {
         "symbol": symbol,

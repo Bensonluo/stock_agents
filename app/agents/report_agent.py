@@ -43,6 +43,7 @@ class ReportGenerationAgent(StatelessAgent):
             "query": query,
             "symbols": symbols,
             "market_data": state.get("market_data", {}),
+            "financial_data": state.get("financial_data", {}),
             "technical_analysis": state.get("technical_analysis", {}),
             "fundamental_analysis": state.get("fundamental_analysis", {}),
             "sentiment_analysis": state.get("sentiment_analysis", {}),
