@@ -25,9 +25,17 @@ _akshare_semaphore = asyncio.Semaphore(5)
 # fetcher) — changing the warm-up horizon must not require two edits.
 # Benchmark indices come from the same seam so pipeline and ReAct tools
 # share ONE cached implementation.
+# Shared CN financial mapping lives in the fetcher seam too (the ReAct
+# provider chain emits the same metrics); the three pure re-exports
+# (F401-suppressed) keep this module the single import point for the
+# agent's call sites and its existing tests.
 from app.tools.data.fetcher import (  # noqa: E402
     BENCHMARK_TICKERS,
     DEFAULT_HISTORY_DAYS,
+    _debt_to_equity_from_asset_ratio,  # noqa: F401
+    _indicator_value,  # noqa: F401
+    _pct_to_ratio,  # noqa: F401
+    _sync_fetch_akshare_financials,
     benchmark_ticker_for,
     earnings_records,
     fetch_benchmark_history,
@@ -44,51 +52,6 @@ def _yfinance_debt_to_equity_ratio(value: Any) -> float | None:
     if value is None:
         return None
     return float(value) / 100.0
-
-
-def _pct_to_ratio(value: Any) -> float | None:
-    """Convert an AkShare percentage (31.0 for 31%) to a decimal ratio."""
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if number != number:  # NaN — AkShare marks missing periods this way
-        return None
-    return number / 100.0
-
-
-def _debt_to_equity_from_asset_ratio(pct: Any) -> float | None:
-    """Debt/equity from AkShare's debt-to-ASSETS percentage.
-
-    D/E = (D/A) / (1 − D/A) — the same balance sheet, converted because the
-    scoring thresholds are equity-based. A ratio of 0 or ≥ 1 means wiped-out
-    equity: D/E is undefined there, not merely huge.
-    """
-    fraction = _pct_to_ratio(pct)
-    if fraction is None or not 0.0 < fraction < 1.0:
-        return None
-    return fraction / (1.0 - fraction)
-
-
-def _indicator_value(row: Any, *names: str) -> Any:
-    """First non-null Sina indicator column matching any alias.
-
-    Live Sina columns carry unit suffixes — ``净资产收益率(%)``,
-    ``摊薄每股收益(元)`` — that appear and vanish across akshare releases;
-    a bare ``row.get("净资产收益率")`` is an exact-index miss against the
-    suffixed name and silently returns None (every CN metric went dark this
-    way until caught live). Aliases match exactly OR as the bare name plus
-    an open paren, so ``净资产收益率`` matches ``净资产收益率(%)`` but never
-    ``加权净资产收益率(%)``. Null/nan cells fall through to the next alias.
-    """
-    columns = [str(column) for column in row.index]
-    for name in names:
-        for column in columns:
-            if column == name or column.startswith(name + "("):
-                value = row[column]
-                if value is not None and pd.notna(value):
-                    return value
-    return None
 
 
 def convert_to_yahoo_symbol(symbol: str) -> str:
@@ -345,48 +308,6 @@ def _sync_fetch_akshare_stock_info(symbol: str, spot_df) -> dict[str, Any] | Non
         "low": row.get("最低"),
         "open": row.get("今开"),
         "previous_close": row.get("昨收"),
-        "timestamp": datetime.now().isoformat(),
-    }
-
-
-def _sync_fetch_akshare_financials(symbol: str, ak) -> dict[str, Any] | None:
-    """Synchronous AkShare financials fetch — runs in thread pool."""
-    df = ak.stock_financial_analysis_indicator(symbol=symbol)
-
-    if df.empty:
-        return None
-
-    latest = df.iloc[-1]
-    return {
-        "symbol": symbol,
-        "metrics": {
-            # Canonical names + ratio units — the same keys and thresholds
-            # the yfinance path emits and scoring.py buckets. The old renamed
-            # keys (net_margin) scored zero, and percent-valued ROE maxed
-            # every threshold it touched.
-            "roe": _pct_to_ratio(_indicator_value(latest, "净资产收益率")),
-            # Total-asset return has worn three spellings across releases.
-            "roa": _pct_to_ratio(
-                _indicator_value(latest, "总资产净利润率", "总资产利润率", "总资产净利率")
-            ),
-            "gross_margin": _pct_to_ratio(_indicator_value(latest, "销售毛利率")),
-            "profit_margin": _pct_to_ratio(_indicator_value(latest, "销售净利率")),
-            "debt_to_asset": _pct_to_ratio(_indicator_value(latest, "资产负债率")),
-            "debt_to_equity": _debt_to_equity_from_asset_ratio(
-                _indicator_value(latest, "资产负债率")
-            ),
-            "current_ratio": _indicator_value(latest, "流动比率"),
-            "quick_ratio": _indicator_value(latest, "速动比率"),
-            # Valuation inputs — without these every A-share scored
-            # insufficient_data on the whole scenario-valuation engine.
-            # The rows are cumulative report periods, but the earnings
-            # method's scenario VALUES are EPS-invariant (eps cancels
-            # through price/eps), so a partial-year row distorts only the
-            # displayed multiple assumption, never the range.
-            "trailing_eps": _indicator_value(latest, "摊薄每股收益", "加权每股收益"),
-            "earnings_growth": _pct_to_ratio(_indicator_value(latest, "净利润增长率")),
-            "revenue_growth": _pct_to_ratio(_indicator_value(latest, "主营业务收入增长率")),
-        },
         "timestamp": datetime.now().isoformat(),
     }
 
