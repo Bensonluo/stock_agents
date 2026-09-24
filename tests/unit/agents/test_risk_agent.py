@@ -190,3 +190,94 @@ async def test_insufficient_price_history_does_not_claim_numeric_risk_or_positio
     assert result["risk_score"] is None
     assert result["risk_level"] == "insufficient_data"
     assert result["position_recommendation"]["max_position_size"] is None
+
+
+def test_diversification_score_discounts_by_measured_correlation() -> None:
+    agent = RiskAssessmentAgent()
+    three = {s: {"risk_score": 40} for s in ("AAA", "BBB", "CCC")}  # tier 40
+
+    assert agent._calculate_diversification_score(three) == 40  # legacy, no evidence
+    assert agent._calculate_diversification_score(three, 0.25) == 30  # 40 * 0.75
+    assert agent._calculate_diversification_score(three, 1.0) == 0  # nothing diversified
+    assert agent._calculate_diversification_score(three, -1.0) == 80  # 40 * 2
+
+    twenty = {f"S{i}": {"risk_score": 40} for i in range(20)}  # tier 100
+    assert agent._calculate_diversification_score(twenty, -0.5) == 100  # 150 -> clamped
+
+
+def test_portfolio_summary_without_histories_reports_insufficient_correlations() -> None:
+    agent = RiskAssessmentAgent()
+
+    result = agent._assess_portfolio_risk(
+        {
+            "AAA": {"risk_score": 40, "risk_level": "medium"},
+            "BBB": {"risk_score": 40, "risk_level": "medium"},
+        }
+    )
+
+    assert result["correlations"]["status"] == "insufficient_data"
+    assert result["avg_pairwise_correlation"] is None
+    assert result["diversification_score"] == 20  # count tier unchanged
+
+
+@pytest.mark.asyncio
+async def test_portfolio_summary_discounts_diversification_by_correlation() -> None:
+    agent = RiskAssessmentAgent()
+    returns = np.array([0.02, -0.01] * 12)  # 24 alternating days, dates align
+
+    result = await agent.process(
+        {
+            "symbols": ["AAA", "BBB"],
+            "market_data": {
+                "AAA": {"symbol": "AAA", "historical_data": _history(returns)},
+                # 1.5x the same returns -> pairwise correlation exactly 1.0
+                "BBB": {"symbol": "BBB", "historical_data": _history(returns * 1.5)},
+            },
+        }
+    )
+
+    portfolio = result["portfolio_risk"]
+    assert portfolio["correlations"]["pairs"] == {"AAA|BBB": 1.0}
+    assert portfolio["avg_pairwise_correlation"] == 1.0
+    assert portfolio["diversification_score"] == 0  # 20 * (1 - 1)
+
+
+@pytest.mark.asyncio
+async def test_negative_correlation_lifts_diversification_score() -> None:
+    agent = RiskAssessmentAgent()
+    returns = np.array([0.02, -0.01] * 12)
+
+    result = await agent.process(
+        {
+            "symbols": ["AAA", "BBB"],
+            "market_data": {
+                "AAA": {"symbol": "AAA", "historical_data": _history(returns)},
+                "BBB": {"symbol": "BBB", "historical_data": _history(-returns / 2)},
+            },
+        }
+    )
+
+    portfolio = result["portfolio_risk"]
+    assert portfolio["avg_pairwise_correlation"] == -1.0
+    assert portfolio["diversification_score"] == 40  # 20 * (1 - (-1))
+
+
+@pytest.mark.asyncio
+async def test_short_histories_keep_count_based_diversification() -> None:
+    agent = RiskAssessmentAgent()
+    returns = np.array([0.02, -0.01] * 5)  # 10 returns < 20-observation guard
+
+    result = await agent.process(
+        {
+            "symbols": ["AAA", "BBB"],
+            "market_data": {
+                "AAA": {"symbol": "AAA", "historical_data": _history(returns)},
+                "BBB": {"symbol": "BBB", "historical_data": _history(returns)},
+            },
+        }
+    )
+
+    portfolio = result["portfolio_risk"]
+    assert portfolio["correlations"]["status"] == "insufficient_data"
+    assert portfolio["avg_pairwise_correlation"] is None
+    assert portfolio["diversification_score"] == 20  # legacy count tier

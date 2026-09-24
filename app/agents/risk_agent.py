@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from app.agents.base import StatelessAgent
+from app.analysis.risk import correlation_matrix
 from app.orchestration.state import AgentState
 from app.tools.risk.assessment import (
     _calculate_beta,
@@ -66,7 +67,16 @@ class RiskAssessmentAgent(StatelessAgent):
         # Calculate portfolio-level risk if multiple symbols
         portfolio_risk = None
         if len(results) > 1:
-            portfolio_risk = self._assess_portfolio_risk(results)
+            # Histories of the names actually assessed — the correlation view
+            # must describe the same portfolio as the score aggregation.
+            histories = {
+                symbol: data["historical_data"]
+                for symbol, data in market_data.items()
+                if symbol in results
+                and isinstance(data.get("historical_data"), dict)
+                and data["historical_data"]
+            }
+            portfolio_risk = self._assess_portfolio_risk(results, histories)
 
         return {
             "risk_by_symbol": results,
@@ -102,11 +112,15 @@ class RiskAssessmentAgent(StatelessAgent):
         """Minimal assessment for symbols without usable history."""
         return _minimal_risk(data, data.get("symbol", ""))
 
-    def _assess_portfolio_risk(self, results: dict[str, dict]) -> dict[str, Any]:
+    def _assess_portfolio_risk(
+        self, results: dict[str, dict], histories: dict[str, dict] | None = None
+    ) -> dict[str, Any]:
         """Assess portfolio-level risk.
 
         Args:
             results: Risk assessment by symbol
+            histories: Per-symbol price history (dates/close) for correlations;
+                without it the correlation view degrades to insufficient_data.
 
         Returns:
             Portfolio risk summary
@@ -122,6 +136,20 @@ class RiskAssessmentAgent(StatelessAgent):
         # Count by risk level
         risk_levels = [r.get("risk_level", "medium") for r in results.values()]
 
+        # Pairwise correlations across the analyzed names — the holdings-count
+        # tier alone cannot tell five tech names from five cross-sector names.
+        correlations = (
+            correlation_matrix(histories)
+            if histories
+            else {"status": "insufficient_data", "pairs": {}}
+        )
+        pairs = correlations.get("pairs") or {}
+        avg_correlation = (
+            sum(pairs.values()) / len(pairs)
+            if correlations.get("status") == "available" and pairs
+            else None
+        )
+
         return {
             "avg_risk_score": avg_risk_score,
             "portfolio_risk_level": self._risk_score_to_level(avg_risk_score),
@@ -133,31 +161,48 @@ class RiskAssessmentAgent(StatelessAgent):
                 "very_low": risk_levels.count("very_low"),
                 "insufficient_data": risk_levels.count("insufficient_data"),
             },
-            "diversification_score": self._calculate_diversification_score(results),
+            "diversification_score": self._calculate_diversification_score(
+                results, avg_correlation
+            ),
+            "correlations": correlations,
+            "avg_pairwise_correlation": (
+                round(avg_correlation, 4) if avg_correlation is not None else None
+            ),
         }
 
-    def _calculate_diversification_score(self, results: dict[str, dict]) -> float:
-        """Calculate diversification score.
+    def _calculate_diversification_score(
+        self, results: dict[str, dict], avg_correlation: float | None = None
+    ) -> int:
+        """Calculate diversification score (0-100).
+
+        The holdings-count tier is the ceiling; measured average pairwise
+        correlation discounts it — perfectly correlated names diversify
+        nothing (0), negative correlation earns the full tier. Without
+        correlation evidence the count tier stands (legacy behavior).
 
         Args:
             results: Risk assessment by symbol
+            avg_correlation: Mean of pairwise return correlations, when known
 
         Returns:
             Diversification score (0-100)
         """
-        # Simple metric based on number of holdings
         num_holdings = len(results)
 
         if num_holdings >= 20:
-            return 100
+            score = 100.0
         elif num_holdings >= 10:
-            return 80
+            score = 80.0
         elif num_holdings >= 5:
-            return 60
+            score = 60.0
         elif num_holdings >= 3:
-            return 40
+            score = 40.0
         else:
-            return 20
+            score = 20.0
+
+        if avg_correlation is not None:
+            score = max(0.0, min(100.0, score * (1.0 - avg_correlation)))
+        return round(score)
 
     def _calculate_overall_risk(self, results: dict[str, dict]) -> str:
         """Calculate overall risk level for the analysis.
