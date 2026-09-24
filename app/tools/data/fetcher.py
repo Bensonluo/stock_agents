@@ -231,6 +231,46 @@ async def fetch_cn_sector_benchmark(symbol: str) -> dict[str, Any] | None:
     return bench
 
 
+def fetch_cn_news(symbol: str) -> list[dict[str, Any]] | None:
+    """East Money per-stock news for an A-share (akshare ``stock_news_em``).
+
+    yfinance covers A-share symbols sparsely and in English; this is the
+    native Chinese feed. Same article shape the pipeline's yfinance path
+    emits so dedup/scoring consume both without branching. Returns None on
+    any failure so the caller keeps whatever the primary fetch produced.
+    """
+    try:
+        import akshare as ak
+    except ImportError:
+        return None
+    try:
+        df = ak.stock_news_em(symbol=symbol)
+    except Exception as e:
+        logger.warning(f"[akshare] CN news failed for {symbol}: {e}")
+        return None
+    if df is None or df.empty or "新闻标题" not in df.columns:
+        return None
+
+    articles: list[dict[str, Any]] = []
+    for _, row in df.head(20).iterrows():
+        title = str(row.get("新闻标题") or "").strip()
+        if not title:
+            continue
+        content = str(row.get("新闻内容") or "").strip()
+        articles.append(
+            {
+                "title": title,
+                "link": str(row.get("新闻链接") or "").strip() or None,
+                "published": str(row.get("发布时间") or "").strip() or None,
+                "source": str(row.get("文章来源") or "").strip() or None,
+                "summary": content[:300] if content else None,
+                "related_symbols": [symbol],
+                "original_symbol": symbol,
+            }
+        )
+    return articles or None
+
+
 def _is_hk_symbol(symbol: str) -> bool:
     """HK-listed codes: '0700.HK'/'00700.HK' suffixed, or bare 4-5 digit
     zero-padded codes ('0700', '00700')."""

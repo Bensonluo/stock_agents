@@ -30,6 +30,7 @@ from app.tools.data.fetcher import (  # noqa: E402
     DEFAULT_HISTORY_DAYS,
     benchmark_ticker_for,
     fetch_benchmark_history,
+    fetch_cn_news,
     fetch_cn_sector_benchmark,
     fetch_stock_data,
     sector_benchmark_ticker,
@@ -613,24 +614,36 @@ class DataCollectionAgent(BaseAgent):
     async def _fetch_news(self, symbol: str) -> list[dict[str, Any]]:
         """Fetch news for a symbol.
 
+        A-shares (6-digit codes) additionally pull the East Money native
+        feed — yfinance covers them sparsely and in English only. The
+        execute-level dedup folds any cross-source overlap.
+
         Args:
             symbol: Stock symbol
 
         Returns:
             List of news articles
         """
+        yahoo_symbol = convert_to_yahoo_symbol(symbol)
+        articles: list[dict[str, Any]] = []
         try:
-            yahoo_symbol = convert_to_yahoo_symbol(symbol)
-
             async with _yfinance_semaphore:
                 articles = await asyncio.to_thread(_sync_fetch_news, yahoo_symbol, symbol)
-
-            logger.info(f"Fetched {len(articles)} news articles for {symbol}")
-            return articles
-
         except Exception as e:
             logger.error(f"Error fetching news for {symbol}: {e}")
-            return []
+
+        if symbol.isdigit() and len(symbol) == 6:
+            try:
+                cn_articles = await asyncio.to_thread(fetch_cn_news, symbol)
+            except Exception as e:
+                logger.warning(f"CN news feed failed for {symbol}: {e}")
+                cn_articles = None
+            if cn_articles:
+                articles = articles + cn_articles
+
+        if articles:
+            logger.info(f"Fetched {len(articles)} news articles for {symbol}")
+        return articles
 
     def _historical_data_to_dict(self, df: pd.DataFrame) -> dict[str, Any]:
         """Convert historical price DataFrame to dictionary.

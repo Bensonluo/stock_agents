@@ -43,6 +43,23 @@ POSITIVE_WORDS = {
     "expansion",
     "dividend",
     "success",
+    # Chinese A-share headlines arrive via the East Money feed; the same
+    # substring floor scores them (the LLM layer is the semantic upgrade).
+    "上涨",
+    "涨停",
+    "增长",
+    "盈利",
+    "新高",
+    "突破",
+    "回购",
+    "增持",
+    "中标",
+    "上调",
+    "利好",
+    "反弹",
+    "走强",
+    "扭亏",
+    "分红",
 }
 
 NEGATIVE_WORDS = {
@@ -68,6 +85,22 @@ NEGATIVE_WORDS = {
     "lawsuit",
     "fraud",
     "risk",
+    "下跌",
+    "跌停",
+    "暴跌",
+    "破发",
+    "亏损",
+    "下滑",
+    "违规",
+    "处罚",
+    "减持",
+    "质押",
+    "退市",
+    "违约",
+    "利空",
+    "走弱",
+    "诉讼",
+    "爆雷",
 }
 
 
