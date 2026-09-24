@@ -87,6 +87,17 @@ function ReactMonitor({ threadId }: { threadId: string }) {
     return () => clearInterval(interval)
   }, [threadId, polling, fetchProgress])
 
+  useEffect(() => {
+    if (progress?.status !== 'completed') return
+    // Completed — give the final status one visible beat, then land on the
+    // report. Failed runs stay here so the error remains inspectable.
+    const redirect = setTimeout(
+      () => router.push(`/result?thread_id=${threadId}&mode=react`),
+      2000
+    )
+    return () => clearTimeout(redirect)
+  }, [progress?.status, router, threadId])
+
   const stepInfo = STEP_LABELS[progress?.current_step || 'starting'] || STEP_LABELS.starting
   const iterPct = progress ? Math.round((progress.iteration / progress.max_iterations) * 100) : 0
 
