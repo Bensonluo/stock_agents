@@ -140,6 +140,14 @@ export const API = {
     return response.json() as Promise<ICDecayResponse>
   },
 
+  getConfidenceCalibration: async (horizonBars = 20) => {
+    const response = await fetch(
+      `${API_BASE_URL}/api/history/ic/calibration?horizon_bars=${horizonBars}`
+    )
+    if (!response.ok) throw new Error('Failed to get confidence calibration')
+    return response.json() as Promise<ConfidenceCalibrationResponse>
+  },
+
   // Monitoring endpoints
   getHealth: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/health`)
@@ -460,6 +468,32 @@ export interface ICDecayResponse {
   horizons: ICDecayPoint[]
   status: 'ok' | 'insufficient_history'
   caveat: string
+  execution_time?: number
+}
+
+export interface ReliabilityBin {
+  bin_low: number
+  bin_high: number
+  n: number
+  avg_confidence: number
+  empirical_rate: number
+}
+
+export interface ConfidenceCalibrationResponse {
+  method: string
+  horizon_bars: number
+  records_examined: number
+  runs_evaluated: number
+  runs_pending_maturity: number
+  runs_skipped: number
+  caveat: string
+  status: 'ok' | 'insufficient_history'
+  predictions?: number
+  base_rate?: number
+  avg_confidence?: number
+  brier_score?: number | null
+  brier_skill_score?: number | null
+  reliability?: ReliabilityBin[]
   execution_time?: number
 }
 
