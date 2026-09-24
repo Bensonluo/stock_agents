@@ -977,7 +977,23 @@ function ReactReport({ answer, report: structuredReport }: {
                   <div key={sym} className="p-3 bg-slate-50 rounded-lg space-y-1 text-sm">
                     <p className="font-medium mb-1">{sym}</p>
                     <div className="flex justify-between"><span className="text-slate-500">趋势</span><span className={trendColor(t.trend)}>{trendZh(t.trend)}</span></div>
+                    {t.macd != null && (
+                      <div className="flex justify-between"><span className="text-slate-500">MACD</span><span className={trendColor(t.macd)}>{trendZh(t.macd)}</span></div>
+                    )}
                     <div className="flex justify-between"><span className="text-slate-500">RSI</span><span className={trendColor(t.rsi)}>{trendZh(t.rsi)}</span></div>
+                    {(t.support?.s1 != null || t.resistance?.r1 != null) && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">支撑 / 压力</span>
+                        <span className="font-medium">
+                          <span className="text-green-700">{t.support?.s1 != null ? formatNumber(t.support.s1) : '-'}</span>
+                          {' / '}
+                          <span className="text-red-700">{t.resistance?.r1 != null ? formatNumber(t.resistance.r1) : '-'}</span>
+                        </span>
+                      </div>
+                    )}
+                    {t.freshness?.stale && (
+                      <p className="text-xs text-amber-600">⚠ 数据截至 {t.freshness.as_of}（{t.freshness.age_days} 天前，已陈旧）</p>
+                    )}
                     <div className="flex justify-between"><span className="text-slate-500">情绪分</span><span className={cn('font-medium', (t.sentiment_score || 0) >= 0 ? 'text-green-600' : 'text-red-600')}>{formatNumber(t.sentiment_score, 0)}</span></div>
                     {alignment && !['insufficient_data', 'unknown'].includes(alignment) && (
                       <div className="flex justify-between">
