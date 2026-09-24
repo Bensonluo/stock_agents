@@ -82,12 +82,6 @@ export const API = {
     return response.json()
   },
 
-  getSymbolData: async (symbol: string) => {
-    const response = await fetch(`${API_BASE_URL}/api/analysis/symbols/${symbol}`)
-    if (!response.ok) throw new Error('Failed to get symbol data')
-    return response.json() as Promise<SymbolDataResponse>
-  },
-
   // Backtest endpoints
   runBacktest: async (data: BacktestRequest) => {
     const response = await fetch(`${API_BASE_URL}/api/backtest/run`, {
@@ -242,19 +236,6 @@ export interface AnalysisResultResponse {
   decisions: any
   report: any
   execution_time: number
-  timestamp: string
-}
-
-export interface SymbolDataResponse {
-  symbol: string
-  data: {
-    price?: number
-    change?: number
-    changePercent?: number
-    volume?: number
-    marketCap?: number
-    [key: string]: any
-  }
   timestamp: string
 }
 

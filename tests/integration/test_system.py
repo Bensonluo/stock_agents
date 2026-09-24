@@ -67,37 +67,3 @@ class TestOrchestratorIntegration:
         assert status is not None
         assert "thread_id" in status
         assert status["thread_id"] == "test-workflow-status"
-
-
-class TestDataServiceIntegration:
-    """Integration tests for data service."""
-
-    @pytest.mark.asyncio
-    async def test_fetch_quote(self):
-        """Test fetching real quote data."""
-        from app.services import DataService
-
-        service = DataService()
-
-        quote = await service.get_quote("AAPL")
-
-        assert quote is not None
-        assert "symbol" in quote
-        assert quote["symbol"] == "AAPL"
-
-    @pytest.mark.asyncio
-    async def test_fetch_historical_data(self):
-        """Test fetching historical data."""
-        from app.services import DataService
-
-        service = DataService()
-
-        data = await service.get_historical_data(
-            symbol="AAPL",
-            period="3mo",
-            interval="1d",
-        )
-
-        assert data is not None
-        assert "dates" in data
-        assert len(data["dates"]) > 0

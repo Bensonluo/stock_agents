@@ -315,39 +315,6 @@ async def analyze_stocks_sync(request: StockAnalysisRequest) -> AnalysisResultRe
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/symbols/{symbol}")
-async def get_symbol_data(symbol: str):
-    """Get basic data for a single symbol.
-
-    Args:
-        symbol: Stock symbol
-
-    Returns:
-        Symbol data
-    """
-    # Validate symbol
-    if not validate_stock_symbol(symbol):
-        raise HTTPException(status_code=400, detail=f"Invalid stock symbol: {symbol}")
-
-    symbol = symbol.upper()
-
-    try:
-        from app.services.data_service import DataService
-
-        data_service = DataService()
-        data = await data_service.get_quote(symbol)
-
-        return {
-            "symbol": symbol,
-            "data": data,
-            "timestamp": datetime.now().isoformat(),
-        }
-
-    except Exception as e:
-        logger.error(f"Error fetching data for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 # Background task function
 async def _execute_workflow(thread_id: str, request: StockAnalysisRequest):
     """Execute workflow in background.
