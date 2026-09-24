@@ -227,6 +227,7 @@ async def _yfinance_fetch(symbol: str) -> dict[str, Any] | None:
                     "company_name": info.get("longName"),
                     "sector": info.get("sector"),
                     "industry": info.get("industry"),
+                    "currency": info.get("currency"),
                     "historical_data": _hist_df_to_dict(hist),
                 }
 

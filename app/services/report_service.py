@@ -111,6 +111,8 @@ class ReportService:
                 "change_percent": mkt.get("change_percent"),
                 "volume": mkt.get("volume"),
                 "sector": mkt.get("sector"),
+                "currency": mkt.get("currency"),
+                "market_cap": mkt.get("market_cap"),
                 "as_of": mkt.get("as_of"),
             }
         return {

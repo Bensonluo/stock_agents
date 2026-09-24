@@ -38,10 +38,27 @@ function formatAdv(num: number | undefined | null, currency: string): string {
   return `${(num / 1e6).toFixed(1)}M`
 }
 
-// 格式化货币
-function formatCurrency(num: number | undefined): string {
-  if (num === undefined || num === null || isNaN(num as number)) return '-'
-  return `$${(num as number).toFixed(2)}`
+// 格式化货币（CNY → ¥，HKD → HK$，其余 $）
+function formatCurrency(num: number | undefined, currency?: string): string {
+  if (num === undefined || num === null || isNaN(num)) return '-'
+  const symbol = currency === 'CNY' ? '¥' : currency === 'HKD' ? 'HK$' : '$'
+  return `${symbol}${num.toFixed(2)}`
+}
+
+// 按标的推断币种（镜像后端 _liquidity_block 语义）：6 位数字 → CNY，
+// .HK → HKD，其余 USD。仅在 overview 未带 currency 时兜底。
+function currencyForSymbol(symbol: string): string {
+  if (symbol.toUpperCase().includes('.HK')) return 'HKD'
+  if (/^\d{6}$/.test(symbol)) return 'CNY'
+  return 'USD'
+}
+
+// 格式化市值（CNY 按亿，USD 按 B —— A 股市值以亿计是本土惯例）
+function formatMarketCap(num: number | undefined | null, currency?: string): string {
+  if (num === undefined || num === null || isNaN(num)) return '-'
+  if (currency === 'CNY') return `¥${(num / 1e8).toFixed(0)}亿`
+  if (num >= 1e12) return `$${(num / 1e12).toFixed(2)}T`
+  return `$${(num / 1e9).toFixed(2)}B`
 }
 
 // 智能体中文名称
@@ -494,7 +511,7 @@ function PipelineResultPage({ threadId }: { threadId: string | null }) {
                     <DollarSign className="h-5 w-5 text-slate-400" />
                     <div>
                       <p className="text-xs text-slate-500">当前价格</p>
-                      <p className="text-lg font-semibold">{formatCurrency(decision.price_targets.current)}</p>
+                      <p className="text-lg font-semibold">{formatCurrency(decision.price_targets.current, currencyForSymbol(decision.symbol))}</p>
                     </div>
                   </div>
                   {decision.price_targets.target && (
@@ -502,7 +519,7 @@ function PipelineResultPage({ threadId }: { threadId: string | null }) {
                       <Target className="h-5 w-5 text-green-500" />
                       <div>
                         <p className="text-xs text-slate-500">目标价</p>
-                        <p className="text-lg font-semibold text-green-600">{formatCurrency(decision.price_targets.target)}</p>
+                        <p className="text-lg font-semibold text-green-600">{formatCurrency(decision.price_targets.target, currencyForSymbol(decision.symbol))}</p>
                       </div>
                     </div>
                   )}
@@ -511,7 +528,7 @@ function PipelineResultPage({ threadId }: { threadId: string | null }) {
                       <Shield className="h-5 w-5 text-red-500" />
                       <div>
                         <p className="text-xs text-slate-500">止损价</p>
-                        <p className="text-lg font-semibold text-red-600">{formatCurrency(decision.price_targets.stop_loss)}</p>
+                        <p className="text-lg font-semibold text-red-600">{formatCurrency(decision.price_targets.stop_loss, currencyForSymbol(decision.symbol))}</p>
                       </div>
                     </div>
                   )}
@@ -869,13 +886,13 @@ function ReactReport({ answer, report: structuredReport }: {
                   {(rec.entry != null || rec.stop_loss != null || rec.take_profit != null || rec.position_size != null) && (
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-3 p-2.5 bg-slate-50 rounded-lg text-xs">
                       {rec.entry != null && (
-                        <div className="flex justify-between"><span className="text-slate-500">建议买入区</span><span className="font-medium">{formatCurrency(rec.entry)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">建议买入区</span><span className="font-medium">{formatCurrency(rec.entry, currencyForSymbol(sym))}</span></div>
                       )}
                       {rec.stop_loss != null && (
-                        <div className="flex justify-between"><span className="text-slate-500">止损价</span><span className="font-medium text-red-600">{formatCurrency(rec.stop_loss)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">止损价</span><span className="font-medium text-red-600">{formatCurrency(rec.stop_loss, currencyForSymbol(sym))}</span></div>
                       )}
                       {rec.take_profit != null && (
-                        <div className="flex justify-between"><span className="text-slate-500">止盈价</span><span className="font-medium text-green-600">{formatCurrency(rec.take_profit)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">止盈价</span><span className="font-medium text-green-600">{formatCurrency(rec.take_profit, currencyForSymbol(sym))}</span></div>
                       )}
                       {rec.position_size != null && (
                         <div className="flex justify-between col-span-2"><span className="text-slate-500">建议仓位</span><span className="font-medium">{formatNumber(rec.position_size, 1)}% 的投资组合</span></div>
@@ -934,7 +951,7 @@ function ReactReport({ answer, report: structuredReport }: {
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
                     <p className="text-xs text-slate-500">当前价</p>
-                    <p className="font-semibold">{formatCurrency(info.current_price)}</p>
+                    <p className="font-semibold">{formatCurrency(info.current_price, info.currency || currencyForSymbol(sym))}</p>
                   </div>
                   <div>
                     <p className="text-xs text-slate-500">涨跌幅</p>
@@ -948,7 +965,7 @@ function ReactReport({ answer, report: structuredReport }: {
                   </div>
                   <div>
                     <p className="text-xs text-slate-500">市值</p>
-                    <p className="font-medium">{info.market_cap ? '$' + formatNumber(info.market_cap / 1e9, 2) + 'B' : '-'}</p>
+                    <p className="font-medium">{formatMarketCap(info.market_cap, info.currency || currencyForSymbol(sym))}</p>
                   </div>
                 </div>
               </div>
@@ -1057,7 +1074,7 @@ function ReactReport({ answer, report: structuredReport }: {
                                   {sc === 'bear' ? '悲观' : sc === 'base' ? '基准' : '乐观'}
                                 </p>
                                 <p className={cn('text-sm font-semibold', sc === 'bear' ? 'text-red-600' : sc === 'bull' ? 'text-green-600' : 'text-slate-700')}>
-                                  {first?.value != null ? formatCurrency(first.value) : '-'}
+                                  {first?.value != null ? formatCurrency(first.value, currencyForSymbol(sym)) : '-'}
                                 </p>
                                 {first?.upside_pct != null && (
                                   <p className={cn('text-xs', first.upside_pct >= 0 ? 'text-green-600' : 'text-red-600')}>
