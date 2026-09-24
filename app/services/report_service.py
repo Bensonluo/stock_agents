@@ -94,9 +94,11 @@ class ReportService:
         risk = data.get("risk_assessment") or {}
         portfolio_risk: dict[str, Any] = {}
         overall_risk_level = "medium"
+        market_regime: dict[str, Any] | None = None
         if "risk_by_symbol" in risk:  # pipeline shape nests per-symbol data
             portfolio_risk = risk.get("portfolio_risk") or {}
             overall_risk_level = risk.get("overall_risk_level", "medium")
+            market_regime = risk.get("market_regime")
             risk = risk.get("risk_by_symbol") or {}
 
         sentiment = data.get("sentiment_analysis") or {}
@@ -115,6 +117,7 @@ class ReportService:
             "overall_sentiment": overall_sentiment,
             "risk_flat": risk,
             "portfolio_risk": portfolio_risk,
+            "market_regime": market_regime,
             "overall_risk_level": overall_risk_level,
             "decisions": data.get("decisions") or {},
             "research_synthesis": data.get("research_synthesis") or {},
@@ -294,6 +297,7 @@ class ReportService:
         return {
             "by_symbol": by_symbol,
             "portfolio_risk": c["portfolio_risk"],
+            "market_regime": c.get("market_regime"),
             "overall_risk": overall,
         }
 

@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from app.agents.base import StatelessAgent
+from app.analysis.regime import classify_market_regime
 from app.analysis.risk import correlation_matrix
 from app.orchestration.state import AgentState
 from app.tools.risk.assessment import (
@@ -81,9 +82,27 @@ class RiskAssessmentAgent(StatelessAgent):
         return {
             "risk_by_symbol": results,
             "portfolio_risk": portfolio_risk,
+            "market_regime": self._market_regime(market_data),
             "overall_risk_level": self._calculate_overall_risk(results),
             "timestamp": datetime.now().isoformat(),
         }
+
+    def _market_regime(self, market_data: dict[str, Any]) -> dict[str, Any] | None:
+        """Classify the market behind the run from its benchmark series.
+
+        The data layer attaches ``benchmark_historical_data`` to every
+        symbol of the market (iteration 31) — same market within a run,
+        so the first available series speaks for all of them. Pure
+        annotation: nothing downstream reads it into a score yet.
+        """
+        for data in market_data.values():
+            benchmark = data.get("benchmark_historical_data")
+            if not isinstance(benchmark, dict):
+                continue
+            closes = benchmark.get("close")
+            if isinstance(closes, list) and closes:
+                return classify_market_regime(closes)
+        return None
 
     async def _assess_risk(self, symbol: str, data: dict) -> dict[str, Any]:
         """Assess risk for a single symbol via the shared engine path."""

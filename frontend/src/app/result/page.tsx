@@ -1269,6 +1269,39 @@ function ReactReport({ answer, report: structuredReport }: {
                   </p>
                 </div>
               )}
+              {risk.market_regime?.status === 'ok' && (() => {
+                const reg = risk.market_regime
+                const trendZh: Record<string, string> = { bull: '牛市', bear: '熊市', neutral: '震荡' }
+                const trendColor: Record<string, string> = { bull: 'text-green-600', bear: 'text-red-600', neutral: 'text-slate-600' }
+                const volZh: Record<string, string> = { elevated: '高波动', calm: '平静', normal: '正常' }
+                const volColor: Record<string, string> = { elevated: 'text-amber-600', calm: 'text-sky-600', normal: 'text-slate-600' }
+                return (
+                  <div className="p-3 border border-slate-200 rounded-lg space-y-1 text-xs">
+                    {reg.trend != null && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">市场状态（基准 vs SMA200）</span>
+                        <span className="font-medium">
+                          <span className={trendColor[reg.trend] || 'text-slate-600'}>{trendZh[reg.trend] || reg.trend}</span>
+                          {reg.price_vs_sma200 != null && <span className="ml-1 font-normal text-slate-400">{formatPercent(reg.price_vs_sma200)}</span>}
+                        </span>
+                      </div>
+                    )}
+                    {reg.volatility_regime != null && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">波动率状态（20日 vs 全窗）</span>
+                        <span className="font-medium">
+                          <span className={volColor[reg.volatility_regime] || 'text-slate-600'}>{volZh[reg.volatility_regime] || reg.volatility_regime}</span>
+                          {reg.vol_ratio_20d_vs_full != null && <span className="ml-1 font-normal text-slate-400">×{formatNumber(reg.vol_ratio_20d_vs_full, 2)}</span>}
+                        </span>
+                      </div>
+                    )}
+                    {reg.drawdown_from_52w_high != null && (
+                      <div className="flex justify-between"><span className="text-slate-500">距 52 周高点</span><span className={cn('font-medium', reg.drawdown_from_52w_high <= -0.1 ? 'text-red-600' : 'text-slate-600')}>{formatPercent(reg.drawdown_from_52w_high)}</span></div>
+                    )}
+                    <p className="text-slate-400">基于 {reg.bars ?? '-'} 根基准 K 线 · 纯标注，不影响评分</p>
+                  </div>
+                )
+              })()}
             </div>
           </SectionCard>
         )}

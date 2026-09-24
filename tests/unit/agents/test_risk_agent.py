@@ -281,3 +281,49 @@ async def test_short_histories_keep_count_based_diversification() -> None:
     assert portfolio["correlations"]["status"] == "insufficient_data"
     assert portfolio["avg_pairwise_correlation"] is None
     assert portfolio["diversification_score"] == 20  # legacy count tier
+
+
+def test_market_regime_reads_the_benchmark_not_the_symbol() -> None:
+    agent = RiskAssessmentAgent()
+    # Benchmark grinding up 0.2%/bar; the symbol itself is irrelevant —
+    # the regime block speaks for the market, not any single name.
+    market_data = {
+        "TEST": {
+            "symbol": "TEST",
+            "historical_data": _history(np.linspace(-0.01, 0.01, 30)),
+            "benchmark_historical_data": _history(np.linspace(0.001, 0.003, 299)),
+        }
+    }
+
+    regime = agent._market_regime(market_data)
+
+    assert regime is not None
+    assert regime["trend"] == "bull"
+    assert regime["volatility_regime"] is not None
+
+
+def test_market_regime_refuses_without_a_usable_benchmark() -> None:
+    agent = RiskAssessmentAgent()
+    # No benchmark attached (pre-iteration-31 legacy state) → None.
+    assert agent._market_regime({"TEST": {"symbol": "TEST"}}) is None
+    # Benchmark too short to classify → honest refusal, not a guessed regime.
+    short = _history(np.full(40, 0.01))
+    assert agent._market_regime({"TEST": {"benchmark_historical_data": short}}) is None
+
+
+@pytest.mark.asyncio
+async def test_process_attaches_market_regime_alongside_risk() -> None:
+    agent = RiskAssessmentAgent()
+    market_data = {
+        "TEST": {
+            "symbol": "TEST",
+            "historical_data": _history(np.linspace(-0.02, 0.025, 24)),
+            "benchmark_historical_data": _history(np.linspace(0.001, 0.003, 299)),
+        }
+    }
+
+    result = await agent.process({"market_data": market_data, "symbols": ["TEST"]})
+
+    assert "TEST" in result["risk_by_symbol"]
+    assert result["market_regime"] is not None
+    assert result["market_regime"]["trend"] == "bull"

@@ -115,3 +115,33 @@ class TestRiskAnnotationPassthrough:
         assert portfolio["correlations"]["pairs"][0]["pair"] == ["TEST", "BENCH"]
         assert portfolio["avg_pairwise_correlation"] == 0.8
         assert portfolio["diversification_score"] == 30.0
+
+
+def _regime_block() -> dict:
+    return {
+        "status": "ok",
+        "bars": 300,
+        "trend": "bull",
+        "volatility_regime": "normal",
+        "drawdown_from_52w_high": -0.0312,
+        "price_vs_sma200": 0.0641,
+        "vol_ratio_20d_vs_full": 0.98,
+    }
+
+
+class TestMarketRegimePassthrough:
+    def test_regime_reaches_the_risk_section(self) -> None:
+        data = _data(enriched=True)
+        data["risk_assessment"]["market_regime"] = _regime_block()
+
+        regime = ReportService.build_sections(data)["risk_analysis"]["market_regime"]
+
+        assert regime == _regime_block()
+
+    def test_missing_regime_passes_through_as_none(self) -> None:
+        # Pre-iteration-76 records (and benchmark-less runs) carry no regime
+        # key at all — the section still renders, with an honest None.
+        regime = ReportService.build_sections(_data(enriched=True))["risk_analysis"][
+            "market_regime"
+        ]
+        assert regime is None
