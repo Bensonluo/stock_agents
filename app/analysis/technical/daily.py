@@ -117,14 +117,33 @@ def calculate_indicators(df: pd.DataFrame) -> dict[str, Any]:
 
 
 def _rsi(close: pd.Series, period: int = 14) -> float | None:
-    """RSI(14) with simple rolling means (Wilder-smoothing is a later upgrade)."""
+    """RSI(14) with Wilder smoothing — the definition charting platforms use.
+
+    Seed: SMA of the first `period` changes, then the recursive smoothing
+    avg = (prev_avg * (period-1) + x) / period. The old simple rolling
+    means made RSI jumpier than any chart a user would compare against.
+    """
     if len(close) <= period:
         return None
-    delta = close.diff()
-    gain = delta.where(delta > 0, 0.0).rolling(period).mean()
-    loss = (-delta.where(delta < 0, 0.0)).rolling(period).mean()
-    value = (100 - (100 / (1 + gain / loss))).iloc[-1]
-    return round(float(value), 4) if pd.notna(value) else None
+    delta = close.diff().dropna()
+    if len(delta) < period:
+        return None
+
+    gain = delta.clip(lower=0.0).to_numpy()
+    loss = (-delta.clip(upper=0.0)).to_numpy()
+
+    avg_gain = float(gain[:period].mean())
+    avg_loss = float(loss[:period].mean())
+    for i in range(period, len(gain)):
+        avg_gain = (avg_gain * (period - 1) + gain[i]) / period
+        avg_loss = (avg_loss * (period - 1) + loss[i]) / period
+
+    if avg_loss == 0:
+        # All gains (or fully flat): flat has no momentum signal at all.
+        return None if avg_gain == 0 else 100.0
+    rs = avg_gain / avg_loss
+    value = 100.0 - 100.0 / (1.0 + rs)
+    return round(float(value), 4)
 
 
 def _atr(df: pd.DataFrame, period: int = 14) -> float | None:
