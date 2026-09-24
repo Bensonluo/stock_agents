@@ -14,7 +14,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from app.services.ic_service import evaluate_decision_ic
+from app.services.ic_service import evaluate_decision_ic, evaluate_ic_decay
 from app.storage.database import AnalysisRecord, get_database
 
 logger = logging.getLogger(__name__)
@@ -236,6 +236,33 @@ async def decision_layer_ic(
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001
         logger.error(f"[History API] IC 评估失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/ic/decay")
+async def decision_ic_decay(
+    horizons: str = Query("5,10,20,60", description="逗号分隔的前向窗口列表（交易日，最多 6 个）"),
+    limit: int = Query(200, ge=1, le=1000, description="检查的最近完成记录数"),
+):
+    """
+    决策层信号质量：IC 衰减曲线
+
+    一次重放内对多个前向窗口分别算秩 IC——信号排序能力随持有期拉长
+    如何衰减、自然持有期在哪，从不可见变成一条曲线。每个窗口独立
+    判定成熟度（5 日成熟的 run 在 60 日可能仍未成熟）。
+    """
+    from time import time
+
+    start = time()
+    try:
+        parsed = [int(h) for h in horizons.split(",") if h.strip()]
+        result = await evaluate_ic_decay(horizons=parsed, limit=limit)
+        result["execution_time"] = round(time() - start, 3)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[History API] IC 衰减评估失败: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

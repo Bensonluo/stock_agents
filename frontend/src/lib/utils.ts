@@ -106,6 +106,12 @@ export const API = {
     return response.json() as Promise<DecisionICResponse>
   },
 
+  getDecisionICDecay: async () => {
+    const response = await fetch(`${API_BASE_URL}/api/history/ic/decay`)
+    if (!response.ok) throw new Error('Failed to get IC decay')
+    return response.json() as Promise<ICDecayResponse>
+  },
+
   // Monitoring endpoints
   getHealth: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/health`)
@@ -331,6 +337,16 @@ export interface DecisionICResponse {
   icir?: number | null
   t_stat?: number | null
   ic_positive_rate?: number
+  execution_time?: number
+}
+
+export interface ICDecayPoint extends Omit<DecisionICResponse, 'dimensions'> {}
+
+export interface ICDecayResponse {
+  method: string
+  horizons: ICDecayPoint[]
+  status: 'ok' | 'insufficient_history'
+  caveat: string
   execution_time?: number
 }
 

@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from app.services.ic_service import evaluate_decision_ic
+from app.services.ic_service import evaluate_decision_ic, evaluate_ic_decay
 from app.storage.database import AnalysisRecord
 
 pytestmark = pytest.mark.asyncio
@@ -220,3 +220,57 @@ class TestEvaluateDecisionIC:
         )
         assert result["status"] == "ok"
         assert result["dimensions"] == {}
+
+    async def test_decay_maturity_is_per_horizon(self) -> None:
+        dates = _bdates(300)
+        run_idx = 245  # 54 mature bars after the run date
+        series = {
+            sym: (dates, _two_phase_closes(dates, run_idx, rate))
+            for sym, rate in zip("ABCD", (0.001, 0.002, 0.003, 0.004))
+        }
+        record = _record(
+            "t8", f"{dates[run_idx]}T10:00:00", dict(zip("ABCD", (20.0, 40.0, 60.0, 80.0)))
+        )
+        result = await evaluate_ic_decay(
+            horizons=[5, 10, 60], records=[record], fetch_history=_fetcher(series)
+        )
+        points = {p["horizon_bars"]: p for p in result["horizons"]}
+        # 5 and 10 bars mature; 60 does not — the same run is evaluated at
+        # short horizons and pending at the long one.
+        assert points[5]["status"] == "ok"
+        assert points[5]["ic_mean"] == 1.0
+        assert points[10]["status"] == "ok"
+        assert points[60]["runs_pending_maturity"] == 1
+        assert points[60]["status"] == "insufficient_history"
+        assert result["status"] == "ok"
+
+    async def test_decay_fetches_each_symbol_once_across_horizons(self) -> None:
+        dates = _bdates(300)
+        run_idx = 239
+        calls: list[str] = []
+        series = {
+            sym: (dates, _two_phase_closes(dates, run_idx, rate))
+            for sym, rate in zip("ABCD", (0.001, 0.002, 0.003, 0.004))
+        }
+        record = _record(
+            "t9", f"{dates[run_idx]}T10:00:00", dict(zip("ABCD", (20.0, 40.0, 60.0, 80.0)))
+        )
+        await evaluate_ic_decay(
+            horizons=[5, 10, 20, 60],
+            records=[record],
+            fetch_history=_fetcher(series, calls),
+        )
+        # One pass, one fetch per unique symbol — regardless of horizon count.
+        assert sorted(calls) == ["A", "B", "C", "D"]
+
+    async def test_decay_rejects_invalid_horizons(self) -> None:
+        with pytest.raises(ValueError, match="horizons"):
+            await evaluate_ic_decay(horizons=[], records=[], fetch_history=_fetcher({}))
+        with pytest.raises(ValueError, match="horizons"):
+            await evaluate_ic_decay(horizons=[0, 20], records=[], fetch_history=_fetcher({}))
+        with pytest.raises(ValueError, match="horizons"):
+            await evaluate_ic_decay(
+                horizons=[5, 10, 20, 60, 120, 200, 250],
+                records=[],
+                fetch_history=_fetcher({}),
+            )

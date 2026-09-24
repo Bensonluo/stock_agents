@@ -10,7 +10,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Loader2, Target } from 'lucide-react'
-import { API, type DecisionICResponse } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { API, type DecisionICResponse, type ICDecayResponse } from '@/lib/utils'
 
 const HORIZONS = [
   { value: '10', label: '10 交易日' },
@@ -31,6 +32,7 @@ function fmt(value: number | null | undefined, digits = 3): string {
 export function SignalQualityCard() {
   const [horizon, setHorizon] = useState('20')
   const [ic, setIc] = useState<DecisionICResponse | null>(null)
+  const [decay, setDecay] = useState<ICDecayResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -51,10 +53,20 @@ export function SignalQualityCard() {
     void load(horizon)
   }, [horizon, load])
 
+  // The decay curve is horizon-independent — fetch it once on mount.
+  useEffect(() => {
+    API.getDecisionICDecay()
+      .then(setDecay)
+      .catch(() => setDecay(null))
+  }, [])
+
   const isSignal = typeof ic?.t_stat === 'number' && ic.t_stat >= 2
   const isAntiSignal = typeof ic?.t_stat === 'number' && ic.t_stat <= -2
   const dimEntries = Object.entries(ic?.dimensions ?? {}).filter(
     (entry): entry is [string, NonNullable<typeof entry[1]>] => entry[1] !== null
+  )
+  const decayPoints = (decay?.horizons ?? []).filter(
+    (p) => p.status === 'ok' || p.runs_pending_maturity > 0
   )
   const verdict = isSignal
     ? { text: '决策分数的相对排序显著预测了前向收益（t ≥ 2）', cls: 'text-emerald-600 dark:text-emerald-400' }
@@ -184,6 +196,43 @@ export function SignalQualityCard() {
                 ))}
                 <p className="text-[11px] text-muted-foreground/70 pt-1">
                   复合分权重（基本面 45 / 技术面 30 / 情绪面 15）的实证对账——哪个维度真的在排序收益。
+                </p>
+              </div>
+            )}
+            {decayPoints.length > 0 && (
+              <div className="space-y-1">
+                <div className="text-xs font-medium text-muted-foreground">
+                  IC 衰减 · 点击切换主窗口
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {decayPoints.map((point) => {
+                    const active = String(point.horizon_bars) === horizon
+                    const cls =
+                      typeof point.t_stat === 'number' && point.t_stat >= 2
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : typeof point.t_stat === 'number' && point.t_stat <= -2
+                          ? 'text-red-500'
+                          : ''
+                    return (
+                      <Button
+                        key={point.horizon_bars}
+                        variant={active ? 'default' : 'outline'}
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setHorizon(String(point.horizon_bars))}
+                      >
+                        {point.horizon_bars}d
+                        <span className={active ? '' : cls}>
+                          {point.status === 'ok' && typeof point.ic_mean === 'number'
+                            ? `${point.ic_mean >= 0 ? '+' : ''}${point.ic_mean.toFixed(3)}`
+                            : '—'}
+                        </span>
+                      </Button>
+                    )
+                  })}
+                </div>
+                <p className="text-[11px] text-muted-foreground/70 pt-1">
+                  排序能力随持有期拉长的衰减——IC 在哪个窗口最大，信号的天然持有期就在哪。
                 </p>
               </div>
             )}
