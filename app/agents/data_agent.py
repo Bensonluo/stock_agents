@@ -70,6 +70,27 @@ def _debt_to_equity_from_asset_ratio(pct: Any) -> float | None:
     return fraction / (1.0 - fraction)
 
 
+def _indicator_value(row: Any, *names: str) -> Any:
+    """First non-null Sina indicator column matching any alias.
+
+    Live Sina columns carry unit suffixes — ``净资产收益率(%)``,
+    ``摊薄每股收益(元)`` — that appear and vanish across akshare releases;
+    a bare ``row.get("净资产收益率")`` is an exact-index miss against the
+    suffixed name and silently returns None (every CN metric went dark this
+    way until caught live). Aliases match exactly OR as the bare name plus
+    an open paren, so ``净资产收益率`` matches ``净资产收益率(%)`` but never
+    ``加权净资产收益率(%)``. Null/nan cells fall through to the next alias.
+    """
+    columns = [str(column) for column in row.index]
+    for name in names:
+        for column in columns:
+            if column == name or column.startswith(name + "("):
+                value = row[column]
+                if value is not None and pd.notna(value):
+                    return value
+    return None
+
+
 def convert_to_yahoo_symbol(symbol: str) -> str:
     """Convert local symbol format to Yahoo Finance format.
 
@@ -343,14 +364,28 @@ def _sync_fetch_akshare_financials(symbol: str, ak) -> dict[str, Any] | None:
             # the yfinance path emits and scoring.py buckets. The old renamed
             # keys (net_margin) scored zero, and percent-valued ROE maxed
             # every threshold it touched.
-            "roe": _pct_to_ratio(latest.get("净资产收益率")),
-            "roa": _pct_to_ratio(latest.get("总资产净利率")),
-            "gross_margin": _pct_to_ratio(latest.get("销售毛利率")),
-            "profit_margin": _pct_to_ratio(latest.get("销售净利率")),
-            "debt_to_asset": _pct_to_ratio(latest.get("资产负债率")),
-            "debt_to_equity": _debt_to_equity_from_asset_ratio(latest.get("资产负债率")),
-            "current_ratio": latest.get("流动比率"),
-            "quick_ratio": latest.get("速动比率"),
+            "roe": _pct_to_ratio(_indicator_value(latest, "净资产收益率")),
+            # Total-asset return has worn three spellings across releases.
+            "roa": _pct_to_ratio(
+                _indicator_value(latest, "总资产净利润率", "总资产利润率", "总资产净利率")
+            ),
+            "gross_margin": _pct_to_ratio(_indicator_value(latest, "销售毛利率")),
+            "profit_margin": _pct_to_ratio(_indicator_value(latest, "销售净利率")),
+            "debt_to_asset": _pct_to_ratio(_indicator_value(latest, "资产负债率")),
+            "debt_to_equity": _debt_to_equity_from_asset_ratio(
+                _indicator_value(latest, "资产负债率")
+            ),
+            "current_ratio": _indicator_value(latest, "流动比率"),
+            "quick_ratio": _indicator_value(latest, "速动比率"),
+            # Valuation inputs — without these every A-share scored
+            # insufficient_data on the whole scenario-valuation engine.
+            # The rows are cumulative report periods, but the earnings
+            # method's scenario VALUES are EPS-invariant (eps cancels
+            # through price/eps), so a partial-year row distorts only the
+            # displayed multiple assumption, never the range.
+            "trailing_eps": _indicator_value(latest, "摊薄每股收益", "加权每股收益"),
+            "earnings_growth": _pct_to_ratio(_indicator_value(latest, "净利润增长率")),
+            "revenue_growth": _pct_to_ratio(_indicator_value(latest, "主营业务收入增长率")),
         },
         "timestamp": datetime.now().isoformat(),
     }

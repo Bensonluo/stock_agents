@@ -20,6 +20,7 @@ import pytest
 from app.agents.data_agent import (
     AkShareDataAgent,
     _debt_to_equity_from_asset_ratio,
+    _indicator_value,
     _pct_to_ratio,
     _sync_fetch_akshare_financials,
 )
@@ -47,14 +48,22 @@ _SPOT_ROWS = [
     ("300750", 210.0, -4.0, -1.9, 60_000, 1.3e9, 2.8, 216.0, 209.0, 214.0, 214.0),
 ]
 
+# The LIVE Sina indicator table (akshare 1.18.96) carries unit suffixes —
+# 净资产收益率(%), 摊薄每股收益(元) — with 流动比率/速动比率 bare. The old
+# fixture faked bare names for everything, so a bare-name lookup passed tests
+# while production missed every suffixed column (all CN metrics went None).
 _FINANCIAL_COLUMNS = (
-    "净资产收益率",
-    "总资产净利率",
-    "销售毛利率",
-    "销售净利率",
-    "资产负债率",
+    "摊薄每股收益(元)",
+    "加权净资产收益率(%)",  # decoy: must never satisfy a 净资产收益率 lookup
+    "净资产收益率(%)",
+    "总资产净利润率(%)",  # current spelling; the code keeps two older aliases
+    "销售毛利率(%)",
+    "销售净利率(%)",
+    "资产负债率(%)",
     "流动比率",
     "速动比率",
+    "净利润增长率(%)",
+    "主营业务收入增长率(%)",
 )
 
 
@@ -103,7 +112,7 @@ class _FakeAk:
 
     def stock_financial_analysis_indicator(self, symbol: str) -> pd.DataFrame:
         self.financial_calls.append(symbol)
-        values = (31.0, 19.0, 91.0, 49.0, 21.0, 4.2, 3.9)
+        values = (3.2, 25.0, 31.0, 19.0, 91.0, 49.0, 21.0, 4.2, 3.9, 12.0, 9.0)
         return pd.DataFrame([dict(zip(_FINANCIAL_COLUMNS, values))])
 
 
@@ -319,3 +328,58 @@ async def test_ratio_units_land_in_the_right_bucket() -> None:
     assert profitability["score"] == 25.0  # 10 raw of 40 achievable
     assert profitability["metrics_count"] == 1
     assert profitability["details"] == {"roe": 0.08}
+
+
+async def test_indicator_value_matches_suffixed_live_columns() -> None:
+    """A bare alias must find the suffixed column the live table actually sends."""
+    row = pd.Series({"净资产收益率(%)": 31.0, "流动比率": 4.2})
+
+    assert _indicator_value(row, "净资产收益率") == 31.0
+    assert _indicator_value(row, "流动比率") == 4.2
+    assert _indicator_value(row, "不存在的指标") is None
+
+
+async def test_indicator_value_never_matches_a_longer_prefixed_decoy() -> None:
+    """加权净资产收益率(%) is a DIFFERENT metric, not a spelling of ROE."""
+    row = pd.Series({"加权净资产收益率(%)": 25.0})
+
+    assert _indicator_value(row, "净资产收益率") is None
+
+
+async def test_indicator_value_falls_through_null_cells_and_aliases() -> None:
+    """NaN cells and exhausted alias chains must fall through, not return junk."""
+    row = pd.Series({"总资产净利润率(%)": float("nan"), "总资产利润率(%)": 19.0})
+
+    assert _indicator_value(row, "总资产净利润率", "总资产利润率", "总资产净利率") == 19.0
+    assert _indicator_value(row, "完全缺失的指标") is None
+
+
+async def test_cn_financials_carry_valuation_inputs() -> None:
+    """Without eps + growths every A-share scored insufficient_data on valuation."""
+    metrics = _sync_fetch_akshare_financials("600519", _FakeAk())["metrics"]
+
+    assert metrics["trailing_eps"] == 3.2  # 摊薄每股收益(元), not ratio-scaled
+    assert metrics["earnings_growth"] == 0.12
+    assert metrics["revenue_growth"] == 0.09
+    # The decoy must not have leaked into ROE through the suffix match.
+    assert metrics["roe"] == 0.31
+
+
+async def test_cn_metrics_unlock_scenario_valuation() -> None:
+    """CN metrics + a price must produce an available bear/base/bull range."""
+    from app.analysis.valuation import scenario_valuation
+
+    metrics = _sync_fetch_akshare_financials("600519", _FakeAk())["metrics"]
+    valuation = scenario_valuation(
+        symbol="600519",
+        current_price=1650.0,
+        trailing_eps=metrics["trailing_eps"],
+        ps_ratio=metrics.get("ps_ratio"),
+        earnings_growth=metrics.get("earnings_growth"),
+        revenue_growth=metrics.get("revenue_growth"),
+        currency="CNY",
+    )
+
+    assert valuation["status"] == "available"
+    scenarios = valuation["methods"]["earnings_multiple"]["scenarios"]
+    assert set(scenarios) >= {"bear", "base", "bull"}
