@@ -3,6 +3,9 @@
 Threshold-based scoring over snapshot metrics with explicit insufficient_data
 statuses; a missing metric never contributes a neutral score. Thresholds are
 deliberately simple heuristics pending industry/percentile templates (Phase 4).
+Component scores are normalized by the achievable maximum of the metrics
+actually present — data availability must not read as poor quality (the
+growth component always worked this way; the other three now match).
 """
 
 from __future__ import annotations
@@ -12,6 +15,32 @@ from typing import Any
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# (metric key, max points, band direction, tiers). "at_least": points for
+# value >= threshold, tiers descending. "at_most_positive": strictly positive
+# values only (a non-positive PE is not "cheap"). "at_most_nonneg":
+# non-negative values (zero debt is perfect; negative equity is distress).
+_Spec = tuple[str, int, str, tuple[tuple[float, int], ...]]
+
+_PROFITABILITY_SPECS: tuple[_Spec, ...] = (
+    ("roe", 40, "at_least", ((0.20, 40), (0.15, 30), (0.10, 20), (0.05, 10))),
+    ("roa", 20, "at_least", ((0.10, 20), (0.05, 15), (0.02, 10))),
+    ("profit_margin", 20, "at_least", ((0.20, 20), (0.10, 15), (0.05, 10))),
+    ("operating_margin", 20, "at_least", ((0.15, 20), (0.10, 15), (0.05, 10))),
+)
+
+_VALUATION_SPECS: tuple[_Spec, ...] = (
+    ("pe_ratio", 30, "at_most_positive", ((15, 30), (25, 20), (40, 10))),
+    ("pb_ratio", 25, "at_most_positive", ((1, 25), (2, 20), (3, 15))),
+    ("ps_ratio", 25, "at_most_positive", ((2, 25), (4, 20), (6, 15))),
+    ("ev_ebitda", 20, "at_most_positive", ((8, 20), (12, 15), (16, 10))),
+)
+
+_HEALTH_SPECS: tuple[_Spec, ...] = (
+    ("debt_to_equity", 40, "at_most_nonneg", ((0.5, 40), (1, 30), (1.5, 20), (2, 10))),
+    ("current_ratio", 30, "at_least", ((2, 30), (1.5, 25), (1, 15))),
+    ("quick_ratio", 30, "at_least", ((1.5, 30), (1, 25), (0.8, 15))),
+)
 
 
 def analyze_fundamental_scoring(
@@ -45,137 +74,67 @@ def analyze_fundamental_scoring(
     return results
 
 
+def _tier_points(value: float, direction: str, tiers: tuple[tuple[float, int], ...]) -> int:
+    """Points for one metric under its band direction; 0 outside every band."""
+    if direction == "at_most_positive" and value <= 0:
+        return 0
+    if direction == "at_most_nonneg" and value < 0:
+        return 0
+    if direction.startswith("at_most"):
+        return next((points for upper, points in tiers if value <= upper), 0)
+    return next((points for threshold, points in tiers if value >= threshold), 0)
+
+
+def _score_component(metrics: dict, specs: tuple[_Spec, ...]) -> dict:
+    """Score one component against the achievable maximum of present metrics.
+
+    A symbol with only a PE ratio can earn at most 30 raw points; rating that
+    30 against a hardcoded 100 called every PE-only name "poor" — missing
+    data read as bad data. Normalizing by ``achievable`` keeps full-data
+    scores bit-identical (every component's spec table sums to 100) and
+    makes partial-data ratings reflect the quality of what is measurable.
+    """
+    raw = 0
+    achievable = 0
+    details: dict[str, float] = {}
+    for key, max_points, direction, tiers in specs:
+        value = metrics.get(key)
+        if value is None:
+            continue
+        value = float(value)
+        if value != value:  # NaN — never a scoreable observation
+            continue
+        details[key] = value
+        achievable += max_points
+        raw += _tier_points(value, direction, tiers)
+
+    if not details:
+        return {
+            "score": 0,
+            "rating": _score_to_rating(0, 100),
+            "details": details,
+            "status": "insufficient_data",
+        }
+    score = raw / achievable * 100 if achievable else 0.0
+    return {
+        "score": round(score, 2),
+        "rating": _score_to_rating(score, 100),
+        "details": details,
+        "status": "available",
+        "metrics_count": len(details),
+    }
+
+
 def _analyze_profitability(metrics: dict) -> dict:
-    score, details = 0, {}
-    roe = metrics.get("roe")
-    if roe is not None:
-        details["roe"] = float(roe)
-        if roe >= 0.20:
-            score += 40
-        elif roe >= 0.15:
-            score += 30
-        elif roe >= 0.10:
-            score += 20
-        elif roe >= 0.05:
-            score += 10
-    roa = metrics.get("roa")
-    if roa is not None:
-        details["roa"] = float(roa)
-        if roa >= 0.10:
-            score += 20
-        elif roa >= 0.05:
-            score += 15
-        elif roa >= 0.02:
-            score += 10
-    pm = metrics.get("profit_margin")
-    if pm is not None:
-        details["profit_margin"] = float(pm)
-        if pm >= 0.20:
-            score += 20
-        elif pm >= 0.10:
-            score += 15
-        elif pm >= 0.05:
-            score += 10
-    om = metrics.get("operating_margin")
-    if om is not None:
-        details["operating_margin"] = float(om)
-        if om >= 0.15:
-            score += 20
-        elif om >= 0.10:
-            score += 15
-        elif om >= 0.05:
-            score += 10
-    return {
-        "score": score,
-        "rating": _score_to_rating(score, 100),
-        "details": details,
-        "status": "available" if details else "insufficient_data",
-    }
+    return _score_component(metrics, _PROFITABILITY_SPECS)
 
 
-def _analyze_valuation(metrics: dict, mkt: dict) -> dict:
-    score, details = 0, {}
-    pe = metrics.get("pe_ratio")
-    if pe is not None:
-        details["pe_ratio"] = float(pe)
-        if 0 < pe <= 15:
-            score += 30
-        elif 0 < pe <= 25:
-            score += 20
-        elif 0 < pe <= 40:
-            score += 10
-    pb = metrics.get("pb_ratio")
-    if pb is not None:
-        details["pb_ratio"] = float(pb)
-        if 0 < pb <= 1:
-            score += 25
-        elif 0 < pb <= 2:
-            score += 20
-        elif 0 < pb <= 3:
-            score += 15
-    ps = metrics.get("ps_ratio")
-    if ps is not None:
-        details["ps_ratio"] = float(ps)
-        if 0 < ps <= 2:
-            score += 25
-        elif 0 < ps <= 4:
-            score += 20
-        elif 0 < ps <= 6:
-            score += 15
-    ev = metrics.get("ev_ebitda")
-    if ev is not None:
-        details["ev_ebitda"] = float(ev)
-        if 0 < ev <= 8:
-            score += 20
-        elif 0 < ev <= 12:
-            score += 15
-        elif 0 < ev <= 16:
-            score += 10
-    return {
-        "score": score,
-        "rating": _score_to_rating(score, 100),
-        "details": details,
-        "status": "available" if details else "insufficient_data",
-    }
+def _analyze_valuation(metrics: dict, mkt: dict | None = None) -> dict:
+    return _score_component(metrics, _VALUATION_SPECS)
 
 
 def _analyze_financial_health(metrics: dict) -> dict:
-    score, details = 0, {}
-    de = metrics.get("debt_to_equity")
-    if de is not None:
-        details["debt_to_equity"] = float(de)
-        if 0 <= de <= 0.5:
-            score += 40
-        elif de <= 1:
-            score += 30
-        elif de <= 1.5:
-            score += 20
-        elif de <= 2:
-            score += 10
-    cr = metrics.get("current_ratio")
-    if cr is not None:
-        details["current_ratio"] = float(cr)
-        if cr >= 2:
-            score += 30
-        elif cr >= 1.5:
-            score += 25
-        elif cr >= 1:
-            score += 15
-    qr = metrics.get("quick_ratio")
-    if qr is not None:
-        details["quick_ratio"] = float(qr)
-        if qr >= 1.5:
-            score += 30
-        elif qr >= 1:
-            score += 25
-        elif qr >= 0.8:
-            score += 15
-    return {
-        "score": score,
-        "rating": _score_to_rating(score, 100),
-        "details": details,
-        "status": "available" if details else "insufficient_data",
-    }
+    return _score_component(metrics, _HEALTH_SPECS)
 
 
 def _analyze_growth(financial_data: dict) -> dict:

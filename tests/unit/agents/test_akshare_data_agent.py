@@ -300,9 +300,10 @@ async def test_canonical_cn_metrics_actually_score() -> None:
 
     result = analyze_fundamental_scoring({"600519": {"metrics": metrics}})["600519"]
 
-    # roe 0.31 -> 40, roa 0.19 -> 20, profit_margin 0.49 -> 20
-    assert result["profitability"]["score"] == 80
-    # d/e 0.266 -> 40, current 4.2 -> 30, quick 3.9 -> 30
+    # roe 0.31 -> 40, roa 0.19 -> 20, profit_margin 0.49 -> 20: raw 80 of
+    # 80 achievable (no operating_margin) -> normalized 100 since it. 41.
+    assert result["profitability"]["score"] == 100
+    # d/e 0.266 -> 40, current 4.2 -> 30, quick 3.9 -> 30: full 100 of 100.
     assert result["financial_health"]["score"] == 100
 
 
@@ -311,5 +312,6 @@ async def test_ratio_units_land_in_the_right_bucket() -> None:
     scored = analyze_fundamental_scoring({"S": {"metrics": {"roe": _pct_to_ratio(8.0)}}})
 
     profitability = scored["S"]["profitability"]
-    assert profitability["score"] == 10
+    assert profitability["score"] == 25.0  # 10 raw of 40 achievable
+    assert profitability["metrics_count"] == 1
     assert profitability["details"] == {"roe": 0.08}
