@@ -113,6 +113,20 @@ export const API = {
     return response.json() as Promise<WalkForwardResponse>
   },
 
+  calibrateSignals: async (data: CalibrateRequest) => {
+    const response = await fetch(`${API_BASE_URL}/api/backtest/v2/calibrate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Calibration failed' }))
+      const message = typeof error.detail === 'string' ? error.detail : 'Calibration failed'
+      throw new Error(message)
+    }
+    return response.json() as Promise<CalibrateResponse>
+  },
+
   // Decision-layer signal quality endpoints
   getDecisionIC: async (horizonBars = 20) => {
     const response = await fetch(`${API_BASE_URL}/api/history/ic?horizon_bars=${horizonBars}`)
@@ -371,6 +385,33 @@ export interface WalkForwardResponse {
   windows: WalkForwardWindow[]
   aggregate: WalkForwardAggregate
   configs_tested: number
+  manifest?: Record<string, unknown>
+  execution_time?: number
+}
+
+export interface CalibrationHorizon {
+  events: number
+  hit_rate: number | null
+  wilson_lower: number | null
+  avg_forward_return?: number
+  by_year: Record<string, { events: number; hit_rate: number }>
+}
+
+export interface CalibrateRequest {
+  symbol: string
+  strategy: 'sma_crossover' | 'rsi_strategy' | 'macd_strategy'
+  start_date: string
+  end_date: string
+  horizons?: number[]
+  benchmark_symbol?: string | null
+  strategy_params?: Record<string, number>
+}
+
+export interface CalibrateResponse {
+  strategy: string
+  params: Record<string, number>
+  entries_total: number
+  by_horizon: Record<string, CalibrationHorizon>
   manifest?: Record<string, unknown>
   execution_time?: number
 }
