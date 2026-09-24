@@ -159,11 +159,29 @@ def _target_position(data: pd.DataFrame, strategy: str, params: dict[str, Any]) 
 
 
 def _rsi(close: pd.Series, period: int) -> pd.Series:
-    delta = close.diff()
-    gain = delta.where(delta > 0, 0.0).rolling(period).mean()
-    loss = (-delta.where(delta < 0, 0.0)).rolling(period).mean()
-    rsi = 100 - (100 / (1 + gain / loss))
-    return rsi
+    """Wilder RSI over the full series — the same definition the live daily
+    engine (app.analysis.technical.daily._rsi) reports, so backtest fills
+    correspond to signals the live pipeline would actually emit behind the
+    same 30/70 thresholds. The old simple rolling mean produced jumpier
+    values: identical thresholds, different trades. Vectorized Wilder =
+    EMA(alpha=1/period) seeded by the SMA of the first `period` changes.
+    """
+    delta = close.diff().dropna()
+    out = pd.Series(np.nan, index=close.index, dtype=float)
+    if len(delta) < period:
+        return out
+
+    def _wilder(x: pd.Series) -> np.ndarray:
+        seed = float(x.iloc[:period].mean())
+        padded = np.concatenate([[seed], x.iloc[period:].to_numpy()])
+        return pd.Series(padded).ewm(alpha=1 / period, adjust=False).mean().to_numpy()
+
+    avg_gain = _wilder(delta.clip(lower=0.0))
+    avg_loss = _wilder(-delta.clip(upper=0.0))
+    # Values begin at bar index `period` (where the seed completes) — the
+    # same first-value position the old rolling window produced.
+    out.iloc[period:] = 100 - 100 / (1 + avg_gain / avg_loss)
+    return out
 
 
 def _state_machine(entry: pd.Series, exit_: pd.Series) -> pd.Series:

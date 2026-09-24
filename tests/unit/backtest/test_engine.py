@@ -240,3 +240,58 @@ class TestManifest:
         assert manifest["cost_model"]["stamp_tax"] == CN_STOCK.stamp_tax
         assert manifest["configs_tested"] == 6
         assert manifest["code_commit"] is None or len(manifest["code_commit"]) == 40
+
+
+class TestWilderRsi:
+    """The backtest's RSI must be the same Wilder formula the live daily
+    engine reports — same thresholds (30/70), same trades. A simple rolling
+    mean behind identical thresholds silently backtests a different strategy
+    than the one that runs live."""
+
+    @staticmethod
+    def _series(closes: list[float]) -> pd.Series:
+        return pd.Series(closes, index=pd.bdate_range("2024-01-01", periods=len(closes)))
+
+    def test_full_series_last_value_matches_live_daily_engine(self) -> None:
+        from app.analysis.technical.daily import _rsi as daily_rsi
+        from app.backtest.engine import _rsi as backtest_rsi
+
+        closes = [100 + 2 * math.sin(i / 5) + (i % 7) * 0.3 - 0.9 for i in range(120)]
+        series = self._series(closes)
+
+        live = daily_rsi(series, period=14)
+        full = backtest_rsi(series, period=14)
+
+        # The live engine rounds to 4 decimals; the full-series engine agrees.
+        assert full.iloc[-1] == pytest.approx(live, abs=1e-4)
+
+    def test_first_value_at_seed_bar(self) -> None:
+        from app.backtest.engine import _rsi
+
+        series = self._series([100 + (i % 5) - 2.0 for i in range(60)])
+        full = _rsi(series, 14)
+
+        # Warm-up bars carry no signal; the seed completes at bar 14 — the
+        # same first-value position the old rolling window produced.
+        assert full.iloc[:14].isna().all()
+        assert not pd.isna(full.iloc[14])
+
+    def test_monotone_up_is_100(self) -> None:
+        from app.backtest.engine import _rsi
+
+        series = self._series([100.0 * (1.002**i) for i in range(60)])
+        assert _rsi(series, 14).iloc[-1] == pytest.approx(100.0)
+
+    def test_flat_series_is_nan_not_fabricated(self) -> None:
+        from app.backtest.engine import _rsi
+
+        # A flat tape has no momentum signal — 0/0 stays NaN (no trade),
+        # matching the live engine's None contract.
+        series = self._series([50.0] * 60)
+        assert pd.isna(_rsi(series, 14).iloc[-1])
+
+    def test_too_short_series_is_all_nan(self) -> None:
+        from app.backtest.engine import _rsi
+
+        series = self._series([10.0] * 10)
+        assert _rsi(series, 14).isna().all()
