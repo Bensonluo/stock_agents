@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { cn, API } from '@/lib/utils'
 import type { ReactResultResponse } from '@/lib/utils'
+import { ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts'
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') + '/api'
 
@@ -59,6 +60,13 @@ function formatMarketCap(num: number | undefined | null, currency?: string): str
   if (currency === 'CNY') return `¥${(num / 1e8).toFixed(0)}亿`
   if (num >= 1e12) return `$${(num / 1e12).toFixed(2)}T`
   return `$${(num / 1e9).toFixed(2)}B`
+}
+
+// Sparkline 线色（SVG hex，趋势同色系：emerald-500 / red-500 / slate-400）
+function sparkColor(trend: string | undefined): string {
+  if (trend === 'bullish' || trend === 'strong_bullish') return '#10b981'
+  if (trend === 'bearish' || trend === 'strong_bearish') return '#ef4444'
+  return '#94a3b8'
 }
 
 // 智能体中文名称
@@ -992,7 +1000,41 @@ function ReactReport({ answer, report: structuredReport }: {
                 const crosses = Object.entries(weekly.recent_crosses || {})
                 return (
                   <div key={sym} className="p-3 bg-slate-50 rounded-lg space-y-1 text-sm">
-                    <p className="font-medium mb-1">{sym}</p>
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="font-medium">{sym}</p>
+                      {Array.isArray(t.price_spark) && t.price_spark.length > 1 && (() => {
+                        const first = t.price_spark[0]
+                        const last = t.price_spark[t.price_spark.length - 1]
+                        const changePct = ((last - first) / first) * 100
+                        return (
+                          <span className={cn('text-xs tabular-nums', changePct >= 0 ? 'text-green-600' : 'text-red-600')}>
+                            {changePct >= 0 ? '+' : ''}{changePct.toFixed(1)}%
+                          </span>
+                        )
+                      })()}
+                    </div>
+                    {Array.isArray(t.price_spark) && t.price_spark.length > 1 && (
+                      <div className="h-14 -mx-1">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart
+                            data={t.price_spark.map((v: number, i: number) => ({ i, v }))}
+                            margin={{ top: 4, bottom: 0, left: 0, right: 0 }}
+                          >
+                            <YAxis hide domain={['dataMin', 'dataMax']} />
+                            <Area
+                              type="monotone"
+                              dataKey="v"
+                              stroke={sparkColor(t.trend)}
+                              fill={sparkColor(t.trend)}
+                              fillOpacity={0.12}
+                              strokeWidth={1.5}
+                              dot={false}
+                              isAnimationActive={false}
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
                     <div className="flex justify-between"><span className="text-slate-500">趋势</span><span className={trendColor(t.trend)}>{trendZh(t.trend)}</span></div>
                     {t.macd != null && (
                       <div className="flex justify-between"><span className="text-slate-500">MACD</span><span className={trendColor(t.macd)}>{trendZh(t.macd)}</span></div>

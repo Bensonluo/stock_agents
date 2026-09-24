@@ -9,6 +9,7 @@ sections; LLMs only narrate, every number comes from the analysis data.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing import Any
 
@@ -16,6 +17,29 @@ from app.analysis.fundamental import compact_quality_view
 from app.analysis.portfolio import suggest_weights
 from app.analysis.technical import compact_weekly_view
 from app.analysis.valuation import compact_valuation_view
+
+# Bars of price history carried into the report for sparkline rendering.
+# Three years of closes (~750 floats) would bloat every response; a sparkline
+# only needs the recent tail.
+SPARK_BARS = 90
+
+
+def _price_spark(history: Any) -> list[float] | None:
+    """Last ``SPARK_BARS`` daily closes, rounded — the minimal series a sparkline needs.
+
+    Non-finite values (NaN holes from adjusted histories) are dropped rather
+    than allowed into the JSON payload. Returns None when there is nothing to
+    draw; callers leave the key absent (degraded convention).
+    """
+    closes = history.get("close") if isinstance(history, dict) else None
+    if not isinstance(closes, list):
+        return None
+    spark = [
+        round(float(value), 2)
+        for value in closes[-SPARK_BARS:]
+        if isinstance(value, int | float) and math.isfinite(value)
+    ]
+    return spark or None
 
 
 class ReportService:
@@ -143,6 +167,11 @@ class ReportService:
             freshness = analysis.get("freshness")
             if freshness:
                 entry["freshness"] = freshness
+            spark = _price_spark(
+                ((c.get("market_data") or {}).get(symbol) or {}).get("historical_data")
+            )
+            if spark:
+                entry["price_spark"] = spark
             by_symbol[symbol] = entry
             if score > 20:
                 bullish += 1
