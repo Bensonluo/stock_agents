@@ -33,7 +33,7 @@ def decision_scores(result: dict[str, Any]) -> dict[str, float]:
     are skipped — missing evidence is not a neutral vote.
     """
     scores: dict[str, float] = {}
-    for symbol, decision in _decision_entries(result):
+    for symbol, decision in decision_entries(result):
         value = decision.get("score")
         if not _is_score(value):
             value = decision.get("composite_score")
@@ -53,7 +53,7 @@ def decision_dimension_scores(result: dict[str, Any]) -> dict[str, dict[str, flo
     (or without any usable component) return ``{}``.
     """
     vectors: dict[str, dict[str, float]] = {}
-    for symbol, decision in _decision_entries(result):
+    for symbol, decision in decision_entries(result):
         components = decision.get("component_scores")
         if not isinstance(components, dict):
             continue
@@ -64,8 +64,12 @@ def decision_dimension_scores(result: dict[str, Any]) -> dict[str, dict[str, flo
     return vectors
 
 
-def _decision_entries(result: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    """Normalize both stored decision shapes into ``(symbol, decision)`` pairs."""
+def decision_entries(result: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Normalize both stored decision shapes into ``(symbol, decision)`` pairs.
+
+    Shared by every history-replay consumer (scores, dimensions, and the
+    forecast-calibration claims extractor).
+    """
     decisions = (result.get("decision") or {}).get("decisions")
     if decisions is None:
         decisions = result.get("decisions")

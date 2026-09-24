@@ -21,6 +21,13 @@ from bisect import bisect_left
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from app.analysis.forecast_calibration import (
+    brier_score,
+    brier_skill_score,
+    claim_correct,
+    directional_claims,
+    reliability_curve,
+)
 from app.analysis.ic import (
     MIN_IC_SYMBOLS,
     decision_dimension_scores,
@@ -46,6 +53,11 @@ MAX_HORIZON_BARS = 250
 
 CAVEAT = (
     "Historical runs were produced by evolving decision formulas; " "IC aggregates across vintages."
+)
+
+CALIBRATION_CAVEAT = (
+    CAVEAT + " Confidence is a heuristic composite, not a fitted probability; "
+    "Brier here measures how far it is from behaving like one."
 )
 
 HistoryFetcher = Callable[[str], Awaitable[dict[str, Any] | None]]
@@ -267,3 +279,116 @@ async def evaluate_ic_decay(
         "status": "ok" if any(p["status"] == "ok" for p in points) else ("insufficient_history"),
         "caveat": CAVEAT,
     }
+
+
+async def evaluate_confidence_calibration(
+    *,
+    horizon_bars: int = 20,
+    limit: int = 200,
+    records: list[AnalysisRecord] | None = None,
+    fetch_history: HistoryFetcher | None = None,
+) -> dict[str, Any]:
+    """Calibrate decision-layer confidence against realized outcomes.
+
+    A sibling of the IC replay with different unit of analysis: the IC
+    needs a cross-section (>= MIN_IC_SYMBOLS symbols to rank), while a
+    single directional claim is calibratable on its own — one symbol's
+    "buy at 0.8" is one probabilistic prediction, mature or not. Each
+    run's buy/sell claims are scored over the same forward window; holds
+    assert no direction and contribute nothing.
+
+    Returns:
+        Brier / Brier-skill / reliability block; ``status="insufficient_history"``
+        when no mature directional claim exists — never a fabricated number.
+    """
+    if horizon_bars <= 0:
+        raise ValueError("horizon_bars must be positive")
+
+    records, fetch_history = _resolve_inputs(records, limit, fetch_history)
+
+    pairs: list[tuple[float, bool]] = []
+    runs_evaluated = 0
+    runs_pending = 0
+    runs_skipped = 0
+    series_cache: dict[str, tuple[list[str], list[float]] | None] = {}
+
+    async def _series(symbol: str) -> tuple[list[str], list[float]] | None:
+        if symbol not in series_cache:
+            try:
+                data = await fetch_history(symbol)
+            except Exception as e:  # noqa: BLE001 - one dead symbol must not sink the run
+                logger.warning(f"[calibration] history fetch failed for {symbol}: {e}")
+                data = None
+            series_cache[symbol] = (
+                (list(data["dates"]), [float(c) for c in data["close"]])
+                if data and data.get("dates") and data.get("close")
+                else None
+            )
+        return series_cache[symbol]
+
+    for record in records:
+        try:
+            result = json.loads(record.result) if record.result else None
+        except (json.JSONDecodeError, TypeError):
+            result = None
+        if not isinstance(result, dict):
+            runs_skipped += 1
+            continue
+
+        claims = directional_claims(result)
+        run_date = (record.created_at or "")[:10]
+        if not claims or not run_date:
+            runs_skipped += 1
+            continue
+
+        run_pairs: list[tuple[float, bool]] = []
+        pending = False
+        for symbol, (direction, confidence) in claims.items():
+            series = await _series(symbol)
+            if series is None:
+                continue  # no data at all — the claim drops out
+            dates, closes = series
+            entry_i = bisect_left(dates, run_date)
+            if entry_i >= len(dates):
+                pending = True
+                continue
+            exit_i = entry_i + horizon_bars
+            if exit_i >= len(closes):
+                pending = True
+                continue
+            entry, exit_price = closes[entry_i], closes[exit_i]
+            if entry > 0 and exit_price > 0:
+                run_pairs.append((confidence, claim_correct(direction, exit_price / entry - 1)))
+
+        pairs.extend(run_pairs)
+        if run_pairs:
+            runs_evaluated += 1
+        elif pending:
+            runs_pending += 1
+        else:
+            runs_skipped += 1
+
+    payload: dict[str, Any] = {
+        "method": "brier_reliability",
+        "horizon_bars": horizon_bars,
+        "records_examined": len(records),
+        "runs_evaluated": runs_evaluated,
+        "runs_pending_maturity": runs_pending,
+        "runs_skipped": runs_skipped,
+        "caveat": CALIBRATION_CAVEAT,
+    }
+    if not pairs:
+        payload.update(predictions=0, status="insufficient_history")
+        return payload
+
+    outcomes = [1.0 if hit else 0.0 for _, hit in pairs]
+    payload.update(
+        predictions=len(pairs),
+        base_rate=round(sum(outcomes) / len(outcomes), 4),
+        avg_confidence=round(sum(p for p, _ in pairs) / len(pairs), 4),
+        brier_score=brier_score(pairs),
+        brier_skill_score=brier_skill_score(pairs),
+        reliability=reliability_curve(pairs),
+        status="ok",
+    )
+    return payload

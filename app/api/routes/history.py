@@ -14,7 +14,11 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from app.services.ic_service import evaluate_decision_ic, evaluate_ic_decay
+from app.services.ic_service import (
+    evaluate_confidence_calibration,
+    evaluate_decision_ic,
+    evaluate_ic_decay,
+)
 from app.storage.database import AnalysisRecord, get_database
 
 logger = logging.getLogger(__name__)
@@ -263,6 +267,33 @@ async def decision_ic_decay(
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001
         logger.error(f"[History API] IC 衰减评估失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/ic/calibration")
+async def decision_confidence_calibration(
+    horizon_bars: int = Query(20, ge=1, le=250, description="前向窗口（交易日数）"),
+    limit: int = Query(200, ge=1, le=1000, description="检查的最近完成记录数"),
+):
+    """
+    决策置信度校准：Brier / 可靠性曲线
+
+    把历史运行里 buy/sell 的 confidence 当作「方向判对的概率」来对账：
+    Brier 分、对基准率的 Brier skill score、按置信度分桶的实证正确率
+    （可靠性图）。hold 无方向主张、不参与校准。历史不足时如实返回
+    insufficient_history。
+    """
+    from time import time
+
+    start = time()
+    try:
+        result = await evaluate_confidence_calibration(horizon_bars=horizon_bars, limit=limit)
+        result["execution_time"] = round(time() - start, 3)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[History API] 置信度校准失败: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

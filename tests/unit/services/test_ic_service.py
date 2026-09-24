@@ -8,7 +8,11 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from app.services.ic_service import evaluate_decision_ic, evaluate_ic_decay
+from app.services.ic_service import (
+    evaluate_confidence_calibration,
+    evaluate_decision_ic,
+    evaluate_ic_decay,
+)
 from app.storage.database import AnalysisRecord
 
 pytestmark = pytest.mark.asyncio
@@ -61,6 +65,25 @@ def _fetcher(series: dict[str, tuple[list[str], list[float]]], calls: list[str] 
         return {"dates": pair[0], "close": pair[1]}
 
     return fetch
+
+
+def _claim_record(
+    thread_id: str, created_at: str, actions: dict[str, tuple[str, float]]
+) -> AnalysisRecord:
+    decisions = {
+        symbol: {"symbol": symbol, "action": action, "confidence": confidence}
+        for symbol, (action, confidence) in actions.items()
+    }
+    return AnalysisRecord(
+        thread_id=thread_id,
+        symbols="[]",
+        query="q",
+        status="completed",
+        result=json.dumps({"decision": {"decisions": decisions}}),
+        created_at=created_at,
+        updated_at=created_at,
+        execution_time=0.0,
+    )
 
 
 class TestEvaluateDecisionIC:
@@ -273,4 +296,107 @@ class TestEvaluateDecisionIC:
                 horizons=[5, 10, 20, 60, 120, 200, 250],
                 records=[],
                 fetch_history=_fetcher({}),
+            )
+
+
+class TestConfidenceCalibration:
+    async def test_all_correct_buys_hand_computed(self) -> None:
+        dates = _bdates(300)
+        run_idx = 239
+        series = {
+            sym: (dates, _two_phase_closes(dates, run_idx, rate))
+            for sym, rate in zip("AB", (0.001, 0.002))
+        }
+        record = _claim_record(
+            "c1", f"{dates[run_idx]}T10:00:00", {"A": ("buy", 0.8), "B": ("buy", 0.6)}
+        )
+        result = await evaluate_confidence_calibration(
+            horizon_bars=20, records=[record], fetch_history=_fetcher(series)
+        )
+        assert result["status"] == "ok"
+        assert result["predictions"] == 2
+        assert result["runs_evaluated"] == 1
+        assert result["base_rate"] == 1.0
+        # (1-0.8)^2 + (1-0.6)^2 = 0.04 + 0.16, over 2 -> 0.1
+        assert result["brier_score"] == 0.1
+        # Constant outcomes: the base-rate forecaster is unbeatable there,
+        # so skill is undefined rather than infinite.
+        assert result["brier_skill_score"] is None
+        assert result["avg_confidence"] == 0.7
+
+    async def test_mixed_directions_hand_computed(self) -> None:
+        dates = _bdates(300)
+        run_idx = 239
+        # Both series rise: the buy claim is vindicated, the sell claim fails.
+        series = {
+            sym: (dates, _two_phase_closes(dates, run_idx, rate))
+            for sym, rate in zip("AB", (0.001, 0.002))
+        }
+        record = _claim_record(
+            "c2", f"{dates[run_idx]}T10:00:00", {"A": ("buy", 0.8), "B": ("sell", 0.7)}
+        )
+        result = await evaluate_confidence_calibration(
+            horizon_bars=20, records=[record], fetch_history=_fetcher(series)
+        )
+        assert result["base_rate"] == 0.5
+        # (1-0.8)^2 + (0-0.7)^2 = 0.04 + 0.49, over 2 -> 0.265
+        assert result["brier_score"] == 0.265
+        # 1 - 0.265/0.25 = -0.06: worse than always guessing the base rate.
+        assert result["brier_skill_score"] == -0.06
+        buckets = {b["bin_low"]: b for b in result["reliability"]}
+        assert buckets[0.6]["empirical_rate"] == 0.0  # the failed sell
+        assert buckets[0.8]["empirical_rate"] == 1.0  # the vindicated buy
+
+    async def test_single_symbol_claim_evaluates_without_cross_section(self) -> None:
+        # The IC replay needs >= 3 symbols to rank; a single directional
+        # claim is one probabilistic prediction and calibrates on its own.
+        dates = _bdates(300)
+        run_idx = 239
+        series = {"A": (dates, _two_phase_closes(dates, run_idx, 0.001))}
+        record = _claim_record("c3", f"{dates[run_idx]}T10:00:00", {"A": ("buy", 0.75)})
+        result = await evaluate_confidence_calibration(
+            horizon_bars=20, records=[record], fetch_history=_fetcher(series)
+        )
+        assert result["status"] == "ok"
+        assert result["predictions"] == 1
+        assert result["runs_evaluated"] == 1
+
+    async def test_hold_only_run_makes_no_claims(self) -> None:
+        dates = _bdates(300)
+        run_idx = 239
+        series = {"A": (dates, _two_phase_closes(dates, run_idx, 0.001))}
+        record = _claim_record("c4", f"{dates[run_idx]}T10:00:00", {"A": ("hold", 0.9)})
+        result = await evaluate_confidence_calibration(
+            horizon_bars=20, records=[record], fetch_history=_fetcher(series)
+        )
+        assert result["status"] == "insufficient_history"
+        assert result["predictions"] == 0
+        assert result["runs_skipped"] == 1
+
+    async def test_immature_claim_is_pending(self) -> None:
+        dates = _bdates(300)
+        run_date = dates[-2]  # one bar of forward data — 20-bar window cannot mature
+        series = {"A": (dates, _two_phase_closes(dates, len(dates) - 2, 0.001))}
+        record = _claim_record("c5", f"{run_date}T10:00:00", {"A": ("buy", 0.8)})
+        result = await evaluate_confidence_calibration(
+            horizon_bars=20, records=[record], fetch_history=_fetcher(series)
+        )
+        assert result["status"] == "insufficient_history"
+        assert result["runs_pending_maturity"] == 1
+        assert result["predictions"] == 0
+
+    async def test_dead_symbol_claim_drops_out(self) -> None:
+        dates = _bdates(300)
+        record = _claim_record("c6", f"{dates[239]}T10:00:00", {"A": ("buy", 0.8)})
+        result = await evaluate_confidence_calibration(
+            horizon_bars=20, records=[record], fetch_history=_fetcher({})
+        )
+        assert result["status"] == "insufficient_history"
+        assert result["runs_skipped"] == 1
+        assert result["predictions"] == 0
+
+    async def test_horizon_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match="horizon"):
+            await evaluate_confidence_calibration(
+                horizon_bars=0, records=[], fetch_history=_fetcher({})
             )
