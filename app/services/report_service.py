@@ -167,6 +167,14 @@ class ReportService:
             freshness = analysis.get("freshness")
             if freshness:
                 entry["freshness"] = freshness
+            # Trend quality (Wilder ADX): direction alone can't tell a clean
+            # stair from a range trading above its MAs. Absent on histories
+            # too short to smooth two Wilder windows, like freshness above.
+            adx = (analysis.get("indicators") or {}).get("adx")
+            if adx is not None:
+                entry["adx"] = adx
+            if signals.get("trend_strength"):
+                entry["trend_strength"] = signals["trend_strength"]
             spark = _price_spark(
                 ((c.get("market_data") or {}).get(symbol) or {}).get("historical_data")
             )

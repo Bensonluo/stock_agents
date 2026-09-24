@@ -25,7 +25,12 @@ class _FakeResp:
         }
 
 
-def test_snapshot_maps_quote_fields_into_market_block() -> None:
+def test_snapshot_maps_quote_fields_into_market_block(monkeypatch) -> None:
+    # Hermetic against suite order: a rate-limited response anywhere earlier
+    # in the process arms the fetcher's global 60s cooldown and would turn
+    # this field-mapping test into a None. The cooldown's behavior is not
+    # this test's subject — reset it.
+    monkeypatch.setattr(fetcher, "_AV_COOLDOWN_UNTIL", 0.0)
     with patch.object(fetcher.requests, "get", return_value=_FakeResp()):
         result = asyncio.run(fetcher._alphavantage_fetch("AAPL"))
 

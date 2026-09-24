@@ -83,6 +83,22 @@ class TestBenchmarkAttach:
             "_fetch_news",
             AsyncMock(return_value=[]),
         )
+        # An empty market block makes _fetch_market_data fall through to the
+        # real provider chain (yfinance -> ... -> alphavantage) — live network
+        # from a unit test, and Alpha Vantage's rate-limit answer arms the
+        # fetcher's global 60s cooldown that then breaks unrelated tests.
+        # Stub the chain (miss = None) and the CN industry benchmark the same
+        # way the market benchmark is stubbed per test.
+        monkeypatch.setattr(
+            data_agent_module,
+            "fetch_stock_data",
+            AsyncMock(return_value=None),
+        )
+        monkeypatch.setattr(
+            data_agent_module,
+            "fetch_cn_sector_benchmark",
+            AsyncMock(return_value=None),
+        )
 
     @pytest.mark.asyncio
     async def test_one_benchmark_per_market_attached_to_symbols(

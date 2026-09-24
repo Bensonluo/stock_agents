@@ -107,6 +107,10 @@ def calculate_indicators(df: pd.DataFrame) -> dict[str, Any]:
         last_close = float(close.iloc[-1])
         indicators["atr_pct"] = round(atr / last_close * 100, 4) if last_close > 0 else None
 
+    adx = _adx(df, period=14)
+    if adx is not None:
+        indicators["adx"] = adx
+
     if "volume" in df.columns:
         volume_sma = df["volume"].rolling(20).mean().iloc[-1]
         if pd.notna(volume_sma) and volume_sma > 0:
@@ -146,6 +150,15 @@ def _rsi(close: pd.Series, period: int = 14) -> float | None:
     return round(float(value), 4)
 
 
+def _true_range(df: pd.DataFrame) -> pd.Series:
+    """True range series; row 0 (no previous close) is the high-low range —
+    Wilder's own seeding bar (the shifted NaN terms lose the row-0 max)."""
+    high_low = df["high"] - df["low"]
+    high_close = np.abs(df["high"] - df["close"].shift())
+    low_close = np.abs(df["low"] - df["close"].shift())
+    return pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+
+
 def _atr(df: pd.DataFrame, period: int = 14) -> float | None:
     """ATR(14) with Wilder smoothing — the definition charting platforms use.
 
@@ -156,18 +169,58 @@ def _atr(df: pd.DataFrame, period: int = 14) -> float | None:
     """
     if len(df) <= period or not {"high", "low", "close"}.issubset(df.columns):
         return None
-    high_low = df["high"] - df["low"]
-    high_close = np.abs(df["high"] - df["close"].shift())
-    low_close = np.abs(df["low"] - df["close"].shift())
-    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    # Row 0's shifted terms are NaN; max(axis=1) skips them, so TR[0] is the
-    # high-low range — exactly Wilder's own seeding bar.
-    tr = true_range.to_numpy()
+    tr = _true_range(df).to_numpy()
     atr = float(tr[:period].mean())
     for i in range(period, len(tr)):
         atr = (atr * (period - 1) + tr[i]) / period
     # Unavailable values are None, never NaN (engine contract).
     return round(float(atr), 6) if np.isfinite(atr) else None
+
+
+def _adx(df: pd.DataFrame, period: int = 14) -> float | None:
+    """ADX(period) — Wilder's trend-strength index, the third Wilder-smoothed
+    indicator after RSI/ATR. The MA-structure trend label says *direction*;
+    ADX says *quality*: a choppy range and a clean stair both read "bullish"
+    to the SMA ladder, and conviction should not treat them alike.
+
+    +DM/-DM from daily ranges are Wilder-smoothed into +DI/-DI, DX measures
+    how one-sided the direction is, and ADX is DX's own Wilder smoothing.
+    Two stacked smoothing windows need ``2*period + 1`` bars. Bars with no
+    range contribute no DX instead of dividing by zero; unavailable -> None,
+    never NaN (engine contract).
+    """
+    if len(df) < 2 * period + 1 or not {"high", "low", "close"}.issubset(df.columns):
+        return None
+
+    up = df["high"].diff().to_numpy()
+    down = -df["low"].diff().to_numpy()
+    plus_dm = np.where((up > down) & (up > 0), up, 0.0)[1:]
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0)[1:]
+    tr = _true_range(df).to_numpy()[1:]  # align to bars 1..n-1 like the DMs
+
+    s_plus = float(plus_dm[:period].mean())
+    s_minus = float(minus_dm[:period].mean())
+    s_tr = float(tr[:period].mean())
+
+    dx_values: list[float] = []
+    for i in range(period, len(tr)):
+        s_plus = (s_plus * (period - 1) + plus_dm[i]) / period
+        s_minus = (s_minus * (period - 1) + minus_dm[i]) / period
+        s_tr = (s_tr * (period - 1) + tr[i]) / period
+        if s_tr <= 0:
+            continue  # zero range: this bar says nothing about direction
+        di_plus = 100.0 * s_plus / s_tr
+        di_minus = 100.0 * s_minus / s_tr
+        denom = di_plus + di_minus
+        if denom > 0:
+            dx_values.append(100.0 * abs(di_plus - di_minus) / denom)
+
+    if len(dx_values) < period:
+        return None
+    adx = float(np.mean(dx_values[:period]))
+    for dx in dx_values[period:]:
+        adx = (adx * (period - 1) + dx) / period
+    return round(float(adx), 4) if np.isfinite(adx) else None
 
 
 def generate_signals(df: pd.DataFrame, indicators: dict[str, Any]) -> dict[str, str]:
@@ -188,6 +241,19 @@ def generate_signals(df: pd.DataFrame, indicators: dict[str, Any]) -> dict[str, 
             signals["trend"] = "bearish"
         else:
             signals["trend"] = "neutral"
+
+    adx = indicators.get("adx")
+    if adx is not None:
+        # Wilder's interpretation bands: below 20 the direction label above
+        # describes a range, not a trend worth full conviction.
+        if adx < 20:
+            signals["trend_strength"] = "weak"
+        elif adx < 25:
+            signals["trend_strength"] = "developing"
+        elif adx < 50:
+            signals["trend_strength"] = "strong"
+        else:
+            signals["trend_strength"] = "very_strong"
 
     rsi = indicators.get("rsi")
     if rsi is not None:
@@ -429,6 +495,20 @@ def _key_evidence(
                 cutoff=as_of,
                 source=source,
                 formula="atr(ohlc, 14) / close * 100",
+                params={"period": 14},
+            )
+        )
+    adx = indicators.get("adx")
+    if adx is not None:
+        evidence.append(
+            make_evidence(
+                symbol=symbol,
+                name="adx_daily_14",
+                value=adx,
+                unit="index",
+                cutoff=as_of,
+                source=source,
+                formula="adx(ohlc, 14)",
                 params={"period": 14},
             )
         )

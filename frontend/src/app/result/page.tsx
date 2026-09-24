@@ -1038,6 +1038,15 @@ function ReactReport({ answer, report: structuredReport }: {
                       </div>
                     )}
                     <div className="flex justify-between"><span className="text-slate-500">趋势</span><span className={trendColor(t.trend)}>{trendZh(t.trend)}</span></div>
+                    {t.adx != null && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">趋势强度</span>
+                        <span className={cn('font-medium', t.trend_strength === 'strong' || t.trend_strength === 'very_strong' ? 'text-green-600' : t.trend_strength === 'developing' ? 'text-amber-600' : 'text-slate-500')}>
+                          {t.trend_strength === 'very_strong' ? '极强' : t.trend_strength === 'strong' ? '强势' : t.trend_strength === 'developing' ? '形成中' : '偏弱（区间）'}
+                          <span className="ml-1.5 font-normal text-slate-400">ADX {t.adx.toFixed(1)}</span>
+                        </span>
+                      </div>
+                    )}
                     {t.macd != null && (
                       <div className="flex justify-between"><span className="text-slate-500">MACD</span><span className={trendColor(t.macd)}>{trendZh(t.macd)}</span></div>
                     )}
