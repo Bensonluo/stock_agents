@@ -568,25 +568,70 @@ def derive_recommendation(
     sentiment score (-100..100), and risk level into a single action.
     The LLM cannot override this — guarantees the report is internally
     consistent (e.g. fundamental=strong_sell ⇒ action=sell, not "add").
+
+    Availability-aware: each dimension votes only with the evidence it
+    actually has — weights renormalize over the available dimensions (the
+    same available_weight pattern the fundamental scorer uses internally).
+    A CN name without financials used to collect a neutral-50 fundamental
+    vote worth 22.5 points on zero evidence; now its action rides the
+    dimensions that measured something. Full-data composites are
+    bit-identical (all four present → the classic 45/30/15/10 blend).
     """
-    fund_score_raw = fundamental.get("overall_score", 50)
-    if isinstance(fund_score_raw, dict):
-        fund_score = float(fund_score_raw.get("score", 50) or 50)
-    else:
-        fund_score = float(fund_score_raw or 50)
+    fund_raw = fundamental.get("overall_score")
+    if isinstance(fund_raw, dict):
+        fund_raw = fund_raw.get("score")
+    fund_score = float(fund_raw) if isinstance(fund_raw, int | float) else None
     fund_rec = str(fundamental.get("recommendation", "hold")).lower()
     # The per-symbol technical block is {"signals": {...}, "sentiment": {...}}.
     tech_trend = str(technical.get("signals", {}).get("trend", "neutral")).lower()
-    tech_score = float(technical.get("sentiment", {}).get("score", 0) or 0)
-    sent_score = float(sentiment.get("score", 0) or 0)
-    risk_level = str(risk.get("risk_level", "medium")).lower()
-    risk_penalty = _risk_to_score(risk_level)
+    tech_raw = technical.get("sentiment", {}).get("score")
+    tech_score = float(tech_raw) if isinstance(tech_raw, int | float) else None
+    sent_raw = sentiment.get("score")
+    # A zero-article feed scored 0 is absence, not neutrality.
+    sent_score = (
+        float(sent_raw)
+        if isinstance(sent_raw, int | float) and (sentiment.get("article_count") or 0) > 0
+        else None
+    )
+    risk_level = str(risk.get("risk_level") or "").lower()
+    risk_available = bool(risk_level) and risk_level != "insufficient_data"
 
-    tech_norm = max(0.0, min(100.0, (tech_score + 100) / 2))
-    sent_norm = max(0.0, min(100.0, (sent_score + 100) / 2))
-    risk_norm = 100 - risk_penalty  # higher = safer
+    parts: list[tuple[float, float]] = []  # (normalized score, weight)
+    missing: list[str] = []
+    if fund_score is not None:
+        parts.append((fund_score, 0.45))
+    else:
+        missing.append("fundamental")
+    if tech_score is not None:
+        parts.append((max(0.0, min(100.0, (tech_score + 100) / 2)), 0.30))
+    else:
+        missing.append("technical")
+    if sent_score is not None:
+        parts.append((max(0.0, min(100.0, (sent_score + 100) / 2)), 0.15))
+    else:
+        missing.append("sentiment")
+    if risk_available:
+        parts.append((100.0 - _risk_to_score(risk_level), 0.10))  # higher = safer
+    else:
+        missing.append("risk")
 
-    combined = fund_score * 0.45 + tech_norm * 0.30 + sent_norm * 0.15 + risk_norm * 0.10
+    if fund_score is None and tech_score is None and sent_score is None:
+        # No directional dimension has data. Risk is a modifier, never a
+        # signal: "low risk" alone must not become a buy, so the decision
+        # holds at zero conviction.
+        return {
+            "action": "hold",
+            "confidence": 0.0,
+            "composite_score": None,
+            "reasoning": (
+                "Only risk data available — risk alone cannot recommend; "
+                "holding with zero conviction"
+                if risk_available
+                else "No dimension has data to score; holding with zero conviction"
+            ),
+        }
+
+    combined = sum(score * weight for score, weight in parts) / sum(weight for _, weight in parts)
 
     if combined >= 70:
         action = "buy"
@@ -604,12 +649,16 @@ def derive_recommendation(
         action = "sell"
         confidence = round(min(0.9, (100 - combined) / 100), 2)
 
-    reasoning = (
-        f"Composite score {combined:.0f}/100 "
-        f"(fundamental {fund_score:.0f}/{fund_rec}, "
-        f"technical {tech_trend}/{tech_score:+.0f}, "
-        f"sentiment {sent_score:+.0f}, risk {risk_level})"
-    )
+    evidence_bits = [f"fundamental {fund_score:.0f}/{fund_rec}"] if fund_score is not None else []
+    if tech_score is not None:
+        evidence_bits.append(f"technical {tech_trend}/{tech_score:+.0f}")
+    if sent_score is not None:
+        evidence_bits.append(f"sentiment {sent_score:+.0f}")
+    if risk_available:
+        evidence_bits.append(f"risk {risk_level}")
+    reasoning = f"Composite score {combined:.0f}/100 ({', '.join(evidence_bits)})"
+    if missing:
+        reasoning += f" [{', '.join(missing)} unavailable — weights renormalized]"
 
     # Stale price data caps conviction at both seams' shared formula so the
     # pipeline decision agent and the ReAct report path stay in agreement.

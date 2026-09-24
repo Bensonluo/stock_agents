@@ -134,7 +134,8 @@ class DecisionMakingAgent(StatelessAgent):
 
         # Single action formula shared with the ReAct report path
         # (ReportService.derive_recommendation): fund 45% + tech 30% +
-        # sentiment 15% + risk 10%, action bands and confidence included.
+        # sentiment 15% + risk 10% renormalized over the dimensions that
+        # actually have data, action bands and confidence included.
         # The old private weights (0.30/0.40/0.15 + multiplicative risk
         # penalty) are retired — two formulas meant two different
         # recommendations for the same data.
@@ -246,8 +247,9 @@ class DecisionMakingAgent(StatelessAgent):
                 f"{STOP_MULTIPLE:g}xATR stop (ATR {atr_pct:.2f}%/day)"
             )
         else:
-            # Base position size from conviction
-            abs_score = abs(score)
+            # Base position size from conviction. Zero-evidence runs carry a
+            # None composite — no conviction to size on, so the floor applies.
+            abs_score = abs(score) if isinstance(score, int | float) else 0
             if abs_score >= 50:
                 base_size = 20  # 20% of portfolio max
             elif abs_score >= 25:
