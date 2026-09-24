@@ -84,6 +84,8 @@ class TestRelativeMetrics:
             "beta_ci_95_low": None,
             "beta_ci_95_high": None,
             "alpha_annualized": None,
+            "alpha_ci_95_low": None,
+            "alpha_ci_95_high": None,
             "r_squared": None,
             "correlation": None,
         }
@@ -97,6 +99,19 @@ class TestRelativeMetrics:
         assert metrics["beta_ci_95_low"] is not None
         assert metrics["beta_ci_95_high"] is not None
         assert metrics["beta_ci_95_low"] <= metrics["beta"] <= metrics["beta_ci_95_high"]
+
+    def test_metrics_block_carries_the_alpha_ci(self) -> None:
+        rng = np.random.default_rng(5)
+        benchmark = rng.normal(0.0008, 0.01, size=250)
+        stock = 1.2 * benchmark + rng.normal(0.0004, 0.006, size=250)
+
+        metrics = relative_risk_metrics(stock, benchmark)
+
+        assert metrics["alpha_ci_95_low"] is not None
+        assert metrics["alpha_ci_95_high"] is not None
+        assert (
+            metrics["alpha_ci_95_low"] <= metrics["alpha_annualized"] <= metrics["alpha_ci_95_high"]
+        )
 
 
 class TestBootstrapBetaCi:
@@ -150,6 +165,62 @@ class TestBootstrapBetaCi:
 
     def test_calculate_beta_needs_min_observations(self) -> None:
         assert calculate_beta(np.full(10, 0.01), np.full(10, 0.01)) is None
+
+
+class TestBootstrapRelativeCi:
+    """Joint intervals — beta and alpha from ONE resampling, one uncertainty."""
+
+    @staticmethod
+    def _noisy_pair(
+        n: int, true_beta: float, noise_scale: float, seed: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(seed)
+        benchmark = rng.normal(0.001, 0.01, size=n)
+        stock = true_beta * benchmark + rng.normal(0, noise_scale, size=n)
+        return stock, benchmark
+
+    def test_alpha_interval_brackets_the_point_estimate(self) -> None:
+        from app.analysis.risk import bootstrap_relative_ci
+
+        stock, benchmark = self._noisy_pair(250, 1.3, 0.008, seed=9)
+
+        joint = bootstrap_relative_ci(stock, benchmark)
+        metrics = relative_risk_metrics(stock, benchmark)
+
+        assert joint is not None
+        alpha_lo, alpha_hi = joint[1]
+        assert alpha_lo <= metrics["alpha_annualized"] <= alpha_hi
+
+    def test_beta_wrapper_matches_the_joint_beta_interval(self) -> None:
+        from app.analysis.risk import bootstrap_relative_ci
+
+        stock, benchmark = self._noisy_pair(120, 0.9, 0.012, seed=4)
+
+        joint = bootstrap_relative_ci(stock, benchmark)
+
+        assert bootstrap_beta_ci(stock, benchmark) == joint[0]
+
+    def test_joint_output_is_deterministic(self) -> None:
+        from app.analysis.risk import bootstrap_relative_ci
+
+        stock, benchmark = self._noisy_pair(80, 1.1, 0.01, seed=2)
+
+        assert bootstrap_relative_ci(stock, benchmark) == bootstrap_relative_ci(stock, benchmark)
+
+    def test_alpha_interval_respects_the_risk_free_rate(self) -> None:
+        from app.analysis.risk import bootstrap_relative_ci
+
+        stock, benchmark = self._noisy_pair(200, 1.4, 0.009, seed=6)
+        rf = 0.04
+
+        raw = bootstrap_relative_ci(stock, benchmark)
+        jensen = bootstrap_relative_ci(stock, benchmark, risk_free_rate_annual=rf)
+
+        assert raw is not None and jensen is not None
+        # Jensen's alpha = raw − rf·(1−β): with true beta near 1.4 the shift
+        # is −rf·(−0.4) = +0.016 annualized, and the whole interval moves up,
+        # not just a constant offset on the point estimate.
+        assert jensen[1][1] > raw[1][1]
 
 
 class TestJensenAlpha:

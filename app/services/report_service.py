@@ -273,6 +273,8 @@ class ReportService:
                 "var_95": metrics.get("var_95"),
                 "max_drawdown": metrics.get("max_drawdown"),
                 "alpha_annualized": metrics.get("alpha_annualized"),
+                "alpha_ci_95_low": metrics.get("alpha_ci_95_low"),
+                "alpha_ci_95_high": metrics.get("alpha_ci_95_high"),
                 "max_position_size": position.get("max_position_size"),
                 "warnings": analysis.get("warnings", []),
             }

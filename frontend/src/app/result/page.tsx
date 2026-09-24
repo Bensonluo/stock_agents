@@ -1239,7 +1239,7 @@ function ReactReport({ answer, report: structuredReport }: {
                           <div className="flex justify-between"><span className="text-slate-500">最大回撤</span><span className="font-medium">{formatPercent(r.max_drawdown)}</span></div>
                         )}
                         {r.alpha_annualized != null && (
-                          <div className="flex justify-between"><span className="text-slate-500">年化 α</span><span className={cn('font-medium', r.alpha_annualized >= 0 ? 'text-green-600' : 'text-red-600')}>{formatPercent(r.alpha_annualized)}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500">年化 α</span><span className={cn('font-medium', r.alpha_annualized >= 0 ? 'text-green-600' : 'text-red-600')}>{formatPercent(r.alpha_annualized)}{r.alpha_ci_95_low != null && r.alpha_ci_95_high != null && <span className="ml-1 font-normal text-slate-400">CI {formatPercent(r.alpha_ci_95_low)}–{formatPercent(r.alpha_ci_95_high)}</span>}</span></div>
                         )}
                       </div>
                     )}

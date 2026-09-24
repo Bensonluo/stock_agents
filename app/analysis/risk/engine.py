@@ -166,21 +166,25 @@ def calculate_beta(
     return float(beta) if np.isfinite(beta) else None
 
 
-def bootstrap_beta_ci(
+def bootstrap_relative_ci(
     stock_returns: np.ndarray,
     benchmark_returns: np.ndarray,
     *,
+    risk_free_rate_annual: float = 0.0,
     iterations: int = BOOTSTRAP_ITERATIONS,
     seed: int = 42,
     min_observations: int = MIN_BETA_OBSERVATIONS,
-) -> tuple[float, float] | None:
-    """Percentile bootstrap 95% confidence interval for beta.
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """Percentile bootstrap 95% CIs for beta AND alpha from ONE resampling.
 
     (stock, benchmark) pairs are resampled JOINTLY, with replacement, so the
-    correlation structure that beta measures survives the resampling. The
-    seed defaults to a fixed value: the interval is a numerical property of
-    the data, and a deterministic function of the input keeps reports and
-    tests reproducible run over run.
+    correlation structure that beta measures survives the resampling. Alpha
+    and beta are recomputed on every resample exactly as on the full sample,
+    so the two intervals share one joint uncertainty structure — a reader
+    cannot be shown a beta range and an alpha range that came from
+    different imaginary resamples. The seed defaults to a fixed value: the
+    interval is a numerical property of the data, and a deterministic
+    function of the input keeps reports and tests reproducible run over run.
     """
     stock = np.asarray(stock_returns, dtype=float)
     benchmark = np.asarray(benchmark_returns, dtype=float)
@@ -196,22 +200,57 @@ def bootstrap_beta_ci(
     rng = np.random.default_rng(seed)
     n = len(stock)
     idx = rng.integers(0, n, size=(iterations, n))
-    sampled = benchmark[idx]
-    sampled_var = sampled.var(axis=1, ddof=1)
+    sampled_stock = stock[idx]
+    sampled_bench = benchmark[idx]
+    sampled_var = sampled_bench.var(axis=1, ddof=1)
     # Per-row covariance via E[xy] - E[x]E[y] scaled to the unbiased n/(n-1).
     sampled_cov = (
-        ((stock[idx] * sampled).mean(axis=1) - stock[idx].mean(axis=1) * sampled.mean(axis=1))
+        (
+            (sampled_stock * sampled_bench).mean(axis=1)
+            - sampled_stock.mean(axis=1) * sampled_bench.mean(axis=1)
+        )
         * n
         / (n - 1)
     )
     betas = sampled_cov / sampled_var
-    betas = betas[np.isfinite(betas)]  # zero-variance resamples divide by ~0
-    if len(betas) < iterations // 2:
+    daily_rf = float(risk_free_rate_annual) / 252.0
+    alphas = (
+        sampled_stock.mean(axis=1) - daily_rf - betas * (sampled_bench.mean(axis=1) - daily_rf)
+    ) * 252
+    # Zero-variance resamples divide by ~0, voiding the row's beta AND the
+    # alpha that multiplies it — one validity mask keeps the pair joint.
+    valid = np.isfinite(betas) & np.isfinite(alphas)
+    if valid.sum() < iterations // 2:
         return None
     return (
-        round(float(np.percentile(betas, 2.5)), 4),
-        round(float(np.percentile(betas, 97.5)), 4),
+        (
+            round(float(np.percentile(betas[valid], 2.5)), 4),
+            round(float(np.percentile(betas[valid], 97.5)), 4),
+        ),
+        (
+            round(float(np.percentile(alphas[valid], 2.5)), 4),
+            round(float(np.percentile(alphas[valid], 97.5)), 4),
+        ),
     )
+
+
+def bootstrap_beta_ci(
+    stock_returns: np.ndarray,
+    benchmark_returns: np.ndarray,
+    *,
+    iterations: int = BOOTSTRAP_ITERATIONS,
+    seed: int = 42,
+    min_observations: int = MIN_BETA_OBSERVATIONS,
+) -> tuple[float, float] | None:
+    """Beta-only view of the joint bootstrap (kept for API stability)."""
+    joint = bootstrap_relative_ci(
+        stock_returns,
+        benchmark_returns,
+        iterations=iterations,
+        seed=seed,
+        min_observations=min_observations,
+    )
+    return joint[0] if joint else None
 
 
 def relative_risk_metrics(
@@ -240,6 +279,8 @@ def relative_risk_metrics(
         "beta_ci_95_low": None,
         "beta_ci_95_high": None,
         "alpha_annualized": None,
+        "alpha_ci_95_low": None,
+        "alpha_ci_95_high": None,
         "r_squared": None,
         "correlation": None,
     }
@@ -256,12 +297,15 @@ def relative_risk_metrics(
     daily_rf = float(risk_free_rate_annual) / 252.0
     alpha = float((np.mean(stock) - daily_rf - beta * (np.mean(benchmark) - daily_rf)) * 252)
 
-    ci = bootstrap_beta_ci(stock, benchmark)
+    ci = bootstrap_relative_ci(stock, benchmark, risk_free_rate_annual=risk_free_rate_annual)
+    beta_ci, alpha_ci = ci if ci else (None, None)
     return {
         "beta": round(beta, 4),
-        "beta_ci_95_low": ci[0] if ci else None,
-        "beta_ci_95_high": ci[1] if ci else None,
+        "beta_ci_95_low": beta_ci[0] if beta_ci else None,
+        "beta_ci_95_high": beta_ci[1] if beta_ci else None,
         "alpha_annualized": round(alpha, 4),
+        "alpha_ci_95_low": alpha_ci[0] if alpha_ci else None,
+        "alpha_ci_95_high": alpha_ci[1] if alpha_ci else None,
         "r_squared": round(correlation**2, 4),
         "correlation": round(correlation, 4),
     }
