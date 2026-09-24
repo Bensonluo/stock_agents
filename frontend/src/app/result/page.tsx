@@ -118,6 +118,13 @@ interface AnalysisResult {
         sizing_rationale?: string
       }
     }>
+    portfolio_summary?: {
+      total_symbols: number
+      buy_recommendations: number
+      sell_recommendations: number
+      hold_recommendations: number
+      avg_confidence: number
+    }
   }
   report?: {
     sections?: Record<string, any>
@@ -418,6 +425,9 @@ function PipelineResultPage({ threadId }: { threadId: string | null }) {
 
   const actionInfo = getActionInfo(decision?.action || '')
   const ActionIcon = actionInfo.icon
+  const portfolio = result.decision?.portfolio_summary
+  const allDecisions = Object.values(result.decision?.decisions ?? {})
+  const isMultiSymbol = (portfolio?.total_symbols ?? allDecisions.length) > 1
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
@@ -445,6 +455,48 @@ function PipelineResultPage({ threadId }: { threadId: string | null }) {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+        {/* 组合概览 — 多标的 run 的顶层视角（portfolio_summary 首个消费方） */}
+        {isMultiSymbol && portfolio && (
+          <Card className="border-slate-200">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                <div className="text-sm font-semibold text-slate-700">组合概览</div>
+                <div className="flex items-center gap-4 text-sm font-medium">
+                  <span className="text-green-600">{portfolio.buy_recommendations} 买入</span>
+                  <span className="text-amber-600">{portfolio.hold_recommendations} 持有</span>
+                  <span className="text-red-600">{portfolio.sell_recommendations} 卖出</span>
+                </div>
+                <div className="text-sm text-slate-500">
+                  共 {portfolio.total_symbols} 个标的 · 平均置信度{' '}
+                  <span className="font-semibold">{formatPercent(portfolio.avg_confidence, 0)}</span>
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium text-slate-500 mb-1.5">全部标的建议</div>
+                <div className="space-y-1">
+                  {allDecisions.map((d) => {
+                    const info = getActionInfo(d.action)
+                    return (
+                      <div
+                        key={d.symbol}
+                        className="flex items-center justify-between text-sm py-1 border-b border-slate-100 last:border-0"
+                      >
+                        <span className="font-medium text-slate-700">{d.symbol}</span>
+                        <span className="flex items-center gap-4">
+                          <span className={info.color}>{info.text}</span>
+                          <span className="text-slate-500">{formatPercent(d.confidence, 0)}</span>
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                下方核心建议卡为首标的的明细；每个标的的完整分解见「决策综合」叙事。
+              </p>
+            </CardContent>
+          </Card>
+        )}
         {/* 核心投资建议卡片 */}
         {decision && (
           <Card className={cn("border-2", actionInfo.bg)}>
@@ -460,7 +512,7 @@ function PipelineResultPage({ threadId }: { threadId: string | null }) {
                       {actionInfo.text}
                     </h2>
                     <p className="text-slate-600 mt-1">
-                      置信度 <span className="font-semibold">{formatNumber(decision.confidence, 1)}%</span>
+                      置信度 <span className="font-semibold">{formatPercent(decision.confidence, 1)}</span>
                     </p>
                   </div>
                 </div>
