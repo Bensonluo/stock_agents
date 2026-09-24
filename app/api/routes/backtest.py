@@ -36,9 +36,9 @@ class BacktestRequest(BaseModel):
     )
 
     symbol: str = Field(..., description="Stock symbol to backtest")
-    strategy: Literal["sma_crossover", "rsi_strategy", "macd_strategy", "buy_and_hold"] = Field(
-        ..., description="Strategy name"
-    )
+    strategy: Literal[
+        "sma_crossover", "rsi_strategy", "macd_strategy", "buy_and_hold", "technical_score"
+    ] = Field(..., description="Strategy name")
     start_date: str = Field(
         ..., description="Start date (YYYY-MM-DD)", pattern=r"^\d{4}-\d{2}-\d{2}$"
     )
@@ -55,6 +55,7 @@ class BacktestRequest(BaseModel):
     fast_period: int = Field(default=12, ge=2, le=100)
     slow_period: int = Field(default=26, ge=3, le=200)
     signal_period: int = Field(default=9, ge=2, le=100)
+    score_threshold: float = Field(default=10, ge=-100, le=100)
 
     @field_validator("symbol")
     @classmethod
@@ -98,6 +99,7 @@ class BacktestRequest(BaseModel):
             "rsi_strategy": ("rsi_period", "rsi_overbought", "rsi_oversold"),
             "macd_strategy": ("fast_period", "slow_period", "signal_period"),
             "buy_and_hold": (),
+            "technical_score": ("score_threshold",),
         }
         return {name: getattr(self, name) for name in parameter_names[self.strategy]}
 
@@ -227,6 +229,19 @@ async def list_strategies():
                 "description": "Buy and Hold Benchmark",
                 "parameters": {},
             },
+            {
+                "name": "technical_score",
+                "description": (
+                    "Replay of the decision layer's technical dimension score "
+                    "(trend/RSI/MACD/Bollinger/volume, fixed live windows) — "
+                    "backtests what the agent actually recommends on the "
+                    "technical dimension only (~30% of the composite weight)"
+                ),
+                "parameters": {
+                    "score_threshold": "Buy-ish score cutoff (default: 10, the live "
+                    "pipeline's moderate_buy floor)",
+                },
+            },
         ]
     }
 
@@ -256,9 +271,9 @@ class V2BacktestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     symbol: str = Field(..., description="Stock symbol to backtest")
-    strategy: Literal["sma_crossover", "rsi_strategy", "macd_strategy", "buy_and_hold"] = Field(
-        ..., description="Strategy name"
-    )
+    strategy: Literal[
+        "sma_crossover", "rsi_strategy", "macd_strategy", "buy_and_hold", "technical_score"
+    ] = Field(..., description="Strategy name")
     start_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     end_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     initial_cash: float = Field(default=10000.0, ge=1000)
@@ -387,9 +402,9 @@ class CalibrateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     symbol: str = Field(..., description="Stock symbol to calibrate on")
-    strategy: Literal["sma_crossover", "rsi_strategy", "macd_strategy", "buy_and_hold"] = Field(
-        ..., description="Strategy whose entry signals are calibrated"
-    )
+    strategy: Literal[
+        "sma_crossover", "rsi_strategy", "macd_strategy", "buy_and_hold", "technical_score"
+    ] = Field(..., description="Strategy whose entry signals are calibrated")
     start_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     end_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     horizons: list[int] = Field(

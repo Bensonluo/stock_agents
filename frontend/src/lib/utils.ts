@@ -290,7 +290,7 @@ export interface AnalysisResultResponse {
 
 export interface BacktestRequest {
   symbol: string
-  strategy: 'sma_crossover' | 'rsi_strategy' | 'buy_and_hold' | 'macd_strategy'
+  strategy: 'sma_crossover' | 'rsi_strategy' | 'buy_and_hold' | 'macd_strategy' | 'technical_score'
   start_date: string
   end_date: string
   initial_cash?: number
@@ -303,6 +303,7 @@ export interface BacktestRequest {
   fast_period?: number
   slow_period?: number
   signal_period?: number
+  score_threshold?: number
 }
 
 export interface NullBenchmark {
@@ -378,7 +379,7 @@ export interface WalkForwardAggregate {
 
 export interface WalkForwardRequest {
   symbol: string
-  strategy: 'sma_crossover' | 'rsi_strategy' | 'macd_strategy'
+  strategy: 'sma_crossover' | 'rsi_strategy' | 'macd_strategy' | 'technical_score'
   start_date: string
   end_date: string
   param_grid: Record<string, number[]>
@@ -407,7 +408,7 @@ export interface CalibrationHorizon {
 
 export interface CalibrateRequest {
   symbol: string
-  strategy: 'sma_crossover' | 'rsi_strategy' | 'macd_strategy'
+  strategy: 'sma_crossover' | 'rsi_strategy' | 'macd_strategy' | 'technical_score'
   start_date: string
   end_date: string
   horizons?: number[]

@@ -23,7 +23,7 @@ import {
 
 // Same filter as the walk-forward tab: buy-and-hold has no entry signal to
 // calibrate (its single "entry" is bar zero — time itself, not a signal).
-const TUNABLE_STRATEGIES = new Set(['sma_crossover', 'rsi_strategy', 'macd_strategy'])
+const TUNABLE_STRATEGIES = new Set(['sma_crossover', 'rsi_strategy', 'macd_strategy', 'technical_score'])
 
 export function CalibrationForm() {
   const [strategies, setStrategies] = useState<StrategiesResponse | null>(null)
@@ -41,6 +41,7 @@ export function CalibrationForm() {
   const [fastPeriod, setFastPeriod] = useState('12')
   const [slowPeriod, setSlowPeriod] = useState('26')
   const [signalPeriod, setSignalPeriod] = useState('9')
+  const [scoreThreshold, setScoreThreshold] = useState('10')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<CalibrateResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -70,7 +71,9 @@ export function CalibrationForm() {
           ? { sma_short: smaShort, sma_long: smaLong }
           : strategy === 'rsi_strategy'
             ? { rsi_period: rsiPeriod, rsi_overbought: rsiOverbought, rsi_oversold: rsiOversold }
-            : { fast_period: fastPeriod, slow_period: slowPeriod, signal_period: signalPeriod }
+            : strategy === 'technical_score'
+              ? { score_threshold: scoreThreshold }
+              : { fast_period: fastPeriod, slow_period: slowPeriod, signal_period: signalPeriod }
 
       const strategy_params: Record<string, number> = {}
       for (const [name, raw] of Object.entries(rawParams)) {
@@ -281,6 +284,22 @@ export function CalibrationForm() {
                     />
                   </div>
                 </>
+              )}
+
+              {strategy === 'technical_score' && (
+                <div className="space-y-2">
+                  <Label htmlFor="cal-score-threshold">Score Threshold</Label>
+                  <Input
+                    id="cal-score-threshold"
+                    type="number"
+                    value={scoreThreshold}
+                    onChange={(e) => setScoreThreshold(e.target.value)}
+                    disabled={loading}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    决策层技术面分的买入阈值（−100..100）；10 = 线上管线的 moderate_buy 档线
+                  </p>
+                </div>
               )}
             </div>
 

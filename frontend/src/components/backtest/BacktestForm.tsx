@@ -31,6 +31,7 @@ export function BacktestForm() {
   const [fastPeriod, setFastPeriod] = useState('12')
   const [slowPeriod, setSlowPeriod] = useState('26')
   const [signalPeriod, setSignalPeriod] = useState('9')
+  const [scoreThreshold, setScoreThreshold] = useState('10')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<BacktestResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -65,6 +66,8 @@ export function BacktestForm() {
         request.fast_period = parseInt(fastPeriod)
         request.slow_period = parseInt(slowPeriod)
         request.signal_period = parseInt(signalPeriod)
+      } else if (selectedStrategy === 'technical_score') {
+        request.score_threshold = parseFloat(scoreThreshold)
       }
 
       const response = await API.runBacktest(request)
@@ -214,6 +217,16 @@ export function BacktestForm() {
                     <Input id="signal_period" type="number" value={signalPeriod} onChange={(e) => setSignalPeriod(e.target.value)} disabled={loading} min="2" max="100" />
                   </div>
                 </>
+              )}
+
+              {strategy === 'technical_score' && (
+                <div className="space-y-2">
+                  <Label htmlFor="score_threshold">Score Threshold</Label>
+                  <Input id="score_threshold" type="number" value={scoreThreshold} onChange={(e) => setScoreThreshold(e.target.value)} disabled={loading} min="-100" max="100" />
+                  <p className="text-xs text-muted-foreground">
+                    决策层技术面分的买入阈值（−100..100）；10 = 线上管线的 moderate_buy 档线
+                  </p>
+                </div>
               )}
             </div>
 

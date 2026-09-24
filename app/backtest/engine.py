@@ -21,13 +21,20 @@ from app.backtest.costs import CostModel
 from app.backtest.metrics import compute_metrics
 from app.backtest.null_benchmark import random_entry_null
 
-STRATEGIES = ("sma_crossover", "rsi_strategy", "macd_strategy", "buy_and_hold")
+STRATEGIES = (
+    "sma_crossover",
+    "rsi_strategy",
+    "macd_strategy",
+    "buy_and_hold",
+    "technical_score",
+)
 
 STRATEGY_PARAMETERS: dict[str, frozenset[str]] = {
     "sma_crossover": frozenset({"sma_short", "sma_long"}),
     "rsi_strategy": frozenset({"rsi_period", "rsi_overbought", "rsi_oversold"}),
     "macd_strategy": frozenset({"fast_period", "slow_period", "signal_period"}),
     "buy_and_hold": frozenset(),
+    "technical_score": frozenset({"score_threshold"}),
 }
 
 DEFAULT_PARAMS: dict[str, dict[str, float]] = {
@@ -35,6 +42,10 @@ DEFAULT_PARAMS: dict[str, dict[str, float]] = {
     "rsi_strategy": {"rsi_period": 14, "rsi_overbought": 70, "rsi_oversold": 30},
     "macd_strategy": {"fast_period": 12, "slow_period": 26, "signal_period": 9},
     "buy_and_hold": {},
+    # 10 = the live pipeline's moderate_buy cutoff: any buy-ish technical
+    # reading. The only knob — walk-forward can price the selection, DSR can
+    # deflate it, calibration can score its hit rate.
+    "technical_score": {"score_threshold": 10},
 }
 
 
@@ -177,6 +188,12 @@ def _target_position(data: pd.DataFrame, strategy: str, params: dict[str, Any]) 
         exit_ = rsi > float(params["rsi_overbought"])
         return _state_machine(entry, exit_)
 
+    if strategy == "technical_score":
+        # Replay of the decision layer's technical dimension score — the
+        # only recommendation input that is a pure function of OHLCV.
+        score = _technical_score_series(data)
+        return (score >= float(params["score_threshold"])).astype(float)
+
     # buy_and_hold: in the market from the first executable bar.
     return pd.Series(1.0, index=data.index)
 
@@ -205,6 +222,68 @@ def _rsi(close: pd.Series, period: int) -> pd.Series:
     # same first-value position the old rolling window produced.
     out.iloc[period:] = 100 - 100 / (1 + avg_gain / avg_loss)
     return out
+
+
+def _technical_score_series(data: pd.DataFrame) -> pd.Series:
+    """Vectorized replay of the live technical score (daily.py's −100..100).
+
+    Same definition as ``calculate_sentiment(generate_signals(
+    calculate_indicators(df[: t+1])))`` at every bar t: every window below
+    looks only backwards, so each bar's score sees exactly the history the
+    live pipeline would have had on that date. Windows are the live
+    pipeline's constants (SMA 20/50, Wilder RSI 14, MACD 12/26/9 on
+    adjust=True ewm, Bollinger 20±2σ, volume SMA 20) — deliberately not
+    tunable: replaying the recommendation layer means using its numbers.
+
+    Contribution table mirrors ``calculate_sentiment``: trend
+    +30/+15/−15/−30, RSI oversold +20 / bullish +10 / bearish −10 /
+    overbought −20 (in generate_signals' elif priority), MACD histogram
+    sign ±20, Bollinger breaches ±15, volume confirmation ±15 only when
+    ratio > 2 amplifies a non-zero score. Warm-up bars contribute 0 — the
+    live pipeline's "unavailable → None" is the same no-vote.
+    """
+    close = data["Close"]
+    score = pd.Series(0.0, index=close.index, dtype=float)
+
+    sma_20 = close.rolling(20).mean()
+    sma_50 = close.rolling(50).mean()
+    have_trend = sma_20.notna() & sma_50.notna()
+    strong_bull = have_trend & (close > sma_20) & (sma_20 > sma_50)
+    bull = have_trend & (close > sma_20) & ~strong_bull
+    strong_bear = have_trend & (close < sma_20) & (sma_20 < sma_50)
+    bear = have_trend & (close < sma_20) & ~strong_bear
+    score = score + 30.0 * strong_bull + 15.0 * bull - 30.0 * strong_bear - 15.0 * bear
+
+    rsi = _rsi(close, 14)
+    score = score + pd.Series(
+        np.select(
+            [rsi > 70, rsi > 60, rsi < 30, rsi < 40],
+            [-20.0, 10.0, 20.0, -10.0],
+            default=0.0,
+        ),
+        index=close.index,
+    )
+
+    macd_line = close.ewm(span=12).mean() - close.ewm(span=26).mean()
+    signal_line = macd_line.ewm(span=9).mean()
+    hist = macd_line - signal_line
+    # The live elif chain fires bearish whenever the histogram is not > 0.
+    score = score + 20.0 * (hist > 0) - 20.0 * (hist <= 0)
+
+    std_20 = close.rolling(20).std()
+    upper = sma_20 + 2.0 * std_20
+    lower = sma_20 - 2.0 * std_20
+    score = score + 15.0 * (close < lower) - 15.0 * (close > upper)
+
+    if "Volume" in data.columns:
+        vol_sma = data["Volume"].rolling(20).mean()
+        # ratio > 2 implies a positive denominator; masked elsewhere so a
+        # zero/NaN SMA (warm-up, dead tape) never fabricates a confirmation.
+        ratio = data["Volume"] / vol_sma.mask(~(vol_sma > 0))
+        confirm = ratio > 2
+        score = score + 15.0 * (confirm & (score > 0)) - 15.0 * (confirm & (score < 0))
+
+    return score
 
 
 def _state_machine(entry: pd.Series, exit_: pd.Series) -> pd.Series:
