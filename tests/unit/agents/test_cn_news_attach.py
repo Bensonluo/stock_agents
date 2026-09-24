@@ -19,6 +19,20 @@ import pytest
 from app.agents.data_agent import DataCollectionAgent, _dedup_news
 
 
+@pytest.fixture(autouse=True)
+def _clear_cn_news_cache():
+    """fetch_cn_news caches successes; each test must start uncached."""
+    from app.tools.data import fetcher
+
+    stale = [k for k in fetcher._cache if k.startswith("cn_news_")]
+    for k in stale:
+        del fetcher._cache[k]
+    yield
+    stale = [k for k in fetcher._cache if k.startswith("cn_news_")]
+    for k in stale:
+        del fetcher._cache[k]
+
+
 def _cn_df() -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -97,6 +111,33 @@ class TestFetcherCnNewsMapping:
         articles = fetcher.fetch_cn_news("600000")
         assert articles is not None and len(articles) == 1
         assert articles[0]["title"] == "公司遭证监会处罚"
+
+
+class TestCnNewsCache:
+    def test_success_is_cached_across_calls(self, monkeypatch) -> None:
+        from app.tools.data import fetcher
+
+        calls: list[str] = []
+        _install_fake_akshare(monkeypatch, _cn_df(), calls)
+
+        first = fetcher.fetch_cn_news("600519")
+        second = fetcher.fetch_cn_news("600519")
+
+        assert calls == ["600519"]  # one network hit; the second is served warm
+        assert second == first
+
+    def test_failures_are_never_cached(self, monkeypatch) -> None:
+        from app.tools.data import fetcher
+
+        calls: list[str] = []
+        _install_fake_akshare(monkeypatch, None, calls)
+        assert fetcher.fetch_cn_news("600036") is None
+
+        _install_fake_akshare(monkeypatch, _cn_df(), calls)
+        recovered = fetcher.fetch_cn_news("600036")
+
+        assert calls == ["600036", "600036"]  # failure retried, not remembered
+        assert recovered is not None and len(recovered) == 2
 
 
 class TestFetchNewsSeam:

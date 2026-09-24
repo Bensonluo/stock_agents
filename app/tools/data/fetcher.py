@@ -231,6 +231,12 @@ async def fetch_cn_sector_benchmark(symbol: str) -> dict[str, Any] | None:
     return bench
 
 
+# News goes stale faster than benchmarks: within one analysis run the cache
+# dedups the ReAct path's per-tool refetches, but a fresh user query ten
+# minutes later should see new headlines.
+_CN_NEWS_CACHE_TTL = 600
+
+
 def fetch_cn_news(symbol: str) -> list[dict[str, Any]] | None:
     """East Money per-stock news for an A-share (akshare ``stock_news_em``).
 
@@ -238,7 +244,16 @@ def fetch_cn_news(symbol: str) -> list[dict[str, Any]] | None:
     native Chinese feed. Same article shape the pipeline's yfinance path
     emits so dedup/scoring consume both without branching. Returns None on
     any failure so the caller keeps whatever the primary fetch produced.
+
+    Successful fetches are cached for ten minutes: every ReAct analysis
+    tool re-enters _fetch_and_split for the same symbol, so one run would
+    otherwise download this feed several times over. Failures are never
+    cached — the next call retries the source.
     """
+    key = f"cn_news_{symbol}"
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
     try:
         import akshare as ak
     except ImportError:
@@ -268,7 +283,10 @@ def fetch_cn_news(symbol: str) -> list[dict[str, Any]] | None:
                 "original_symbol": symbol,
             }
         )
-    return articles or None
+    result = articles or None
+    if result is not None:
+        _cache_set(key, result, ttl=_CN_NEWS_CACHE_TTL)
+    return result
 
 
 def dedup_news(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
