@@ -44,6 +44,10 @@ async def judge_report(report_text: str) -> dict | None:
     if not settings.eval_llm_judge:
         return None
 
+    if not settings.zhipuai_api_key:
+        logger.warning("EVAL_LLM_JUDGE enabled but ZHIPUAI_API_KEY is not set; skipping judge")
+        return None
+
     from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(
@@ -54,9 +58,6 @@ async def judge_report(report_text: str) -> dict | None:
         openai_api_key=settings.zhipuai_api_key,
         openai_api_base=ZHIPU_API_BASE,
     )
-    if not settings.zhipuai_api_key:
-        logger.warning("EVAL_LLM_JUDGE enabled but ZHIPUAI_API_KEY is not set; skipping judge")
-        return None
 
     user = f"Report to evaluate:\n\n{report_text[:12000]}"
     verdict = await ainvoke_json(llm, system=_JUDGE_SYSTEM, user=user, schema=JudgeVerdict)
