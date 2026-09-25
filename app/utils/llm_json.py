@@ -103,12 +103,16 @@ async def ainvoke_json(
             else:
                 logger.warning("structured output returned None; using prompt JSON")
         except Exception as e:  # noqa: BLE001 - degrade by design
-            logger.warning(f"native structured output unavailable, using prompt JSON: {e}")
+            logger.warning(
+                f"native structured output unavailable, using prompt JSON: {type(e).__name__}: {e}"
+            )
 
     try:
         response = await llm.ainvoke(messages)
     except Exception as e:  # noqa: BLE001 - degrade by design
-        logger.warning(f"LLM invocation failed: {e}")
+        # Bare TimeoutError's str() is "" — always name the class or the
+        # production log shows an "empty message exception" with no cause.
+        logger.warning(f"LLM invocation failed: {type(e).__name__}: {e}")
         return None
 
     content = getattr(response, "content", "")

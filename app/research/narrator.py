@@ -18,14 +18,11 @@ import asyncio
 import json
 from typing import Any
 
+from app.config import get_settings
 from app.utils.llm_json import ainvoke_json
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-# The pipeline node already enforces a timeout, but narration is optional —
-# keep its own budget well below the node's.
-NARRATION_TIMEOUT_SECONDS = 20
 
 _SYSTEM_PROMPT = (
     "你是股票研究报告的叙述员。你会收到每个标的的确定性多空论点、证据审计结果和风险委员会裁决。"
@@ -41,16 +38,27 @@ async def narrate_synthesis(
     synthesis: dict[str, Any],
     *,
     llm: Any,
-    timeout: float = NARRATION_TIMEOUT_SECONDS,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
-    """Attach ``narrative`` per symbol; returns synthesis unchanged on failure."""
+    """Attach ``narrative`` per symbol; returns synthesis unchanged on failure.
+
+    The budget defaults to ``settings.narration_timeout_seconds``. The old
+    hardcoded 20s sat below every measured production call (33.6s on a thin
+    single-symbol payload, 2026-09-25), so narration degraded on every run —
+    while logging an empty-message exception, because ``str(TimeoutError())``
+    is the empty string.
+    """
     if llm is None or not synthesis.get("per_symbol"):
         return synthesis
 
+    budget = get_settings().narration_timeout_seconds if timeout is None else timeout
     try:
-        narratives = await asyncio.wait_for(_request_narratives(synthesis, llm), timeout=timeout)
+        narratives = await asyncio.wait_for(_request_narratives(synthesis, llm), timeout=budget)
     except (TimeoutError, Exception) as e:  # noqa: BLE001 - degrade by design
-        logger.warning(f"LLM narration unavailable, using deterministic synthesis: {e}")
+        logger.warning(
+            f"LLM narration unavailable after {budget}s, using deterministic synthesis: "
+            f"{type(e).__name__}: {e}"
+        )
         return synthesis
 
     per_symbol = synthesis["per_symbol"]

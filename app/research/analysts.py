@@ -19,12 +19,11 @@ import asyncio
 import json
 from typing import Any
 
+from app.config import get_settings
 from app.utils.llm_json import ainvoke_json
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-PANEL_TIMEOUT_SECONDS = 25
 
 _ROLES = ("technical", "fundamental", "valuation", "event")
 
@@ -47,16 +46,27 @@ async def attach_analyst_panel(
     synthesis: dict[str, Any],
     *,
     llm: Any,
-    timeout: float = PANEL_TIMEOUT_SECONDS,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
-    """Attach ``analysts`` and ``pm`` per symbol; degrade to unchanged output."""
+    """Attach ``analysts`` and ``pm`` per symbol; degrade to unchanged output.
+
+    The budget defaults to ``settings.panel_timeout_seconds``. The old
+    hardcoded 25s sat below every measured production call (36.6s on a thin
+    single-symbol payload, 2026-09-25), so the panel degraded on every run —
+    while logging an empty-message exception, because ``str(TimeoutError())``
+    is the empty string.
+    """
     if llm is None or not synthesis.get("per_symbol"):
         return synthesis
 
+    budget = get_settings().panel_timeout_seconds if timeout is None else timeout
     try:
-        panel = await asyncio.wait_for(_request_panel(synthesis, llm), timeout=timeout)
+        panel = await asyncio.wait_for(_request_panel(synthesis, llm), timeout=budget)
     except (TimeoutError, Exception) as e:  # noqa: BLE001 - degrade by design
-        logger.warning(f"Analyst panel unavailable, keeping deterministic synthesis: {e}")
+        logger.warning(
+            f"Analyst panel unavailable after {budget}s, keeping deterministic synthesis: "
+            f"{type(e).__name__}: {e}"
+        )
         return synthesis
 
     for symbol, entry in synthesis["per_symbol"].items():
