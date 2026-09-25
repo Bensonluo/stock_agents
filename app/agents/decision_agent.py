@@ -216,7 +216,10 @@ class DecisionMakingAgent(StatelessAgent):
             return 0.0
 
         sentiment = technical.get("sentiment", {})
-        return sentiment.get("score", 0.0)
+        # ``.get(key, default)`` returns None when the key exists with a
+        # None value — degraded technical blocks carry exactly that shape.
+        score = sentiment.get("score")
+        return score if isinstance(score, int | float) else 0.0
 
     def _extract_fundamental_score(self, fundamental: dict) -> float:
         """Extract fundamental analysis score (0 to 100).
@@ -231,7 +234,13 @@ class DecisionMakingAgent(StatelessAgent):
             return 0.0
 
         overall = fundamental.get("overall_score", {})
-        score = overall.get("score", 50)
+        # A null overall score (insufficient-data blocks emit ``score: null``)
+        # is missing evidence, not a number — .get's default only fires when
+        # the key is absent. Found by the post-deploy smoke run: the old
+        # ``or 50``-style read crashed the whole decision on (None - 50).
+        score = overall.get("score")
+        if not isinstance(score, int | float):
+            return 0.0
 
         # Convert 0-100 to -50 to 50 scale
         return (score - 50) * 2
@@ -248,7 +257,9 @@ class DecisionMakingAgent(StatelessAgent):
         if not sentiment:
             return 0.0
 
-        return sentiment.get("score", 0.0)
+        # Same None-tolerant contract as the other extractors.
+        score = sentiment.get("score")
+        return score if isinstance(score, int | float) else 0.0
 
     def _calculate_position_size(
         self, score: float, risk_rec: dict, technical: dict | None = None

@@ -156,3 +156,71 @@ class TestRegimeAwareSynthesis:
 
         assert result["llm_summary"]["synthesis"] == "Balanced portfolio summary."
         assert "Market context:" in stub.prompts[0]
+
+
+class TestNullScoreExtractors:
+    """Degraded blocks carry ``score: null`` — extractors must read that as
+    missing evidence, not crash on (None - 50).
+
+    Found by the post-deploy smoke run (2026-09-25): a Yahoo-429 degraded
+    run emitted ``overall_score.score = null`` and the fundamental extractor
+    raised TypeError, dropping the symbol's decision to the error fallback
+    (hold with zero confidence and an error rationale) instead of the
+    formula path. Same ``.get(key, default)`` trap as iteration 62's
+    score_news — the default only fires when the key is ABSENT.
+    """
+
+    async def test_null_fundamental_score_reads_as_missing(self) -> None:
+        agent = DecisionMakingAgent("test-decision")
+        score = agent._extract_fundamental_score(
+            {"overall_score": {"score": None, "rating": "insufficient_data"}}
+        )
+        assert score == 0.0
+
+    async def test_null_technical_and_sentiment_scores_read_as_missing(self) -> None:
+        agent = DecisionMakingAgent("test-decision")
+        assert agent._extract_technical_score({"sentiment": {"score": None}}) == 0.0
+        assert agent._extract_sentiment_score({"score": None}) == 0.0
+
+    async def test_degraded_run_uses_the_formula_path_not_the_error_fallback(
+        self, monkeypatch
+    ) -> None:
+        # The exact shape of the smoke run: null-score fundamental, empty
+        # technical, zero-article sentiment, insufficient risk.
+        import app.services.ic_service as ic_service_module
+
+        async def static_provider(**kwargs):
+            from app.analysis.ic import STATIC_DIMENSION_WEIGHTS
+
+            return dict(STATIC_DIMENSION_WEIGHTS), {
+                "mode": "static",
+                "weights": dict(STATIC_DIMENSION_WEIGHTS),
+            }
+
+        monkeypatch.setattr(ic_service_module, "get_adaptive_dimension_weights", static_provider)
+
+        agent = DecisionMakingAgent("test-decision")
+        agent.llm = None
+
+        result = await agent.process(
+            {
+                "symbols": ["AAPL"],
+                "technical_analysis": {},
+                "fundamental_analysis": {
+                    "AAPL": {"overall_score": {"score": None, "status": "insufficient_data"}}
+                },
+                "sentiment_analysis": {
+                    "sentiment_by_symbol": {"AAPL": {"score": 0, "article_count": 0}}
+                },
+                "risk_assessment": {
+                    "risk_by_symbol": {"AAPL": {"risk_level": "insufficient_data"}}
+                },
+            }
+        )
+
+        decision = result["decisions"]["AAPL"]
+        # Formula path: canonical rationale + zeroed component scores — NOT
+        # the "Decision engine error" fallback rationale.
+        assert "Decision engine error" not in decision["rationale"]
+        assert decision["component_scores"]["fundamental"] == 0.0
+        assert decision["action"] == "hold"
