@@ -125,6 +125,25 @@ interface AnalysisResult {
       hold_recommendations: number
       avg_confidence: number
     }
+    // IC 反馈边的 provenance：本次 run 的复合分混合来自静态 45/30/15
+    // 还是测得的维度 IC（决策层每次 run 顶层发射，一块对整次 run）。
+    dimension_weights?: {
+      mode: 'static' | 'adaptive'
+      reason?: string | null
+      static_weights: Record<string, number>
+      weights: Record<string, number>
+      lambda?: number | null
+      runs_weakest_dimension?: number | null
+      runs_evaluated?: number | null
+      horizon_bars?: number | null
+      per_dimension?: Record<string, {
+        qualified: boolean
+        reason?: string
+        runs?: number
+        ic_mean?: number
+        ic_positive_rate?: number
+      }>
+    }
   }
   report?: {
     sections?: Record<string, any>
@@ -426,6 +445,7 @@ function PipelineResultPage({ threadId }: { threadId: string | null }) {
   const actionInfo = getActionInfo(decision?.action || '')
   const ActionIcon = actionInfo.icon
   const portfolio = result.decision?.portfolio_summary
+  const weights = result.decision?.dimension_weights
   const allDecisions = Object.values(result.decision?.decisions ?? {})
   const isMultiSymbol = (portfolio?.total_symbols ?? allDecisions.length) > 1
 
@@ -563,6 +583,74 @@ function PipelineResultPage({ threadId }: { threadId: string | null }) {
                       className="mt-2 h-1"
                     />
                   </div>
+                </div>
+              )}
+
+              {/* 维度权重 — 上面三个分各占多少（dimension_weights 首个消费方） */}
+              {weights && (
+                <div className="mt-6 p-4 bg-white rounded-lg border space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                    <span className="text-sm font-medium text-slate-700">
+                      维度权重 · {weights.mode === 'adaptive' ? 'IC 自适应' : '固定混合'}
+                    </span>
+                    {weights.mode === 'adaptive' ? (
+                      <span className="text-xs text-slate-500">
+                        λ={weights.lambda?.toFixed(2)} · 证据 {weights.runs_evaluated ?? '—'} runs · 前瞻{' '}
+                        {weights.horizon_bars ?? '—'} 日
+                      </span>
+                    ) : (
+                      weights.reason && (
+                        <span
+                          className="text-xs text-slate-400 max-w-md truncate"
+                          title={weights.reason ?? undefined}
+                        >
+                          {weights.reason}
+                        </span>
+                      )
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(
+                      [
+                        { key: 'technical', label: '技术面' },
+                        { key: 'fundamental', label: '基本面' },
+                        { key: 'sentiment', label: '情绪' },
+                      ] as const
+                    ).map(({ key, label }) => {
+                      const w = weights.weights[key]
+                      const stat = weights.per_dimension?.[key]
+                      const delta =
+                        w !== undefined && weights.mode === 'adaptive'
+                          ? w - (weights.static_weights[key] ?? 0)
+                          : 0
+                      return (
+                        <div key={key} className="rounded-md bg-slate-50 px-3 py-2">
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-xs text-slate-500">{label}</span>
+                            <span className="text-sm font-semibold text-slate-700">
+                              {formatPercent(w, 0)}
+                            </span>
+                          </div>
+                          {weights.mode === 'adaptive' && stat?.qualified && (
+                            <p className="text-[11px] text-slate-400 mt-0.5">
+                              IC {stat.ic_mean?.toFixed(2) ?? '—'} · {stat.runs} runs
+                              {delta !== 0 && (
+                                <span className={delta > 0 ? 'text-green-600' : 'text-red-500'}>
+                                  {' '}
+                                  {delta > 0 ? '↑' : '↓'}
+                                  {formatPercent(Math.abs(delta), 0)}
+                                </span>
+                              )}
+                            </p>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    复合分 = 各维度分 × 权重 + 风险修饰 10%；权重由历史 IC 证据门控（维度证据不足 12 runs
+                    时保持固定 45/30/15）。
+                  </p>
                 </div>
               )}
 
