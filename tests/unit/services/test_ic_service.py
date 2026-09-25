@@ -465,3 +465,183 @@ class TestReplaySeriesCache:
         records, fetcher = ic_service_module._resolve_inputs([], 10, None)
         assert records == []
         assert fetcher is not ic_service_module._cached_default_fetch
+
+
+def _component_record(
+    thread_id: str,
+    created_at: str,
+    scored: dict[str, float],
+    components: dict[str, dict[str, float]],
+) -> AnalysisRecord:
+    """A record whose decisions carry ``component_scores`` — the per-dimension
+    IC replay has something to attribute when the history looks like this."""
+    decisions = {
+        symbol: {
+            "symbol": symbol,
+            "action": "hold",
+            "score": score,
+            "component_scores": {dim: vals[symbol] for dim, vals in components.items()},
+        }
+        for symbol, score in scored.items()
+    }
+    return AnalysisRecord(
+        thread_id=thread_id,
+        symbols="[]",
+        query="q",
+        status="completed",
+        result=json.dumps({"decision": {"decisions": decisions}}),
+        created_at=created_at,
+        updated_at=created_at,
+        execution_time=0.0,
+    )
+
+
+def _qualifying_evidence() -> tuple[list[AnalysisRecord], dict[str, Any]]:
+    """16 matured 3-symbol runs where fundamental/technical rank-order the
+    forward returns and sentiment anti-ranks them.
+
+    Every dimension collects 16 evaluated ICs (>= MIN_ADAPT_RUNS) with a
+    dispersion estimate, so the adaptation gates open: the provider must
+    leave the static blend and move toward the measured targets.
+    """
+    dates = _bdates(300)
+    series = {
+        "A": (dates, _two_phase_closes(dates, 50, 0.001)),
+        "B": (dates, _two_phase_closes(dates, 50, 0.002)),
+        "C": (dates, _two_phase_closes(dates, 50, 0.003)),
+    }
+    components = {
+        "fundamental": {"A": 10.0, "B": 50.0, "C": 90.0},
+        "technical": {"A": 20.0, "B": 50.0, "C": 80.0},
+        "sentiment": {"A": 90.0, "B": 50.0, "C": 10.0},
+    }
+    records = [
+        _component_record(
+            f"t{i}",
+            f"{dates[100 + i]}T10:00:00",
+            {"A": 20.0, "B": 50.0, "C": 80.0},
+            components,
+        )
+        for i in range(16)
+    ]
+    return records, series
+
+
+class TestAdaptiveWeightsProvider:
+    """get_adaptive_dimension_weights: cached, gated, never a pipeline risk.
+
+    The provider is the async boundary between IC evidence and the decision
+    layer. These tests pin the operational contract: injected inputs
+    recompute in isolation, the production path caches for 30 min, the
+    kill-switch and any evidence failure degrade to the static blend with
+    the reason recorded.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_caches(self):
+        ic_service_module._weights_cache = None
+        ic_service_module._replay_cache.clear()
+        yield
+        ic_service_module._weights_cache = None
+        ic_service_module._replay_cache.clear()
+
+    def _patch_production_history(self, monkeypatch, records, series) -> list[str]:
+        """Point the production path (DB + shared fetcher) at test doubles."""
+        db_calls: list[str] = []
+
+        class _StubDB:
+            def list_records(self, *, status: str, limit: int) -> list[AnalysisRecord]:
+                db_calls.append("db")
+                return records
+
+        async def fake_fetch(symbol: str, period: str) -> dict[str, Any]:
+            dates, closes = series[symbol]
+            return {"dates": dates, "close": closes}
+
+        monkeypatch.setattr(ic_service_module, "get_database", lambda: _StubDB())
+        monkeypatch.setattr(ic_service_module, "fetch_historical", fake_fetch)
+        return db_calls
+
+    async def test_full_loop_adapts_weights_from_injected_history(self) -> None:
+        records, series = _qualifying_evidence()
+
+        weights, provenance = await ic_service_module.get_adaptive_dimension_weights(
+            records=records, fetch_history=_fetcher(series)
+        )
+
+        assert provenance["mode"] == "adaptive"
+        # targets (0.5, 0.5, 0) with lambda = 16/40 = 0.4 blended onto the
+        # static shares -> (0.45, 0.36, 0.09); no bound is hit.
+        assert weights == pytest.approx({"fundamental": 0.45, "technical": 0.36, "sentiment": 0.09})
+        assert provenance["lambda"] == 0.4
+        assert provenance["horizon_bars"] == 20
+        assert provenance["runs_evaluated"] == 16
+        assert provenance["per_dimension"]["sentiment"]["ic_mean"] == pytest.approx(-1.0)
+        # Injected inputs must never touch the production cache.
+        assert ic_service_module._weights_cache is None
+
+    async def test_production_path_caches_and_reuses(self, monkeypatch) -> None:
+        records, series = _qualifying_evidence()
+        self._patch_production_history(monkeypatch, records, series)
+
+        first = await ic_service_module.get_adaptive_dimension_weights()
+        second = await ic_service_module.get_adaptive_dimension_weights()
+
+        assert first is second  # tuple identity — a cache hit, not a recompute
+        assert first[1]["mode"] == "adaptive"
+
+    async def test_expired_weights_cache_refetches(self, monkeypatch) -> None:
+        records, series = _qualifying_evidence()
+        db_calls = self._patch_production_history(monkeypatch, records, series)
+
+        ic_service_module._weights_cache = (
+            monotonic() - (ic_service_module.WEIGHTS_EVIDENCE_TTL + 1),
+            (dict(ic_service_module.STATIC_DIMENSION_WEIGHTS), {"mode": "static"}),
+        )
+        _, provenance = await ic_service_module.get_adaptive_dimension_weights()
+
+        assert provenance["mode"] == "adaptive"  # stale entry discarded, recomputed
+        assert db_calls == ["db"]
+
+    async def test_disabled_flag_keeps_the_static_blend(self, monkeypatch) -> None:
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "ic_adaptive_weights_enabled", False)
+        # The flag short-circuits before any DB/fetch access — no other
+        # patching needed, and none may be required for the test to pass.
+        weights, provenance = await ic_service_module.get_adaptive_dimension_weights()
+
+        assert weights == dict(ic_service_module.STATIC_DIMENSION_WEIGHTS)
+        assert provenance["mode"] == "static"
+        assert "disabled" in provenance["reason"]
+
+    async def test_evidence_failure_degrades_to_static(self, monkeypatch) -> None:
+        class _ExplodingDB:
+            def list_records(self, *, status: str, limit: int) -> list[AnalysisRecord]:
+                raise RuntimeError("history unavailable")
+
+        monkeypatch.setattr(ic_service_module, "get_database", lambda: _ExplodingDB())
+
+        weights, provenance = await ic_service_module.get_adaptive_dimension_weights()
+
+        assert weights == dict(ic_service_module.STATIC_DIMENSION_WEIGHTS)
+        assert provenance["mode"] == "static"
+        assert "evidence unavailable (RuntimeError)" in provenance["reason"]
+
+    async def test_peek_sees_only_a_warm_unexpired_cache(self, monkeypatch) -> None:
+        assert ic_service_module.peek_dimension_weights() is None  # cold
+
+        records, series = _qualifying_evidence()
+        self._patch_production_history(monkeypatch, records, series)
+        await ic_service_module.get_adaptive_dimension_weights()
+
+        snapshot = ic_service_module.peek_dimension_weights()
+        assert snapshot is not None
+        weights, provenance = snapshot
+        assert provenance["mode"] == "adaptive"
+        assert weights["sentiment"] < ic_service_module.STATIC_DIMENSION_WEIGHTS["sentiment"]
+
+        # Expiry applies to the peek too — a stale snapshot is not evidence.
+        stale = (monotonic() - (ic_service_module.WEIGHTS_EVIDENCE_TTL + 1), snapshot)
+        ic_service_module._weights_cache = stale
+        assert ic_service_module.peek_dimension_weights() is None

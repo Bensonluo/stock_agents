@@ -13,6 +13,7 @@ Pure functions only — network access and storage live in
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pandas as pd
@@ -139,3 +140,183 @@ def ic_summary(per_run_ics: list[float]) -> dict[str, Any] | None:
 
 def _is_score(value: Any) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+# ---------------------------------------------------------------------------
+# IC-driven dimension weighting: closing the loop the IC arc opened. The
+# measured predictive power of each dimension feeds back into the composite
+# recommendation blend — Grinold & Kahn's factor-weighting logic applied to
+# our own decision layer.
+# ---------------------------------------------------------------------------
+
+# The directional blend derive_recommendation uses when no measured evidence
+# applies (risk's 0.10 modifier weight lives elsewhere and never adapts —
+# risk is a modifier, not a signal, and no IC is measured for it).
+STATIC_DIMENSION_WEIGHTS: dict[str, float] = {
+    "fundamental": 0.45,
+    "technical": 0.30,
+    "sentiment": 0.15,
+}
+
+# A dimension votes on weighting only with a dispersion-estimated IC backed
+# by at least this many evaluated runs. Below it the whole blend stays
+# static: renormalization couples dimensions, so adapting on partial
+# evidence would silently redistribute weight among unequally-measured dims.
+MIN_ADAPT_RUNS = 12
+# Shrinkage intensity λ = n/(n+k) toward the measured-IC targets: the
+# weakest dimension's run count governs. n=12 → λ=1/3, n=36 → 0.6.
+ADAPT_SHRINK_K = 24
+# Share bounds (within the directional mass) so no dimension is fully
+# silenced nor allowed to dominate, however strong its measured IC.
+WEIGHT_FLOOR = 0.05
+WEIGHT_CAP = 0.60
+
+
+def adaptive_dimension_weights(
+    ic_by_dimension: Mapping[str, dict[str, Any] | None],
+    *,
+    static_weights: Mapping[str, float] | None = None,
+    min_runs: int = MIN_ADAPT_RUNS,
+    shrink_k: int = ADAPT_SHRINK_K,
+    floor: float = WEIGHT_FLOOR,
+    cap: float = WEIGHT_CAP,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    """Blend static dimension weights toward measured-IC targets.
+
+    Args:
+        ic_by_dimension: ``{dimension: ic_summary(...) | None}`` — the
+            per-dimension summaries ``evaluate_decision_ic`` already emits.
+        static_weights: prior blend to shrink toward (defaults to the live
+            45/30/15 constants).
+
+    Returns:
+        ``(weights, provenance)``. Weights are the directional blend only
+        (same support and total mass as ``static_weights``); provenance
+        records mode, gate decision, shrinkage and per-dimension evidence
+        so the decision output can carry its own audit trail.
+
+    Gate: every directional dimension must have a qualified summary
+    (``runs >= min_runs`` and an IC dispersion estimate). Any shortfall
+    keeps the static blend — an honest refusal, not a partial tilt. All
+    measured ICs non-positive also refuses: re-weighting cannot rescue a
+    composite with no predictive dimension, and sign-flipping scores would
+    be a far larger behavioral change than re-weighting.
+    """
+    prior = dict(static_weights or STATIC_DIMENSION_WEIGHTS)
+    mass = sum(prior.values())
+    evidence: dict[str, Any] = {}
+    for dim in prior:
+        summary = ic_by_dimension.get(dim)
+        if summary is None:
+            evidence[dim] = {"qualified": False, "reason": "no summary"}
+        elif summary.get("ic_std") is None:
+            evidence[dim] = {"qualified": False, "reason": "no dispersion estimate"}
+        elif int(summary.get("runs", 0)) < min_runs:
+            evidence[dim] = {
+                "qualified": False,
+                "reason": f"{summary.get('runs', 0)} runs < {min_runs}",
+            }
+        else:
+            evidence[dim] = {
+                "qualified": True,
+                "runs": int(summary["runs"]),
+                "ic_mean": summary["ic_mean"],
+                "ic_positive_rate": summary.get("ic_positive_rate"),
+            }
+
+    unqualified = [d for d, e in evidence.items() if not e["qualified"]]
+    if unqualified:
+        reason = "; ".join(f"{d}: {evidence[d]['reason']}" for d in unqualified)
+        return dict(prior), _weight_provenance(prior, evidence, mode="static", reason=reason)
+
+    positive = {d: max(float(e["ic_mean"]), 0.0) for d, e in evidence.items()}
+    if sum(positive.values()) <= 0:
+        return dict(prior), _weight_provenance(
+            prior, evidence, mode="static", reason="no dimension shows positive measured IC"
+        )
+
+    # Shrinkage toward the IC targets, governed by the weakest dimension.
+    n_min = min(int(e["runs"]) for e in evidence.values())
+    lam = n_min / (n_min + shrink_k)
+
+    target_total = sum(positive.values())
+    blended: dict[str, float] = {}
+    for dim in prior:
+        static_share = prior[dim] / mass
+        target_share = positive[dim] / target_total
+        blended[dim] = (1.0 - lam) * static_share + lam * target_share
+
+    # Bounded distortion regardless of how skewed the ICs are: the blend is
+    # projected onto {sum = 1, floor <= share <= cap} — a true box-simplex
+    # projection, so the cap holds in the FINAL weights. A naive
+    # clip-then-renormalize would push the capped dimension back above the
+    # cap when the renormalization restores the trimmed mass.
+    projected = _project_to_box(blended, floor, cap)
+    weights = {d: round(projected[d] * mass, 6) for d in prior}
+
+    provenance = _weight_provenance(
+        prior,
+        evidence,
+        mode="adaptive",
+        weights=weights,
+        lam=lam,
+        n_min=n_min,
+        targets={d: positive[d] / target_total for d in prior},
+    )
+    return weights, provenance
+
+
+def _project_to_box(shares: Mapping[str, float], floor: float, cap: float) -> dict[str, float]:
+    """Project onto {sum = 1, floor <= share <= cap} — box-simplex water-filling.
+
+    Each round renormalizes the free dimensions over the mass the pinned
+    ones leave, then pins the single most-violated dimension at its bound.
+    One pin per round (not all violators at once) keeps the pinned mass
+    feasible — pinning two floors and one cap simultaneously can overshoot
+    mass 1. The optimal projection has at most n-1 active bounds, so the
+    loop terminates with the invariant intact.
+    """
+    current = {d: s / sum(shares.values()) for d, s in shares.items()}
+    pinned: dict[str, float] = {}
+    while len(pinned) < len(current) - 1:
+        free = [d for d in current if d not in pinned]
+        free_sum = sum(current[d] for d in free)
+        free_mass = 1.0 - sum(pinned.values())
+        if not free or free_sum <= 0 or free_mass <= 0:
+            break
+        for d in free:
+            current[d] = current[d] / free_sum * free_mass
+        worst, worst_bound, worst_gap = None, None, -1.0
+        for d in free:
+            if current[d] < floor and floor - current[d] > worst_gap:
+                worst, worst_bound, worst_gap = d, floor, floor - current[d]
+            elif current[d] > cap and current[d] - cap > worst_gap:
+                worst, worst_bound, worst_gap = d, cap, current[d] - cap
+        if worst is None:
+            break
+        current[worst] = worst_bound
+        pinned[worst] = worst_bound
+    return current
+
+
+def _weight_provenance(
+    static_weights: Mapping[str, float],
+    evidence: Mapping[str, Any],
+    *,
+    mode: str,
+    reason: str | None = None,
+    weights: Mapping[str, float] | None = None,
+    lam: float | None = None,
+    n_min: int | None = None,
+    targets: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
+    return {
+        "mode": mode,
+        "reason": reason,
+        "static_weights": dict(static_weights),
+        "weights": dict(weights or static_weights),
+        "lambda": round(lam, 4) if lam is not None else None,
+        "runs_weakest_dimension": n_min,
+        "targets": {d: round(t, 4) for d, t in targets.items()} if targets else None,
+        "per_dimension": dict(evidence),
+    }

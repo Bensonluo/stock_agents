@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     timeout_per_agent: int = 300
     parallel_execution: bool = True
 
+    # Decision layer: blend dimension weights toward measured IC once every
+    # directional dimension clears the evidence gates (runs + dispersion).
+    # False = the fixed 45/30/15 blend, always.
+    ic_adaptive_weights_enabled: bool = True
+
     # Monitoring
     enable_metrics: bool = True
     metrics_port: int = 9090

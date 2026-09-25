@@ -10,11 +10,13 @@ sections; LLMs only narrate, every number comes from the analysis data.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
 from app.analysis.events import next_earnings_window
 from app.analysis.fundamental import compact_quality_view
+from app.analysis.ic import STATIC_DIMENSION_WEIGHTS
 from app.analysis.portfolio import suggest_weights
 from app.analysis.technical import compact_weekly_view
 from app.analysis.valuation import compact_valuation_view
@@ -439,6 +441,13 @@ class ReportService:
     @classmethod
     def _recommendations_derived(cls, c: dict[str, Any]) -> dict[str, Any]:
         """ReAct path: derive the recommendation from the analysis sections."""
+        # Same weights the pipeline decision path consults — the snapshot it
+        # primed, when warm; a cold process blends static. Keeps the two
+        # paths on one formula, the whole point of sharing derive_recommendation.
+        from app.services.ic_service import peek_dimension_weights
+
+        snapshot = peek_dimension_weights()
+        dimension_weights = snapshot[0] if snapshot is not None else None
         by_symbol: dict[str, Any] = {}
         for symbol in c["symbols"]:
             fundamental = c["fundamental_analysis"].get(symbol) or {}
@@ -455,7 +464,12 @@ class ReportService:
                 }
                 continue
             by_symbol[symbol] = derive_recommendation(
-                symbol, fundamental, technical, sentiment, risk
+                symbol,
+                fundamental,
+                technical,
+                sentiment,
+                risk,
+                dimension_weights=dimension_weights,
             )
 
         portfolio_actions = [
@@ -629,6 +643,7 @@ def derive_recommendation(
     technical: dict,
     sentiment: dict,
     risk: dict,
+    dimension_weights: Mapping[str, float] | None = None,
 ) -> dict:
     """Rule-based action synthesis that ALWAYS agrees with the analysis.
 
@@ -644,6 +659,11 @@ def derive_recommendation(
     vote worth 22.5 points on zero evidence; now its action rides the
     dimensions that measured something. Full-data composites are
     bit-identical (all four present → the classic 45/30/15/10 blend).
+
+    ``dimension_weights`` overrides the directional blend (fundamental/
+    technical/sentiment) — the IC-adaptive weights pathway. Unknown keys
+    are ignored and missing keys fall back to the static constants, so a
+    partial dict can never silently zero a dimension.
     """
     fund_raw = fundamental.get("overall_score")
     if isinstance(fund_raw, dict):
@@ -664,18 +684,31 @@ def derive_recommendation(
     risk_level = str(risk.get("risk_level") or "").lower()
     risk_available = bool(risk_level) and risk_level != "insufficient_data"
 
+    # Directional blend: caller-provided IC-adaptive weights or the static
+    # 45/30/15 constants. Partial dicts fall back per-key, never silently
+    # zeroing a dimension. Risk's 0.10 modifier weight is fixed — risk is a
+    # modifier, not a signal, and no IC is measured for it.
+    weights = {
+        **STATIC_DIMENSION_WEIGHTS,
+        **{
+            k: float(v)
+            for k, v in (dimension_weights or {}).items()
+            if k in STATIC_DIMENSION_WEIGHTS
+        },
+    }
+
     parts: list[tuple[float, float]] = []  # (normalized score, weight)
     missing: list[str] = []
     if fund_score is not None:
-        parts.append((fund_score, 0.45))
+        parts.append((fund_score, weights["fundamental"]))
     else:
         missing.append("fundamental")
     if tech_score is not None:
-        parts.append((max(0.0, min(100.0, (tech_score + 100) / 2)), 0.30))
+        parts.append((max(0.0, min(100.0, (tech_score + 100) / 2)), weights["technical"]))
     else:
         missing.append("technical")
     if sent_score is not None:
-        parts.append((max(0.0, min(100.0, (sent_score + 100) / 2)), 0.15))
+        parts.append((max(0.0, min(100.0, (sent_score + 100) / 2)), weights["sentiment"]))
     else:
         missing.append("sentiment")
     if risk_available:

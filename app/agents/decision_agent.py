@@ -64,6 +64,15 @@ class DecisionMakingAgent(StatelessAgent):
 
         results = {}
 
+        # IC-driven dimension weights: the measured predictive power of each
+        # dimension feeds back into the composite blend (static 45/30/15
+        # until every dimension clears the evidence gates). The provider
+        # never raises; failures degrade to the static blend with the
+        # reason recorded in the provenance it returns.
+        from app.services.ic_service import get_adaptive_dimension_weights
+
+        dimension_weights, weights_provenance = await get_adaptive_dimension_weights()
+
         for symbol in symbols:
             try:
                 decision = await self._make_decision(
@@ -73,6 +82,7 @@ class DecisionMakingAgent(StatelessAgent):
                     sentiment.get(symbol, {}) if isinstance(sentiment, dict) else sentiment,
                     risk.get(symbol, {}) if isinstance(risk, dict) else risk,
                     market_regime=market_regime,
+                    dimension_weights=dimension_weights,
                 )
                 if decision:
                     results[symbol] = decision
@@ -105,6 +115,7 @@ class DecisionMakingAgent(StatelessAgent):
             "decisions": results,
             "llm_summary": llm_summary,
             "portfolio_summary": self._create_portfolio_summary(results),
+            "dimension_weights": weights_provenance,
             "timestamp": datetime.now().isoformat(),
         }
 
@@ -117,6 +128,7 @@ class DecisionMakingAgent(StatelessAgent):
         risk: dict,
         *,
         market_regime: dict | None = None,
+        dimension_weights: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         """Make investment decision for a single symbol.
 
@@ -144,7 +156,14 @@ class DecisionMakingAgent(StatelessAgent):
         # The old private weights (0.30/0.40/0.15 + multiplicative risk
         # penalty) are retired — two formulas meant two different
         # recommendations for the same data.
-        recommendation = derive_recommendation(symbol, fundamental, technical, sentiment, risk)
+        recommendation = derive_recommendation(
+            symbol,
+            fundamental,
+            technical,
+            sentiment,
+            risk,
+            dimension_weights=dimension_weights,
+        )
         action = recommendation["action"]
         confidence = recommendation["confidence"]
         final_score = recommendation["composite_score"]

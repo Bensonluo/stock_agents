@@ -32,6 +32,8 @@ from app.analysis.forecast_calibration import (
 )
 from app.analysis.ic import (
     MIN_IC_SYMBOLS,
+    STATIC_DIMENSION_WEIGHTS,
+    adaptive_dimension_weights,
     decision_dimension_scores,
     decision_scores,
     ic_summary,
@@ -422,3 +424,97 @@ async def evaluate_confidence_calibration(
         status="ok",
     )
     return payload
+
+
+# ---------------------------------------------------------------------------
+# IC-driven dimension weights: the feedback edge of the IC loop. The IC
+# evidence computed above feeds back into the recommendation blend via
+# adaptive_dimension_weights; this provider is the async, cached boundary
+# the decision layer calls.
+# ---------------------------------------------------------------------------
+
+# Weights evidence updates at most every 30 minutes — the same freshness
+# budget as the replay series cache, and cheap enough that every run of the
+# decision pipeline can afford one consult.
+WEIGHTS_EVIDENCE_TTL = 1800.0
+_weights_cache: tuple[float, tuple[dict[str, float], dict[str, Any]]] | None = None
+
+
+async def get_adaptive_dimension_weights(
+    *,
+    horizon_bars: int = 20,
+    records: list[AnalysisRecord] | None = None,
+    fetch_history: HistoryFetcher | None = None,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    """Dimension weights blended toward measured IC, with provenance.
+
+    The decision layer's consult point: static weights unless every
+    directional dimension has a qualified IC summary (runs and dispersion
+    gates live in ``adaptive_dimension_weights``). Never raises — a weights
+    experiment must not take the decision pipeline down; any failure
+    returns the static blend with the reason recorded.
+
+    Cached 30 min on the production path only (no injected records/
+    fetcher); injected calls recompute so tests stay isolated.
+    """
+    global _weights_cache
+    from app.config import settings
+
+    static = dict(STATIC_DIMENSION_WEIGHTS)
+    default_path = records is None and fetch_history is None
+    if default_path and not settings.ic_adaptive_weights_enabled:
+        return static, {
+            "mode": "static",
+            "reason": "disabled (ic_adaptive_weights_enabled=false)",
+            "static_weights": static,
+            "weights": static,
+            "lambda": None,
+            "runs_weakest_dimension": None,
+            "targets": None,
+            "per_dimension": {},
+        }
+
+    now = monotonic()
+    if (
+        default_path
+        and _weights_cache is not None
+        and now - _weights_cache[0] < WEIGHTS_EVIDENCE_TTL
+    ):
+        return _weights_cache[1]
+
+    try:
+        payload = await evaluate_decision_ic(
+            horizon_bars=horizon_bars, records=records, fetch_history=fetch_history
+        )
+        weights, provenance = adaptive_dimension_weights(payload.get("dimensions") or {})
+        provenance["horizon_bars"] = horizon_bars
+        provenance["runs_evaluated"] = payload.get("runs_evaluated")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Adaptive weights fell back to static: {exc}")
+        return static, {
+            "mode": "static",
+            "reason": f"evidence unavailable ({type(exc).__name__})",
+            "static_weights": static,
+            "weights": static,
+            "lambda": None,
+            "runs_weakest_dimension": None,
+            "targets": None,
+            "per_dimension": {},
+        }
+
+    result = (weights, provenance)
+    if default_path:
+        _weights_cache = (now, result)
+    return result
+
+
+def peek_dimension_weights() -> tuple[dict[str, float], dict[str, Any]] | None:
+    """Synchronous snapshot of the cached weights, or ``None`` when cold.
+
+    For callers that cannot await (the ReAct report path's validator): they
+    read the snapshot the async decision path primed; a cold process uses
+    the static blend — recorded in that run's own provenance.
+    """
+    if _weights_cache is None or monotonic() - _weights_cache[0] >= WEIGHTS_EVIDENCE_TTL:
+        return None
+    return _weights_cache[1]
