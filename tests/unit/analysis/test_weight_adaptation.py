@@ -15,11 +15,13 @@ import pytest
 from app.agents.decision_agent import DecisionMakingAgent
 from app.analysis.ic import (
     ADAPT_SHRINK_K,
+    DECISION_FORMULA_VERSION,
     MIN_ADAPT_RUNS,
     STATIC_DIMENSION_WEIGHTS,
     WEIGHT_CAP,
     WEIGHT_FLOOR,
     adaptive_dimension_weights,
+    decision_formula_version,
 )
 from app.services.report_service import derive_recommendation
 
@@ -178,6 +180,23 @@ class TestDeriveRecommendationWeights:
         )
 
 
+class TestFormulaVersionReader:
+    def test_reads_the_pipeline_shape(self) -> None:
+        result = {"decision": {"formula_version": "2026-09-25.1", "decisions": {}}}
+        assert decision_formula_version(result) == "2026-09-25.1"
+
+    def test_reads_the_response_style_top_level_shape(self) -> None:
+        assert decision_formula_version({"formula_version": "older-epoch"}) == "older-epoch"
+
+    def test_absent_malformed_or_empty_is_none(self) -> None:
+        assert decision_formula_version({"decision": {"decisions": {}}}) is None
+        assert decision_formula_version({}) is None
+        assert decision_formula_version({"decision": {"formula_version": ""}}) is None
+        assert decision_formula_version({"decision": {"formula_version": 7}}) is None
+        # A null decision block must not crash the reader.
+        assert decision_formula_version({"decision": None}) is None
+
+
 class TestDecisionAgentWiring:
     @pytest.mark.asyncio
     async def test_process_carries_weights_provenance(self, monkeypatch) -> None:
@@ -225,3 +244,6 @@ class TestDecisionAgentWiring:
 
         assert result["dimension_weights"] == provenance
         assert captured == [weights]
+        # Every run stamps its decision-formula vintage top-level: the IC
+        # replay that feeds adaptive weights matches on this string.
+        assert result["formula_version"] == DECISION_FORMULA_VERSION

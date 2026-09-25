@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from app.agents.base import StatelessAgent
+from app.analysis.ic import DECISION_FORMULA_VERSION
 from app.analysis.sizing import RISK_BUDGET_PCT, STOP_MULTIPLE, atr_position_size
 from app.orchestration.state import AgentState
 from app.services.report_service import derive_recommendation
@@ -116,6 +117,11 @@ class DecisionMakingAgent(StatelessAgent):
             "llm_summary": llm_summary,
             "portfolio_summary": self._create_portfolio_summary(results),
             "dimension_weights": weights_provenance,
+            # Vintage stamp: the IC replay that feeds adaptive weights only
+            # counts same-version runs — bumping this constant starts a new
+            # evidence epoch instead of tuning the new formula on the old
+            # one's targets.
+            "formula_version": DECISION_FORMULA_VERSION,
             "timestamp": datetime.now().isoformat(),
         }
 

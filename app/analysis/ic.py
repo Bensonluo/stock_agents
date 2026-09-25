@@ -23,6 +23,30 @@ MIN_IC_SYMBOLS = 3
 # ICIR needs a dispersion estimate; a single run has none.
 MIN_IC_RUNS = 2
 
+# Version stamp of the decision formula (the shared derive_recommendation
+# blend + bands, plus the dimension-weights pathway). Every pipeline run
+# carries it in its decision output; the IC replay that FEEDS the adaptive
+# weights only counts same-vintage runs — calibrating a formula on evidence
+# produced by its own predecessors would tune today's blend toward stale
+# targets. Bump whenever the formula's math changes materially (weights
+# logic, action bands, score normalization). Display endpoints keep the
+# all-vintage view with the recorded caveat.
+DECISION_FORMULA_VERSION = "2026-09-25.1"
+
+
+def decision_formula_version(result: dict[str, Any]) -> str | None:
+    """Read the decision formula stamp from a stored analysis result.
+
+    Tolerates both stored shapes (pipeline ``decision.formula_version``;
+    response-style top-level). Runs recorded before version stamping (and
+    anything malformed) return ``None`` — legacy vintages, excluded by the
+    same filter that mismatches them.
+    """
+    version = (result.get("decision") or {}).get("formula_version")
+    if version is None:
+        version = result.get("formula_version")
+    return version if isinstance(version, str) and version else None
+
 
 def decision_scores(result: dict[str, Any]) -> dict[str, float]:
     """Extract ``{symbol: composite score}`` from a stored analysis result.

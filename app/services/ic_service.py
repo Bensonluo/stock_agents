@@ -31,10 +31,12 @@ from app.analysis.forecast_calibration import (
     reliability_curve,
 )
 from app.analysis.ic import (
+    DECISION_FORMULA_VERSION,
     MIN_IC_SYMBOLS,
     STATIC_DIMENSION_WEIGHTS,
     adaptive_dimension_weights,
     decision_dimension_scores,
+    decision_formula_version,
     decision_scores,
     ic_summary,
     information_coefficient,
@@ -80,7 +82,13 @@ _Bucket = dict[str, Any]
 
 
 def _new_bucket() -> _Bucket:
-    return {"evaluated": [], "pending": 0, "skipped": 0, "dimension_ics": {}}
+    return {
+        "evaluated": [],
+        "pending": 0,
+        "skipped": 0,
+        "vintage_excluded": 0,
+        "dimension_ics": {},
+    }
 
 
 async def _cached_default_fetch(symbol: str) -> dict[str, Any] | None:
@@ -122,12 +130,20 @@ async def _replay(
     horizons: list[int],
     records: list[AnalysisRecord],
     fetch_history: HistoryFetcher,
+    *,
+    formula_version: str | None = None,
 ) -> dict[int, _Bucket]:
     """One pass over records; every horizon evaluated against the same series.
 
     A run newer than a series' last bar, or whose forward window has not
     matured at a given horizon, counts as pending at that horizon — maturity
     is a per-horizon judgement, not a run-level one.
+
+    ``formula_version`` gates which runs enter the evaluation at all:
+    ``None`` keeps every vintage (the display view), a string counts
+    same-vintage runs only (the weights feedback edge). Excluded runs tally
+    per-bucket as ``vintage_excluded`` rather than silently shrinking the
+    record count.
     """
     buckets: dict[int, _Bucket] = {h: _new_bucket() for h in horizons}
     series_cache: dict[str, tuple[list[str], list[float]] | None] = {}
@@ -154,6 +170,14 @@ async def _replay(
         if not isinstance(result, dict):
             for bucket in buckets.values():
                 bucket["skipped"] += 1
+            continue
+
+        # Vintage gate: evidence produced by a different decision formula
+        # (or by none — runs recorded before stamping) trains a different
+        # blend. Only callers calibrating the live formula pass a version.
+        if formula_version is not None and decision_formula_version(result) != formula_version:
+            for bucket in buckets.values():
+                bucket["vintage_excluded"] += 1
             continue
 
         scores = decision_scores(result)
@@ -232,6 +256,7 @@ def _bucket_payload(
         "runs_evaluated": len(bucket["evaluated"]),
         "runs_pending_maturity": bucket["pending"],
         "runs_skipped": bucket["skipped"],
+        "runs_other_vintage": bucket["vintage_excluded"],
         "per_run": bucket["evaluated"][-20:],
     }
     if with_dimensions:
@@ -254,6 +279,7 @@ async def evaluate_decision_ic(
     limit: int = 200,
     records: list[AnalysisRecord] | None = None,
     fetch_history: HistoryFetcher | None = None,
+    formula_version: str | None = None,
 ) -> dict[str, Any]:
     """Rank IC / ICIR of decision-layer scores against realized returns.
 
@@ -263,6 +289,10 @@ async def evaluate_decision_ic(
         limit: how many completed records to examine, newest first.
         records: pre-fetched records (tests); defaults to the history DB.
         fetch_history: injectable ``{symbol -> dates/close}`` provider.
+        formula_version: count same-vintage runs only (records stamped with
+            a different decision-formula version — or none — tally as
+            ``runs_other_vintage``). ``None`` keeps every vintage: the
+            display view, where the cross-vintage caveat applies.
 
     Returns:
         Aggregated IC block; ``status="insufficient_history"`` when too few
@@ -272,7 +302,9 @@ async def evaluate_decision_ic(
         raise ValueError("horizon_bars must be positive")
 
     records, fetch_history = _resolve_inputs(records, limit, fetch_history)
-    bucket = (await _replay([horizon_bars], records, fetch_history))[horizon_bars]
+    bucket = (
+        await _replay([horizon_bars], records, fetch_history, formula_version=formula_version)
+    )[horizon_bars]
     return _bucket_payload(bucket, horizon_bars, len(records), with_dimensions=True)
 
 
@@ -484,9 +516,16 @@ async def get_adaptive_dimension_weights(
 
     try:
         payload = await evaluate_decision_ic(
-            horizon_bars=horizon_bars, records=records, fetch_history=fetch_history
+            horizon_bars=horizon_bars,
+            records=records,
+            fetch_history=fetch_history,
+            # Weights calibrate the live formula: same-vintage evidence only,
+            # so stale-target runs cannot tilt today's blend (the display
+            # endpoints keep the all-vintage view with the caveat).
+            formula_version=DECISION_FORMULA_VERSION,
         )
         weights, provenance = adaptive_dimension_weights(payload.get("dimensions") or {})
+        provenance["formula_version"] = DECISION_FORMULA_VERSION
         provenance["horizon_bars"] = horizon_bars
         provenance["runs_evaluated"] = payload.get("runs_evaluated")
     except Exception as exc:  # noqa: BLE001

@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 import app.services.ic_service as ic_service_module
+from app.analysis.ic import DECISION_FORMULA_VERSION
 from app.services.ic_service import (
     REPLAY_SERIES_TTL,
     evaluate_confidence_calibration,
@@ -472,9 +473,14 @@ def _component_record(
     created_at: str,
     scored: dict[str, float],
     components: dict[str, dict[str, float]],
+    *,
+    formula_version: str | None = DECISION_FORMULA_VERSION,
 ) -> AnalysisRecord:
     """A record whose decisions carry ``component_scores`` — the per-dimension
-    IC replay has something to attribute when the history looks like this."""
+    IC replay has something to attribute when the history looks like this.
+
+    ``formula_version`` stamps the decision block (the pipeline shape);
+    ``None`` emulates a run recorded before version stamping existed."""
     decisions = {
         symbol: {
             "symbol": symbol,
@@ -484,12 +490,15 @@ def _component_record(
         }
         for symbol, score in scored.items()
     }
+    decision_block: dict[str, Any] = {"decisions": decisions}
+    if formula_version is not None:
+        decision_block["formula_version"] = formula_version
     return AnalysisRecord(
         thread_id=thread_id,
         symbols="[]",
         query="q",
         status="completed",
-        result=json.dumps({"decision": {"decisions": decisions}}),
+        result=json.dumps({"decision": decision_block}),
         created_at=created_at,
         updated_at=created_at,
         execution_time=0.0,
@@ -645,3 +654,72 @@ class TestAdaptiveWeightsProvider:
         stale = (monotonic() - (ic_service_module.WEIGHTS_EVIDENCE_TTL + 1), snapshot)
         ic_service_module._weights_cache = stale
         assert ic_service_module.peek_dimension_weights() is None
+
+    async def test_unstamped_history_degrades_to_static(self) -> None:
+        # Runs recorded before version stamping carry no formula_version —
+        # the provider excludes them all, no dimension has a summary, and
+        # the honest refusal is the static blend (never adaptation on
+        # evidence produced by an unknown predecessor formula).
+        records, series = _qualifying_evidence()
+        unstamped = [
+            _component_record(
+                r.thread_id,
+                r.created_at,
+                {"A": 20.0, "B": 50.0, "C": 80.0},
+                {
+                    "fundamental": {"A": 10.0, "B": 50.0, "C": 90.0},
+                    "technical": {"A": 20.0, "B": 50.0, "C": 80.0},
+                    "sentiment": {"A": 90.0, "B": 50.0, "C": 10.0},
+                },
+                formula_version=None,
+            )
+            for r in records
+        ]
+
+        weights, provenance = await ic_service_module.get_adaptive_dimension_weights(
+            records=unstamped, fetch_history=_fetcher(series)
+        )
+
+        assert weights == dict(ic_service_module.STATIC_DIMENSION_WEIGHTS)
+        assert provenance["mode"] == "static"
+        assert "no summary" in provenance["reason"]
+        assert provenance["runs_evaluated"] == 0
+        # The provenance still names the vintage the provider trains on.
+        assert provenance["formula_version"] == DECISION_FORMULA_VERSION
+
+    async def test_mixed_vintage_history_adapts_on_stamped_runs_only(self) -> None:
+        # Half the history is pre-stamping legacy: those runs must drop out
+        # of the evidence (8 runs < the 12-run gate), while the stamped half
+        # is still what the blend would have trained on — exclusion, never
+        # contamination.
+        records, series = _qualifying_evidence()
+        components = {
+            "fundamental": {"A": 10.0, "B": 50.0, "C": 90.0},
+            "technical": {"A": 20.0, "B": 50.0, "C": 80.0},
+            "sentiment": {"A": 90.0, "B": 50.0, "C": 10.0},
+        }
+        mixed = [
+            _component_record(
+                r.thread_id,
+                r.created_at,
+                {"A": 20.0, "B": 50.0, "C": 80.0},
+                components,
+                formula_version=DECISION_FORMULA_VERSION if i % 2 == 0 else None,
+            )
+            for i, r in enumerate(records)
+        ]
+
+        weights, provenance = await ic_service_module.get_adaptive_dimension_weights(
+            records=mixed, fetch_history=_fetcher(series)
+        )
+
+        assert weights == dict(ic_service_module.STATIC_DIMENSION_WEIGHTS)
+        assert provenance["mode"] == "static"
+        assert "8 runs < 12" in provenance["reason"]
+        assert provenance["runs_evaluated"] == 8
+
+        # The same mixed history stays whole for the display view (no
+        # version filter): every qualifying run counts there.
+        display = await evaluate_decision_ic(records=mixed, fetch_history=_fetcher(series))
+        assert display["runs_evaluated"] == 16
+        assert display["runs_other_vintage"] == 0
