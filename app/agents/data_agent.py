@@ -42,6 +42,7 @@ from app.tools.data.fetcher import (  # noqa: E402
     fetch_cn_news,
     fetch_cn_sector_benchmark,
     fetch_stock_data,
+    fetch_us_news,
     sector_benchmark_ticker,
 )
 from app.tools.data.fetcher import dedup_news as _dedup_news  # noqa: E402
@@ -570,6 +571,22 @@ class DataCollectionAgent(BaseAgent):
                 cn_articles = None
             if cn_articles:
                 articles = articles + cn_articles
+
+        if not articles:
+            # Provider-chain news fallback (Finnhub): the yfinance-only path
+            # leaves US symbols silent when Yahoo rate-limits — the
+            # documented state of the Tencent Cloud deploy since 2026-09-25.
+            # No-op without a FINNHUB_API_KEY.
+            try:
+                fallback_articles = await fetch_us_news(symbol)
+            except Exception as e:
+                logger.warning(f"News fallback failed for {symbol}: {e}")
+                fallback_articles = []
+            if fallback_articles:
+                logger.info(
+                    f"[data_agent] news fallback supplied {len(fallback_articles)} articles"
+                )
+                articles = fallback_articles
 
         if articles:
             logger.info(f"Fetched {len(articles)} news articles for {symbol}")

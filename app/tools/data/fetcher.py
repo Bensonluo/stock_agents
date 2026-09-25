@@ -851,34 +851,53 @@ async def _akshare_hk(symbol: str, ak: Any) -> dict[str, Any] | None:
     }
 
 
+async def _sina_us_hist(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) -> dict[str, Any] | None:
+    """US daily bars via Sina (``ak.stock_us_daily``).
+
+    The only US history source that answers from the Tencent Cloud deploy
+    when Yahoo rate-limits — verified live in the production container
+    2026-09-25: East Money's US kline/list endpoints are connection-dropped
+    from that host, while Sina serves the full adjusted daily history for a
+    plain ticker (no market-prefix code mapping needed). Sina takes no date
+    arguments, so the requested period window is sliced locally.
+    """
+
+    def _fetch():
+        import akshare as ak
+
+        df = ak.stock_us_daily(symbol=symbol, adjust="qfq")
+        if df is None or df.empty:
+            return None
+        dates = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+        cutoff = (datetime.now() - timedelta(days=_period_to_days(period))).strftime("%Y-%m-%d")
+        window = dates >= cutoff
+        return {
+            "dates": dates[window].tolist(),
+            "open": df["open"][window].tolist(),
+            "high": df["high"][window].tolist(),
+            "low": df["low"][window].tolist(),
+            "close": df["close"][window].tolist(),
+            "volume": df["volume"][window].tolist() if "volume" in df else [],
+        }
+
+    try:
+        result = await asyncio.to_thread(_fetch)
+    except Exception as e:
+        logger.warning(f"[sina-us-hist] failed for {symbol}: {e}")
+        return None
+    if result and result.get("dates"):
+        return result
+    return None
+
+
 async def _akshare_us(symbol: str, ak: Any) -> dict[str, Any] | None:
-    """US stock via akshare."""
+    """US stock via akshare (Sina daily history; see ``_sina_us_hist``)."""
 
-    # Get historical data
-    def _get_hist():
-        end_date = datetime.now().strftime("%Y%m%d")
-        start_date = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
-        return ak.stock_us_hist(
-            symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq"
-        )
-
-    df = await asyncio.to_thread(_get_hist)
-    if df is None or df.empty:
+    hist = await _sina_us_hist(symbol)
+    if hist is None:
         return None
 
-    # Rename columns to English
-    col_map = {
-        "日期": "date",
-        "开盘": "open",
-        "收盘": "close",
-        "最高": "high",
-        "最低": "low",
-        "成交量": "volume",
-        "涨跌幅": "change_pct",
-    }
-    df = df.rename(columns=col_map)
-
-    closes = df["close"].tolist()
+    closes = hist["close"]
     current = closes[-1] if closes else None
     prev = closes[-2] if len(closes) > 1 else None
 
@@ -888,18 +907,11 @@ async def _akshare_us(symbol: str, ak: Any) -> dict[str, Any] | None:
         "previous_close": prev,
         "change": current - prev if current and prev else None,
         "change_percent": ((current - prev) / prev * 100) if current and prev else None,
-        "volume": df["volume"].iloc[-1] if "volume" in df else None,
-        "historical_data": {
-            "dates": [str(d) for d in df["date"].tolist()],
-            "open": df["open"].tolist(),
-            "high": df["high"].tolist(),
-            "low": df["low"].tolist(),
-            "close": closes,
-            "volume": df["volume"].tolist() if "volume" in df else [],
-            # Exact daily turnover (成交额, source currency) for the
-            # liquidity layer — same key the pipeline's AkShare path emits.
-            **({"amount": df["成交额"].tolist()} if "成交额" in df.columns else {}),
-        },
+        "volume": hist["volume"][-1] if hist.get("volume") else None,
+        # Sina quotes US stocks in USD; the report layer's currency-aware
+        # formatting keys off this (iteration 55).
+        "currency": "USD",
+        "historical_data": hist,
     }
 
     # Try to get valuation data from baidu
@@ -1275,6 +1287,42 @@ async def _finnhub_fetch(symbol: str) -> dict[str, Any] | None:
 
     logger.info(f"[finnhub] OK for {symbol}")
     return {"market_data": market_data, "financial_data": financial_data, "news_data": news_data}
+
+
+async def fetch_us_news(symbol: str) -> list[dict[str, Any]]:
+    """US/international news via the provider chain (Finnhub today).
+
+    The pipeline's news path is yfinance-only; when Yahoo rate-limits (the
+    documented state of the Tencent Cloud deploy since 2026-09-25), US
+    symbols run with an empty sentiment feed. Mirrors ``fetch_cn_news``:
+    that seam covers 6-digit codes, this one covers everything else. No
+    key configured → ``[]`` — the caller keeps its empty-feed behavior.
+    """
+    if not get_settings().finnhub_api_key:
+        return []
+
+    def _news():
+        today = datetime.now()
+        week_ago = today - timedelta(days=7)
+        return (
+            _finnhub_get(
+                "/company-news",
+                {
+                    "symbol": symbol,
+                    "from": week_ago.strftime("%Y-%m-%d"),
+                    "to": today.strftime("%Y-%m-%d"),
+                },
+            )
+            or []
+        )
+
+    try:
+        news = await asyncio.to_thread(_news)
+    except Exception as e:
+        logger.warning(f"[finnhub-news] failed for {symbol}: {e}")
+        return []
+    items = news if isinstance(news, list) else []
+    return finnhub_news_articles(items[:20])
 
 
 async def _finnhub_historical(symbol: str, period: str) -> dict[str, Any] | None:
@@ -1717,17 +1765,18 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
                 )
 
         else:
+            # US: Sina daily is the CN-server-viable source (verified live
+            # 2026-09-25 — East Money's US kline endpoints are connection-
+            # dropped from the Tencent Cloud host and also need market-
+            # prefixed codes this chain never had).
+            sina = await _sina_us_hist(symbol, period)
+            if sina and sina.get("dates"):
+                result = {"symbol": symbol, "period": period, **sina}
+                _cache_set(cache_key, result, ttl=60)
+                return result
+            hist_fn = None
 
-            def hist_fn():
-                return ak.stock_us_hist(
-                    symbol=symbol,
-                    period="daily",
-                    start_date=start_date,
-                    end_date=end_date,
-                    adjust="qfq",
-                )
-
-        df = await asyncio.to_thread(hist_fn)
+        df = await asyncio.to_thread(hist_fn) if hist_fn is not None else None
         if df is not None and not df.empty:
             col_map = {
                 "日期": "date",
@@ -1792,7 +1841,10 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
 
     # Stooq free CSV (last resort; accessible from CN where Yahoo blocks)
     try:
-        stooq_symbol = yahoo_symbol.lower().replace(".", "-")
+        stooq_base = yahoo_symbol.lower().replace(".", "-")
+        # Stooq keys US tickers with a .us suffix (s=aapl.us); dotted
+        # international/CN/HK yahoo symbols keep their dashed form.
+        stooq_symbol = f"{stooq_base}.us" if "." not in yahoo_symbol else stooq_base
         days = _period_to_days(period)
         d1 = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
         d2 = datetime.now().strftime("%Y%m%d")
