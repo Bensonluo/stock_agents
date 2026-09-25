@@ -43,6 +43,29 @@ def _period_to_days(period: str) -> int:
     }.get(period, DEFAULT_HISTORY_DAYS)
 
 
+def _history_covers_period(result: dict[str, Any], period: str, min_fraction: float = 0.5) -> bool:
+    """True when the returned date span covers a fair share of the request.
+
+    Alpha Vantage's free tier caps TIME_SERIES_DAILY at the most recent 100
+    entries; without this gate that thin slice "succeeds" and terminates the
+    chain before the multi-year sources further down (AkShare for CN, Sina
+    for US) ever run — ``fetch_historical(period="3y")`` silently returned
+    100 bars (first empirical walk-forward run, 2026-09-25). The gate is
+    applied to capped providers only: a full-history source whose short
+    result reflects genuinely short history stays acceptable.
+    """
+    dates = result.get("dates") or []
+    if len(dates) < 2:
+        return False
+    try:
+        first = datetime.strptime(str(dates[0])[:10], "%Y-%m-%d")
+        last = datetime.strptime(str(dates[-1])[:10], "%Y-%m-%d")
+    except ValueError:
+        return False
+    span_days = (last - first).days + 1
+    return span_days >= min_fraction * _period_to_days(period)
+
+
 def _cache_get(key: str) -> Any | None:
     if key in _cache:
         data, ts = _cache[key]
@@ -1691,13 +1714,20 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
         except Exception as e:
             logger.warning(f"[finnhub-hist] failed for {symbol}: {e}")
 
-    # alpha vantage (free tier: 25 req/day, 1/sec — 1 call per analysis)
+    # alpha vantage (free tier: 25 req/day, 1/sec — 1 call per analysis; the
+    # response is CAPPED at the most recent ~100 entries, so a "success" that
+    # cannot cover the requested window must not terminate the chain)
     if get_settings().alpha_vantage_key:
         try:
             result = await _alphavantage_historical(symbol, period)
             if result and result.get("dates"):
-                _cache_set(cache_key, result, ttl=60)
-                return result
+                if _history_covers_period(result, period):
+                    _cache_set(cache_key, result, ttl=60)
+                    return result
+                logger.info(
+                    f"[alphavantage-hist] {symbol}: {len(result['dates'])} bars cannot "
+                    f"cover period={period} — continuing down the chain"
+                )
         except Exception as e:
             logger.warning(f"[alphavantage-hist] failed for {symbol}: {e}")
 
