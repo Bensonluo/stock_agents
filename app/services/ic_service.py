@@ -17,6 +17,7 @@ Injected fetchers bypass that cache and keep the service testable offline.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from bisect import bisect_left
 from collections.abc import Awaitable, Callable
@@ -87,8 +88,29 @@ def _new_bucket() -> _Bucket:
         "pending": 0,
         "skipped": 0,
         "vintage_excluded": 0,
+        "duplicates": 0,
         "dimension_ics": {},
     }
+
+
+def _decisions_fingerprint(result: dict[str, Any], run_date: str) -> str | None:
+    """Stable (date, decisions-content) key for duplicate detection.
+
+    A re-submitted request stores a new record carrying the same date and
+    the same per-symbol decisions; replaying every stored copy would count
+    the same measured evidence many times — inflating run counts past the
+    adaptation gates and the t-statistic. ``None`` when the decisions
+    block cannot be serialized (defensive: stored results are JSON
+    already); callers treat that as unique.
+    """
+    decisions = (result.get("decision") or {}).get("decisions")
+    if decisions is None:
+        decisions = result.get("decisions")
+    try:
+        blob = json.dumps(decisions, sort_keys=True, separators=(",", ":"), default=str)
+    except (TypeError, ValueError):
+        return None
+    return f"{run_date}:{hashlib.sha256(blob.encode()).hexdigest()}"
 
 
 async def _cached_default_fetch(symbol: str) -> dict[str, Any] | None:
@@ -139,6 +161,11 @@ async def _replay(
     matured at a given horizon, counts as pending at that horizon — maturity
     is a per-horizon judgement, not a run-level one.
 
+    Duplicate stored requests (same date + same decisions content) collapse
+    to one measured sample; the extra records tally per-bucket as
+    ``duplicates`` so the effective sample count — what feeds ic.py's
+    t-statistic and the adaptation run-gates — reflects distinct evidence.
+
     ``formula_version`` gates which runs enter the evaluation at all:
     ``None`` keeps every vintage (the display view), a string counts
     same-vintage runs only (the weights feedback edge). Excluded runs tally
@@ -147,6 +174,7 @@ async def _replay(
     """
     buckets: dict[int, _Bucket] = {h: _new_bucket() for h in horizons}
     series_cache: dict[str, tuple[list[str], list[float]] | None] = {}
+    seen_samples: set[str] = set()
 
     async def _series(symbol: str) -> tuple[list[str], list[float]] | None:
         if symbol not in series_cache:
@@ -188,6 +216,16 @@ async def _replay(
                 bucket["skipped"] += 1
             continue
 
+        # Duplicate defense: same date + same decisions content is one
+        # measured sample no matter how many stored records carry it.
+        fingerprint = _decisions_fingerprint(result, run_date)
+        if fingerprint is not None:
+            if fingerprint in seen_samples:
+                for bucket in buckets.values():
+                    bucket["duplicates"] += 1
+                continue
+            seen_samples.add(fingerprint)
+
         # Entry bar per symbol is horizon-independent — compute once.
         no_entry_bar = False
         entries: dict[str, tuple[int, list[float]]] = {}
@@ -196,6 +234,11 @@ async def _replay(
             if series is None:
                 continue  # no data at all — the symbol drops out of the cross-section
             dates, closes = series
+            if run_date < dates[0]:
+                # Record predates the fetched window: bar 0 would be a LATER
+                # bar posing as the entry price. The symbol drops out of the
+                # cross-section — same skip semantics as no data at all.
+                continue
             entry_i = bisect_left(dates, run_date)
             if entry_i >= len(dates):
                 no_entry_bar = True  # run is newer than the series' last bar
@@ -257,6 +300,7 @@ def _bucket_payload(
         "runs_pending_maturity": bucket["pending"],
         "runs_skipped": bucket["skipped"],
         "runs_other_vintage": bucket["vintage_excluded"],
+        "runs_duplicate": bucket["duplicates"],
         "per_run": bucket["evaluated"][-20:],
     }
     if with_dimensions:
@@ -412,6 +456,11 @@ async def evaluate_confidence_calibration(
             if series is None:
                 continue  # no data at all — the claim drops out
             dates, closes = series
+            if run_date < dates[0]:
+                # Record predates the fetched window — bar 0 would be a later
+                # bar posing as the entry price. The claim drops out (not
+                # pending: uncovered data is a skip, not immaturity).
+                continue
             entry_i = bisect_left(dates, run_date)
             if entry_i >= len(dates):
                 pending = True

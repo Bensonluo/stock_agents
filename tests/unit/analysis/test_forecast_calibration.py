@@ -93,6 +93,24 @@ class TestDirectionalClaims:
         assert claims["F"] == ("buy", 0.55)  # moderate_buy carries the buy claim
         assert set(claims) == {"A", "B", "F"}
 
+    def test_add_and_reduce_carry_directional_claims(self) -> None:
+        # derive_recommendation emits add/reduce for mid-strength composites
+        # (55-70 / 28-42 bands); skipping them left calibration counting
+        # only the extreme buy/sell actions (2026-09-26 review, P2#10).
+        result = {
+            "decision": {
+                "decisions": {
+                    "A": {"symbol": "A", "action": "add", "confidence": 0.6},
+                    "B": {"symbol": "B", "action": "reduce", "confidence": 0.58},
+                    "C": {"symbol": "C", "action": "hold", "confidence": 0.9},
+                }
+            }
+        }
+        claims = directional_claims(result)
+        assert claims["A"] == ("buy", 0.6)  # add claims the upward direction
+        assert claims["B"] == ("sell", 0.58)  # reduce claims the downward direction
+        assert set(claims) == {"A", "B"}
+
     def test_response_list_shape(self) -> None:
         result = {
             "decisions": [

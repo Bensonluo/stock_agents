@@ -406,6 +406,187 @@ class TestConfidenceCalibration:
             )
 
 
+class TestReplayIntegrity:
+    """Defenses from the 2026-09-26 review: duplicate stored requests are
+    one IC sample regardless of record count, records predating the fetched
+    history never score, and a missing dimension is never measured as a
+    zero-score sample."""
+
+    async def test_duplicate_records_collapse_to_one_sample(self) -> None:
+        dates = _bdates(300)
+        run_idx = 239
+        series = {
+            sym: (dates, _two_phase_closes(dates, run_idx, rate))
+            for sym, rate in zip("ABCD", (0.001, 0.002, 0.003, 0.004))
+        }
+        scored = dict(zip("ABCD", (20.0, 40.0, 60.0, 80.0)))
+        # 12 stored copies of the same run (same date, same decisions) —
+        # one measured sample, not twelve: the t-statistic and the
+        # adaptation run-gates must key off effective samples.
+        records = [_record(f"t{i}", f"{dates[run_idx]}T10:00:00", scored) for i in range(12)]
+        result = await evaluate_decision_ic(
+            horizon_bars=20, records=records, fetch_history=_fetcher(series)
+        )
+        assert result["status"] == "ok"
+        assert result["runs_evaluated"] == 1
+        assert result["runs_duplicate"] == 11
+        assert result["icir"] is None  # one effective run: no dispersion
+        assert len(result["per_run"]) == 1
+
+    async def test_distinct_dates_or_decisions_both_count(self) -> None:
+        # The dedup key is (date, decisions content): a different date or a
+        # genuinely different cross-section is separate evidence.
+        dates = _bdates(300)
+        idx1, idx2 = 200, 239
+        series = {
+            sym: (dates, _two_phase_closes(dates, idx1, rate))
+            for sym, rate in zip("ABCD", (0.001, 0.002, 0.003, 0.004))
+        }
+        scored = dict(zip("ABCD", (20.0, 40.0, 60.0, 80.0)))
+        same_date_newer_view = {**scored, "D": 85.0}
+        records = [
+            _record("t1", f"{dates[idx1]}T10:00:00", scored),
+            _record("t2", f"{dates[idx2]}T10:00:00", scored),
+            _record("t3", f"{dates[idx1]}T18:00:00", same_date_newer_view),
+        ]
+        result = await evaluate_decision_ic(
+            horizon_bars=20, records=records, fetch_history=_fetcher(series)
+        )
+        assert result["runs_evaluated"] == 3
+        assert result["runs_duplicate"] == 0
+        assert result["runs"] == 3
+
+    async def test_duplicate_inflation_cannot_flip_the_weights_to_adaptive(self) -> None:
+        # Review repro (P2#6): replaying two measured days' evidence 8 times
+        # each used to multiply every dimension's run count past the
+        # MIN_ADAPT_RUNS gate. Effective samples must govern.
+        records, series = _qualifying_evidence()
+        components = {
+            "fundamental": {"A": 10.0, "B": 50.0, "C": 90.0},
+            "technical": {"A": 20.0, "B": 50.0, "C": 80.0},
+            "sentiment": {"A": 90.0, "B": 50.0, "C": 10.0},
+        }
+        duplicated = [
+            _component_record(
+                f"dup{day}-{copy}",
+                records[day].created_at,
+                {"A": 20.0, "B": 50.0, "C": 80.0},
+                components,
+            )
+            for day in (0, 1)
+            for copy in range(8)
+        ]
+        weights, provenance = await ic_service_module.get_adaptive_dimension_weights(
+            records=duplicated, fetch_history=_fetcher(series)
+        )
+        assert weights == dict(ic_service_module.STATIC_DIMENSION_WEIGHTS)
+        assert provenance["mode"] == "static"
+        assert "2 runs < 12" in provenance["reason"]
+        assert provenance["runs_evaluated"] == 2
+
+    async def test_record_predating_series_is_skipped_not_scored(self) -> None:
+        # Review repro (P2#9): bisect_left on a pre-history date lands on
+        # bar 0, so a LATER bar posed as the entry price and the uncovered
+        # run scored IC=1 with status=ok.
+        dates = _bdates(100)  # begins ~May 2026; the record predates it
+        series = {
+            sym: (dates, _two_phase_closes(dates, 0, rate))
+            for sym, rate in zip("ABC", (0.001, 0.002, 0.003))
+        }
+        record = _record("pre", "2026-01-05T10:00:00", dict(zip("ABC", (20.0, 50.0, 80.0))))
+        result = await evaluate_decision_ic(
+            horizon_bars=20, records=[record], fetch_history=_fetcher(series)
+        )
+        assert result["status"] == "insufficient_history"
+        assert result["runs_evaluated"] == 0
+        assert result["runs_skipped"] == 1
+
+    async def test_calibration_record_predating_series_makes_no_predictions(self) -> None:
+        dates = _bdates(100)
+        series = {"A": (dates, _two_phase_closes(dates, 0, 0.01))}
+        record = _claim_record("cpre", "2026-01-05T10:00:00", {"A": ("buy", 0.8)})
+        result = await evaluate_confidence_calibration(
+            horizon_bars=20, records=[record], fetch_history=_fetcher(series)
+        )
+        assert result["status"] == "insufficient_history"
+        assert result["predictions"] == 0
+        assert result["runs_skipped"] == 1
+
+    async def test_weekend_run_date_within_coverage_uses_next_bar(self) -> None:
+        # A record dated on a non-trading day INSIDE the coverage span still
+        # enters at the next bar — the gate rejects only pre-history dates.
+        dates = _bdates(300)
+        run_idx = 239
+        series = {
+            sym: (dates, _two_phase_closes(dates, run_idx, rate))
+            for sym, rate in zip("ABCD", (0.001, 0.002, 0.003, 0.004))
+        }
+        gap_ts = pd.Timestamp(dates[run_idx])
+        while True:
+            gap_ts += pd.Timedelta(days=1)
+            gap = gap_ts.strftime("%Y-%m-%d")
+            if gap not in dates:
+                break
+        record = _record("gap", f"{gap}T10:00:00", dict(zip("ABCD", (20.0, 40.0, 60.0, 80.0))))
+        result = await evaluate_decision_ic(
+            horizon_bars=20, records=[record], fetch_history=_fetcher(series)
+        )
+        assert result["status"] == "ok"
+        assert result["runs_evaluated"] == 1
+
+    async def test_missing_dimension_never_becomes_a_zero_ic_sample(self, monkeypatch) -> None:
+        # Review repro (P1-4): the decision agent coerced a missing
+        # fundamental to 0.0, so the replay measured {-60, +60, 0} as three
+        # real samples — IC on two valid observations. The stored None must
+        # keep the symbol out of that dimension's cross-section entirely.
+        from app.agents.decision_agent import DecisionMakingAgent
+
+        async def static_provider(**kwargs):
+            from app.analysis.ic import STATIC_DIMENSION_WEIGHTS
+
+            return dict(STATIC_DIMENSION_WEIGHTS), {
+                "mode": "static",
+                "weights": dict(STATIC_DIMENSION_WEIGHTS),
+            }
+
+        monkeypatch.setattr(ic_service_module, "get_adaptive_dimension_weights", static_provider)
+
+        agent = DecisionMakingAgent("test-decision")
+        agent.llm = None
+        decisions = {}
+        for symbol, fund_score in (("A", 20.0), ("B", 80.0), ("C", None)):
+            fundamental = {"overall_score": {"score": fund_score}} if fund_score is not None else {}
+            decisions[symbol] = await agent._make_decision(
+                symbol,
+                {"sentiment": {"score": 0}},
+                fundamental,
+                {"score": 0},
+                {},
+            )
+        dates = _bdates(300)
+        series = {
+            sym: (dates, _two_phase_closes(dates, 239, rate))
+            for sym, rate in zip("ABC", (0.001, 0.002, 0.003))
+        }
+        record = AnalysisRecord(
+            thread_id="t-none",
+            symbols="[]",
+            query="q",
+            status="completed",
+            result=json.dumps({"decision": {"decisions": decisions}}),
+            created_at=f"{dates[239]}T10:00:00",
+            updated_at=f"{dates[239]}T10:00:00",
+            execution_time=0.0,
+        )
+        result = await evaluate_decision_ic(
+            horizon_bars=20, records=[record], fetch_history=_fetcher(series)
+        )
+        assert result["status"] == "ok"  # the composite still ranks 3 symbols
+        # Only two symbols had fundamentals: the dimension refuses (2 <
+        # MIN_IC_SYMBOLS) instead of scoring the coerced zero.
+        assert result["dimensions"].get("fundamental") is None
+
+
 class TestReplaySeriesCache:
     """Production-path caching over the shared fetcher — daily data needs
     no per-view freshness, but failures must never be remembered."""

@@ -160,7 +160,8 @@ class TestRegimeAwareSynthesis:
 
 class TestNullScoreExtractors:
     """Degraded blocks carry ``score: null`` — extractors must read that as
-    missing evidence, not crash on (None - 50).
+    missing evidence (None), not crash on (None - 50) and not coerce it to
+    a real 0.0 sample.
 
     Found by the post-deploy smoke run (2026-09-25): a Yahoo-429 degraded
     run emitted ``overall_score.score = null`` and the fundamental extractor
@@ -168,6 +169,12 @@ class TestNullScoreExtractors:
     (hold with zero confidence and an error rationale) instead of the
     formula path. Same ``.get(key, default)`` trap as iteration 62's
     score_news — the default only fires when the key is ABSENT.
+
+    The 2026-09-26 review (P1-4) tightened the contract further: the stored
+    value for a missing dimension is None. ic_service's dimension
+    attribution treats a stored 0.0 as a measured neutral sample, so the
+    old 0.0 coercion fabricated IC evidence for symbols that never had
+    that dimension's data.
     """
 
     async def test_null_fundamental_score_reads_as_missing(self) -> None:
@@ -175,12 +182,12 @@ class TestNullScoreExtractors:
         score = agent._extract_fundamental_score(
             {"overall_score": {"score": None, "rating": "insufficient_data"}}
         )
-        assert score == 0.0
+        assert score is None
 
     async def test_null_technical_and_sentiment_scores_read_as_missing(self) -> None:
         agent = DecisionMakingAgent("test-decision")
-        assert agent._extract_technical_score({"sentiment": {"score": None}}) == 0.0
-        assert agent._extract_sentiment_score({"score": None}) == 0.0
+        assert agent._extract_technical_score({"sentiment": {"score": None}}) is None
+        assert agent._extract_sentiment_score({"score": None}) is None
 
     async def test_degraded_run_uses_the_formula_path_not_the_error_fallback(
         self, monkeypatch
@@ -219,8 +226,36 @@ class TestNullScoreExtractors:
         )
 
         decision = result["decisions"]["AAPL"]
-        # Formula path: canonical rationale + zeroed component scores — NOT
-        # the "Decision engine error" fallback rationale.
+        # Formula path: canonical rationale + None for the missing dimension —
+        # NOT the "Decision engine error" fallback rationale.
         assert "Decision engine error" not in decision["rationale"]
-        assert decision["component_scores"]["fundamental"] == 0.0
+        assert decision["component_scores"]["fundamental"] is None
         assert decision["action"] == "hold"
+
+
+class TestComponentScoresPreserveMissingAsNone:
+    """The IC attribution loop consumes ``component_scores`` as measured
+    samples (ic_service -> decision_dimension_scores): a missing dimension
+    must surface as None, never a coerced 0.0 (2026-09-26 review, P1-4).
+    """
+
+    async def test_missing_blocks_surface_none_not_zero(self) -> None:
+        agent = DecisionMakingAgent("test-decision")
+        assert agent._extract_fundamental_score({}) is None
+        assert agent._extract_fundamental_score({"overall_score": {"score": None}}) is None
+        assert agent._extract_technical_score({}) is None
+        assert agent._extract_technical_score({"sentiment": {"score": None}}) is None
+        assert agent._extract_sentiment_score({}) is None
+        assert agent._extract_sentiment_score({"score": None}) is None
+
+    async def test_measured_scores_still_extract(self) -> None:
+        agent = DecisionMakingAgent("test-decision")
+        assert agent._extract_fundamental_score({"overall_score": {"score": 80}}) == 60.0
+        assert agent._extract_technical_score({"sentiment": {"score": -40}}) == -40
+        assert agent._extract_sentiment_score({"score": 25}) == 25
+
+    async def test_neutral_fifty_is_a_real_zero_not_a_missing_dimension(self) -> None:
+        # (50-50)*2 = 0.0 from a MEASURED overall score: a genuine neutral
+        # vote, distinct from the None a missing dimension carries.
+        agent = DecisionMakingAgent("test-decision")
+        assert agent._extract_fundamental_score({"overall_score": {"score": 50}}) == 0.0

@@ -148,7 +148,10 @@ class DecisionMakingAgent(StatelessAgent):
         Returns:
             Decision dictionary
         """
-        # Component scores for display only.
+        # Component scores feed the dimension-IC attribution loop (ic_service
+        # -> decision_dimension_scores), not just display: a missing
+        # dimension must stay None — a coerced 0.0 would be replayed as a
+        # measured neutral sample and fabricate IC evidence.
         scores = {
             "technical": self._extract_technical_score(technical),
             "fundamental": self._extract_fundamental_score(fundamental),
@@ -203,35 +206,41 @@ class DecisionMakingAgent(StatelessAgent):
             + _regime_warnings(action, market_regime),
         }
 
-    def _extract_technical_score(self, technical: dict) -> float:
+    def _extract_technical_score(self, technical: dict) -> float | None:
         """Extract technical analysis score (-100 to 100).
 
         Args:
             technical: Technical analysis results
 
         Returns:
-            Technical score
+            Technical score, or None when the block is missing or carries
+            no numeric score — absent evidence is not a neutral vote
+            downstream (IC attribution drops the symbol from that
+            dimension's cross-section).
         """
         if not technical:
-            return 0.0
+            return None
 
         sentiment = technical.get("sentiment", {})
         # ``.get(key, default)`` returns None when the key exists with a
         # None value — degraded technical blocks carry exactly that shape.
         score = sentiment.get("score")
-        return score if isinstance(score, int | float) else 0.0
+        return score if isinstance(score, int | float) else None
 
-    def _extract_fundamental_score(self, fundamental: dict) -> float:
+    def _extract_fundamental_score(self, fundamental: dict) -> float | None:
         """Extract fundamental analysis score (0 to 100).
 
         Args:
             fundamental: Fundamental analysis results
 
         Returns:
-            Fundamental score converted to -100 to 100 scale
+            Fundamental score converted to -100 to 100 scale, or None when
+            the block is missing or carries no numeric score — a coerced
+            0.0 would be replayed by IC attribution as a measured neutral
+            sample for a symbol that never had fundamentals.
         """
         if not fundamental:
-            return 0.0
+            return None
 
         overall = fundamental.get("overall_score", {})
         # A null overall score (insufficient-data blocks emit ``score: null``)
@@ -240,26 +249,28 @@ class DecisionMakingAgent(StatelessAgent):
         # ``or 50``-style read crashed the whole decision on (None - 50).
         score = overall.get("score")
         if not isinstance(score, int | float):
-            return 0.0
+            return None
 
         # Convert 0-100 to -50 to 50 scale
         return (score - 50) * 2
 
-    def _extract_sentiment_score(self, sentiment: dict) -> float:
+    def _extract_sentiment_score(self, sentiment: dict) -> float | None:
         """Extract sentiment score (-100 to 100).
 
         Args:
             sentiment: Sentiment analysis results
 
         Returns:
-            Sentiment score
+            Sentiment score, or None when the block is missing or carries
+            no numeric score — same honest-refusal contract as the other
+            extractors.
         """
         if not sentiment:
-            return 0.0
+            return None
 
         # Same None-tolerant contract as the other extractors.
         score = sentiment.get("score")
-        return score if isinstance(score, int | float) else 0.0
+        return score if isinstance(score, int | float) else None
 
     def _calculate_position_size(
         self, score: float, risk_rec: dict, technical: dict | None = None

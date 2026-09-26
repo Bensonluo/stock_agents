@@ -32,11 +32,12 @@ _BIN_EDGE_EPSILON = 1e-9
 def directional_claims(result: dict[str, Any]) -> dict[str, tuple[str, float]]:
     """Extract ``{symbol: (direction, confidence)}`` from a stored result.
 
-    Only directional actions claim anything: ``buy``-ish actions claim the
-    price rises, ``sell``-ish claim it falls, ``hold`` asserts no direction
-    and is not calibratable. Confidences outside [0, 1] or non-numeric
-    ones are skipped — the same honest-refusal semantics as score
-    extraction.
+    Only directional actions claim anything: ``buy``-ish actions (and
+    ``add`` — the mid-strength accumulate band) claim the price rises,
+    ``sell``-ish (and ``reduce``) claim it falls, ``hold`` asserts no
+    direction and is not calibratable. Confidences outside [0, 1] or
+    non-numeric ones are skipped — the same honest-refusal semantics as
+    score extraction.
     """
     claims: dict[str, tuple[str, float]] = {}
     for symbol, decision in decision_entries(result):
@@ -44,6 +45,10 @@ def directional_claims(result: dict[str, Any]) -> dict[str, tuple[str, float]]:
         if "buy" in action:
             direction = "buy"
         elif "sell" in action:
+            direction = "sell"
+        elif "add" in action:
+            direction = "buy"
+        elif "reduce" in action:
             direction = "sell"
         else:
             continue
