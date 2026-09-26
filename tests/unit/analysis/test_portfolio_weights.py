@@ -109,6 +109,173 @@ def test_report_recommendations_carry_suggested_weights() -> None:
     assert "C" not in summary["suggested_weights"]["weights"]
 
 
+def test_per_symbol_caps_bind_the_allocation() -> None:
+    # P1-3 repro at the allocator level: two buys whose risk/decision caps
+    # are 5% each must not fall through to the allocator's uniform 20% cap.
+    result = suggest_weights(
+        {
+            "A": {"conviction": 0.8, "volatility_annualized": 0.2},
+            "B": {"conviction": 0.8, "volatility_annualized": 0.2},
+        },
+        caps={"A": 0.05, "B": 0.05},
+    )
+
+    assert result["weights"] == {"A": 0.05, "B": 0.05}
+    assert result["cash_reserve"] == 0.9
+
+
+def test_per_symbol_cap_redistributes_to_uncapped_names() -> None:
+    result = suggest_weights(
+        {
+            "A": {"conviction": 0.9, "volatility_annualized": 0.2},  # raw 4.5
+            "B": {"conviction": 0.45, "volatility_annualized": 0.2},  # raw 2.25
+            "C": {"conviction": 0.45, "volatility_annualized": 0.2},  # raw 2.25
+        },
+        max_weight=0.6,
+        caps={"A": 0.3},
+    )
+
+    # A's own 0.3 cap binds below the global 0.6; B and C split the freed
+    # budget proportionally (their 0.25 shares of the 0.5 rest -> 0.35 each).
+    assert result["weights"] == {"A": 0.3, "B": 0.35, "C": 0.35}
+    assert result["cash_reserve"] == 0.0
+
+
+def test_unusable_per_symbol_caps_fall_back_to_global() -> None:
+    result = suggest_weights(
+        {
+            "A": {"conviction": 0.8, "volatility_annualized": 0.2},
+            "B": {"conviction": 0.4, "volatility_annualized": 0.4},
+        },
+        max_weight=0.6,
+        caps={"A": None, "B": -0.1},
+    )
+
+    assert result["weights"] == {"A": 0.6, "B": 0.4}
+
+
+def _cap_shape_parity_keys() -> dict:
+    # Canonical _normalize keys the cap-threading tests don't otherwise care
+    # about, kept present for shape parity with the other report tests.
+    return {
+        "market_data": {},
+        "technical_analysis": {},
+        "fundamental_analysis": {},
+        "sentiment_flat": {},
+        "portfolio_risk": {},
+        "research_synthesis": {},
+        "overall_sentiment": {},
+    }
+
+
+def test_report_weights_respect_pipeline_decision_caps() -> None:
+    c = {
+        "symbols": ["A", "B"],
+        "decisions": {
+            "A": {
+                "action": "buy",
+                "confidence": 0.8,
+                "score": 70,
+                "position_size": {"percentage_of_portfolio": 5},
+            },
+            "B": {
+                "action": "buy",
+                "confidence": 0.8,
+                "score": 68,
+                "position_size": {"percentage_of_portfolio": 5},
+            },
+        },
+        "risk_flat": {
+            "A": {
+                "metrics": {"volatility_annualized": 0.2},
+                "position_recommendation": {"max_position_size": 5.0},
+            },
+            "B": {
+                "metrics": {"volatility_annualized": 0.2},
+                "position_recommendation": {"max_position_size": 5.0},
+            },
+        },
+        **_cap_shape_parity_keys(),
+    }
+
+    summary = ReportService._recommendations(c)
+
+    # The per-symbol recommendation says 5%; the portfolio suggestion must
+    # not hand each name the allocator's uniform 20% cap.
+    assert summary["suggested_weights"]["weights"] == {"A": 0.05, "B": 0.05}
+    assert summary["suggested_weights"]["cash_reserve"] == 0.9
+
+
+def test_report_weights_respect_react_flat_decision_caps() -> None:
+    # Same repro through the ReAct gated shape: react_agent writes
+    # position_size as a flat float (percent), not the pipeline's dict.
+    c = {
+        "symbols": ["A", "B"],
+        "decisions": {
+            "A": {
+                "action": "buy",
+                "confidence": 0.8,
+                "score": 70,
+                "position_size": 5.0,
+                "committee_verdict": "limit",
+            },
+            "B": {
+                "action": "buy",
+                "confidence": 0.8,
+                "score": 68,
+                "position_size": 5.0,
+                "committee_verdict": "limit",
+            },
+        },
+        "risk_flat": {
+            "A": {
+                "metrics": {"volatility_annualized": 0.2},
+                "position_recommendation": {"max_position_size": 5.0},
+            },
+            "B": {
+                "metrics": {"volatility_annualized": 0.2},
+                "position_recommendation": {"max_position_size": 5.0},
+            },
+        },
+        **_cap_shape_parity_keys(),
+    }
+
+    summary = ReportService._recommendations(c)
+
+    assert summary["suggested_weights"]["weights"] == {"A": 0.05, "B": 0.05}
+
+
+def test_risk_only_cap_binds_when_no_decision_position() -> None:
+    # Derived path: by_symbol entries carry no position_size, so the only
+    # cap in play is the risk engine's max_position_size.
+    c = {
+        "symbols": ["A", "B"],
+        "decisions": {},
+        "risk_flat": {
+            "A": {
+                "metrics": {"volatility_annualized": 0.2},
+                "position_recommendation": {"max_position_size": 5.0},
+            },
+            "B": {
+                "metrics": {"volatility_annualized": 0.2},
+                "position_recommendation": {"max_position_size": 5.0},
+            },
+        },
+        **_cap_shape_parity_keys(),
+    }
+    summary = {
+        "by_symbol": {
+            "A": {"action": "buy", "confidence": 0.8},
+            "B": {"action": "buy", "confidence": 0.6},
+        }
+    }
+
+    weights = ReportService._suggested_weights(c, summary)
+
+    assert weights["weights"]["A"] <= 0.05
+    assert weights["weights"]["B"] <= 0.05
+
+
 def test_report_without_eligible_buys_has_no_weights_block() -> None:
     c = {
         "symbols": ["A"],

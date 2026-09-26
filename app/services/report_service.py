@@ -108,6 +108,17 @@ class ReportService:
         if "sentiment_by_symbol" in sentiment:
             sentiment = sentiment.get("sentiment_by_symbol") or {}
 
+        # Gated decisions win: react_agent applies the risk committee's
+        # veto/limit/watch to the NESTED data["decision"]["decisions"] map;
+        # reading the top-level key first would bypass the gate and re-derive
+        # a buy from the raw scores. Pipeline callers pass the same decisions
+        # already unwrapped to the top level — same precedence as ic.py.
+        decision_wrapper = data.get("decision")
+        nested_decisions = (
+            decision_wrapper.get("decisions") if isinstance(decision_wrapper, dict) else None
+        )
+        decisions = nested_decisions or data.get("decisions") or {}
+
         return {
             "query": data.get("query", ""),
             "symbols": symbols,
@@ -121,7 +132,7 @@ class ReportService:
             "portfolio_risk": portfolio_risk,
             "market_regime": market_regime,
             "overall_risk_level": overall_risk_level,
-            "decisions": data.get("decisions") or {},
+            "decisions": decisions,
             "research_synthesis": data.get("research_synthesis") or {},
         }
 
@@ -379,15 +390,49 @@ class ReportService:
         return summary
 
     @staticmethod
+    def _position_pct(decision: dict[str, Any]) -> float | None:
+        """Position size in percent from either decision shape.
+
+        Pipeline decisions nest it (``position_size.percentage_of_portfolio``);
+        the ReAct gate writes a flat float (``position_size: 5.0`` meaning 5%).
+        """
+        position = decision.get("position_size")
+        if isinstance(position, dict):
+            position = position.get("percentage_of_portfolio")
+        return position if isinstance(position, int | float) else None
+
+    @staticmethod
+    def _position_cap_pct(decision: dict[str, Any], risk: dict[str, Any]) -> float | None:
+        """Tightest per-symbol cap the symbol's own recommendation obeys (%).
+
+        The decision's sized position is already risk-capped upstream
+        (``min(conviction_or_atr_size, risk.max_position_size)``); the risk
+        engine's suggestion is consulted too so the derived path (which has
+        no decision sizes) stays bounded. Both are percent units.
+        """
+        cap_candidates: list[float] = []
+        position = ReportService._position_pct(decision)
+        if position is not None and position > 0:
+            cap_candidates.append(float(position))
+        max_from_risk = (risk.get("position_recommendation") or {}).get("max_position_size")
+        if isinstance(max_from_risk, int | float) and max_from_risk > 0:
+            cap_candidates.append(float(max_from_risk))
+        return min(cap_candidates) if cap_candidates else None
+
+    @staticmethod
     def _suggested_weights(c: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any] | None:
         """Candidates for the portfolio allocation from either path.
 
         Conviction comes from the decision agent (pipeline) or the derived
         recommendation (ReAct); volatility from the shared risk metrics.
         Only symbols whose action says buy participate — a sell/hold name
-        gets no allocation, and the caller needs no action filtering.
+        gets no allocation, and the caller needs no action filtering. Each
+        candidate also carries its own position cap (percent, converted to
+        a fraction here) so the allocator can never hand a risk-limited
+        name the uniform default weight its own recommendation forbids.
         """
         candidates: dict[str, dict[str, float | None]] = {}
+        caps: dict[str, float] = {}
         for symbol in c["symbols"]:
             decision = c["decisions"].get(symbol) or summary["by_symbol"].get(symbol) or {}
             action = str(decision.get("action", ""))
@@ -399,7 +444,10 @@ class ReportService:
                 "conviction": decision.get("confidence"),
                 "volatility_annualized": metrics.get("volatility_annualized"),
             }
-        return suggest_weights(candidates)
+            cap_pct = ReportService._position_cap_pct(decision, risk)
+            if cap_pct is not None:
+                caps[symbol] = cap_pct / 100.0
+        return suggest_weights(candidates, caps=caps or None)
 
     @classmethod
     def _recommendations_from_decisions(cls, c: dict[str, Any]) -> dict[str, Any]:
@@ -419,9 +467,7 @@ class ReportService:
             summary["by_symbol"][symbol] = {
                 "action": action,
                 "confidence": decision.get("confidence"),
-                "position_size": (decision.get("position_size") or {}).get(
-                    "percentage_of_portfolio"
-                ),
+                "position_size": cls._position_pct(decision),
                 "entry": (decision.get("price_targets") or {}).get("entry_zone"),
                 "stop_loss": (decision.get("price_targets") or {}).get("stop_loss"),
                 "take_profit": (decision.get("price_targets") or {}).get("take_profit"),
