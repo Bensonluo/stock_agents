@@ -82,6 +82,14 @@ _RESERVED_STATE_KEYS = (
     "current_step",
 )
 
+# The three fan-out analysis branches that must all settle before the join
+# barrier releases risk_assessment.
+_ANALYSIS_AGENT_NAMES = (
+    "technical_analysis",
+    "sentiment_analysis",
+    "fundamental_analysis",
+)
+
 
 def _merge_symbol_maps(existing: dict, incoming: dict) -> dict:
     """Merge agent output maps keyed by symbol (e.g. ``market_data``).
@@ -177,12 +185,20 @@ class MultiAgentOrchestrator:
 
             data_collection
               -> [technical, sentiment, fundamental]   # parallel analysis stage
+              -> analysis_barrier                       # join: all branches settled
               -> risk_assessment -> research_synthesis
               -> decision_making -> report_generation
 
         Nodes return partial state updates; shared channels accumulate through
         reducers (errors/agent_outputs append, agent_status/retry_count merge,
         current_step adds), which is what makes the parallel stage safe.
+
+        Join semantics: routing every analysis branch straight to risk made
+        risk (and everything downstream) run once per arriving branch — a
+        straggler branch still inside its retry self-loop let risk start on
+        partial data, then triggered a second full pass. The analysis_barrier
+        node spins (a no-op self-loop) until every branch is settled, then
+        releases risk exactly once.
 
         Retry semantics: routing keys off the agent's LAST attempt outcome
         (agent_status) with retry_count as the budget, so a transient failure
@@ -206,6 +222,7 @@ class MultiAgentOrchestrator:
         graph.add_node("technical_analysis_agent", self._technical_analysis_node)
         graph.add_node("fundamental_analysis_agent", self._fundamental_analysis_node)
         graph.add_node("sentiment_analysis_agent", self._sentiment_analysis_node)
+        graph.add_node("analysis_barrier", self._analysis_barrier_node)
         graph.add_node("risk_assessment_agent", self._risk_assessment_node)
         graph.add_node("research_synthesis_agent", self._research_synthesis_node)
         graph.add_node("decision_making_agent", self._decision_making_node)
@@ -230,18 +247,20 @@ class MultiAgentOrchestrator:
             },
         )
 
-        # Each parallel branch converges on risk_assessment (fan-in barrier:
-        # risk waits until every branch has routed), with a self-loop retry
-        # and a degraded path that keeps the pipeline alive when an analysis
-        # exhausts its retry budget.
+        # Every analysis branch converges on the analysis_barrier node, never
+        # directly on risk: the barrier is what turns three independently
+        # routed branches (some still inside their retry self-loops) into a
+        # single release of risk_assessment. The degraded path also routes to
+        # the barrier so an exhausted branch waits for its siblings instead
+        # of starting risk early on partial data.
         graph.add_conditional_edges(
             "technical_analysis_agent",
             self._route_after_technical,
             {
-                "join_risk": "risk_assessment_agent",
+                "join_risk": "analysis_barrier",
                 "sequential_sentiment": "sentiment_analysis_agent",
                 "retry": "technical_analysis_agent",
-                "degraded": "risk_assessment_agent",
+                "degraded": "analysis_barrier",
             },
         )
 
@@ -249,10 +268,10 @@ class MultiAgentOrchestrator:
             "sentiment_analysis_agent",
             self._route_after_sentiment,
             {
-                "join_risk": "risk_assessment_agent",
+                "join_risk": "analysis_barrier",
                 "sequential_fundamental": "fundamental_analysis_agent",
                 "retry": "sentiment_analysis_agent",
-                "degraded": "risk_assessment_agent",
+                "degraded": "analysis_barrier",
             },
         )
 
@@ -260,9 +279,21 @@ class MultiAgentOrchestrator:
             "fundamental_analysis_agent",
             self._route_after_fundamental,
             {
-                "join_risk": "risk_assessment_agent",
+                "join_risk": "analysis_barrier",
                 "retry": "fundamental_analysis_agent",
-                "degraded": "risk_assessment_agent",
+                "degraded": "analysis_barrier",
+            },
+        )
+
+        # Spin barrier: re-enter itself while any branch is still unsettled
+        # (retrying branches run in the same supersteps, so this converges),
+        # release risk_assessment exactly once when every branch is settled.
+        graph.add_conditional_edges(
+            "analysis_barrier",
+            self._route_after_analysis_barrier,
+            {
+                "proceed_risk": "risk_assessment_agent",
+                "wait": "analysis_barrier",
             },
         )
 
@@ -724,6 +755,17 @@ class MultiAgentOrchestrator:
             state_key="sentiment_analysis",
         )
 
+    async def _analysis_barrier_node(self, state: AgentState) -> dict[str, Any]:
+        """No-op join barrier between the analysis fan-out and risk_assessment.
+
+        Writes nothing (an empty update keeps current_step/agent_status
+        untouched): the barrier only exists so its conditional edge can spin
+        until every analysis branch has settled, then release risk once. It
+        is wiring, not an agent — it never appears in agent_status, logs, or
+        monitoring events.
+        """
+        return {}
+
     async def _risk_assessment_node(self, state: AgentState) -> dict[str, Any]:
         return await self._run_agent_node(
             state,
@@ -829,6 +871,34 @@ class MultiAgentOrchestrator:
         if self._last_attempt_failed(state, "fundamental_analysis"):
             return "retry" if should_retry(state, "fundamental_analysis") else "degraded"
         return "join_risk"
+
+    @staticmethod
+    def _analysis_branch_settled(state: AgentState, agent_name: str) -> bool:
+        """True when a fan-out branch will never produce another update.
+
+        A branch settles when its last attempt completed, when it exhausted
+        its retry budget (degraded — the pipeline continues without it), or
+        when it never started (sequential mode after an earlier branch
+        degraded). "failed" with budget left means the branch is inside its
+        retry self-loop and must not be waited past.
+        """
+        status = state.get("agent_status", {}).get(agent_name)
+        if status is None or status == "completed":
+            return True
+        max_retries = state.get("max_retries", 3)
+        return state.get("retry_count", {}).get(agent_name, 0) >= max_retries
+
+    def _route_after_analysis_barrier(self, state: AgentState) -> str:
+        """proceed_risk / wait — release risk only when every branch settled.
+
+        Retrying branches run in the same supersteps as the spinning barrier,
+        so each retry drains the budget toward "degraded" or flips to
+        "completed", and the barrier converges; the graph recursion limit is
+        the backstop if a branch somehow never settles.
+        """
+        if all(self._analysis_branch_settled(state, name) for name in _ANALYSIS_AGENT_NAMES):
+            return "proceed_risk"
+        return "wait"
 
     def _route_after_risk(self, state: AgentState) -> str:
         """synthesis / retry / error."""
