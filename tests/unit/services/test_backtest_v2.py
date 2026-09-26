@@ -83,6 +83,103 @@ class TestRunBacktestV2:
             )
 
 
+class TestGetStrategyParams:
+    """Legacy-endpoint parameter validation against the engine's registry."""
+
+    @pytest.mark.asyncio
+    async def test_technical_score_accepts_score_threshold(self, service: BacktestService) -> None:
+        # Frontend BacktestForm sends score_threshold; the service used to
+        # reject it because a hand-maintained dict omitted technical_score.
+        result = await service.run_backtest(
+            symbol="AAPL",
+            strategy="technical_score",
+            start_date="2024-01-01",
+            end_date="2025-12-31",
+            strategy_params={"score_threshold": 10},
+        )
+        assert result["strategy"] == "technical_score"
+        assert result["final_value"] > 0
+        assert len(result["equity"]) == 400
+
+    @pytest.mark.asyncio
+    async def test_unknown_parameter_still_rejected(self, service: BacktestService) -> None:
+        with pytest.raises(ValueError, match="Unknown strategy parameter"):
+            await service.run_backtest(
+                symbol="AAPL",
+                strategy="sma_crossover",
+                start_date="2024-01-01",
+                end_date="2025-12-31",
+                strategy_params={"no_such_param": 1},
+            )
+
+    @pytest.mark.asyncio
+    async def test_sma_params_still_accepted(self, service: BacktestService) -> None:
+        result = await service.run_backtest(
+            symbol="AAPL",
+            strategy="sma_crossover",
+            start_date="2024-01-01",
+            end_date="2025-12-31",
+            strategy_params={"sma_short": 10, "sma_long": 40},
+        )
+        assert result["total_trades"] >= 0
+        assert len(result["equity"]) == 400
+
+
+class TestEventLoopOffload:
+    @pytest.mark.asyncio
+    async def test_engine_run_keeps_the_loop_responsive(self, monkeypatch) -> None:
+        """The CPU-bound engine must run off the event loop: a ticker task
+        ticking every 10ms should barely drift while a heavy backtest runs."""
+        import asyncio
+
+        service = BacktestService()
+
+        async def big_fetch(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+            return _ohlc(2500)
+
+        monkeypatch.setattr(service, "_fetch_data", big_fetch)
+        loop = asyncio.get_running_loop()
+        stop = asyncio.Event()
+        lateness: list[float] = []
+
+        async def ticker() -> None:
+            next_tick = loop.time()
+            while not stop.is_set():
+                await asyncio.sleep(max(0.0, next_tick - loop.time()))
+                lateness.append(max(0.0, loop.time() - next_tick))
+                next_tick += 0.01
+
+        ticker_task = asyncio.create_task(ticker())
+        try:
+            await asyncio.sleep(0)  # let the ticker reach its first timer
+            started = loop.time()
+            result = await service.run_backtest_v2(
+                symbol="AAPL",
+                strategy="sma_crossover",
+                start_date="2024-01-01",
+                end_date="2025-12-31",
+                null_iterations=150,  # ~2s of engine work on 2,500 bars
+            )
+            elapsed = loop.time() - started
+        finally:
+            stop.set()
+            await ticker_task
+
+        assert result["bars"] == 2500
+        # The engine load was real (>= 1.5s of engine work happened).
+        assert elapsed >= 1.5
+        # A 10ms ticker over `elapsed` must actually tick (ideal ≈ elapsed*100;
+        # require half). Pre-fix the inline engine leaves the ticker starved
+        # with only the wake-up tick — this gate keeps the harness honest.
+        assert len(lateness) >= elapsed * 50
+        # Pre-fix the loop stalls whole seconds in ONE gap (measured 1.9s):
+        # no single tick may lag its schedule by more than that stall.
+        # Residual per-tick jitter (~5-10ms) is GIL sharing with the engine
+        # thread — inherent to any in-process thread offload of a pure-Python
+        # loop, and bounded by the interpreter's switch interval.
+        assert max(lateness) < 0.5
+
+
 class TestWalkForwardService:
     @pytest.mark.asyncio
     async def test_report_includes_windows_and_manifest(self, service: BacktestService) -> None:

@@ -131,6 +131,42 @@ class TestRandomEntryNull:
         assert holding_segments(target) == [2, 1, 3]
 
 
+class TestPlacementGaps:
+    """Adjacent placements merge into ONE position in the simulator's mask,
+    so the draw pays fewer fees than the strategy while the report claims a
+    full match — the null must keep segments apart and validate the count."""
+
+    def test_placements_keep_one_empty_bar_between(self) -> None:
+        # 40 one-day segments on 100 bars: feasible with gaps (80 <= 100).
+        rng = np.random.default_rng(42)
+        placed = _place_segments(100, [1] * 40, rng)
+        assert len(placed) == 40
+        ordered = sorted(placed)
+        for (start, length), (next_start, _) in zip(ordered, ordered[1:]):
+            assert next_start >= start + length + 1  # at least one empty bar
+
+    def test_draws_pay_exactly_the_reported_round_trips(self) -> None:
+        # The review repro: dense one-day segments used to merge into fewer
+        # actual positions — draws paid fewer fees than the report claimed.
+        # On a flat tape every round trip costs the same regardless of
+        # position, so once placements stop merging, all draws pay between
+        # segments-1 and segments fee pairs and the return spread collapses
+        # to at most one round trip's costs (the final-bar segment gets no
+        # fill bar — the strategy would not have either).
+        data = _tape([100.0] * 300)
+        target = pd.Series(0.0, index=data.index)
+        target.iloc[0:40:2] = 1.0  # 20 one-day segments, sparse → no drops
+        block = random_entry_null(data, target, -0.113, US_STOCK, 10_000.0, iterations=60, seed=42)
+        assert block is not None
+        assert block["segments"] == 20
+        # Honest reporting: the minimum ACTUAL round trips across retained
+        # draws, never the placement count while an actual count ran lower.
+        assert block["matched_round_trips"] >= block["segments"] - 1
+        # Pre-fix, merged placements spread returns across the whole fee
+        # range (27..40 round trips on the review's numbers).
+        assert block["null_return_p95"] - block["null_return_p05"] < 0.01
+
+
 class TestEngineIntegration:
     def test_default_run_has_no_null(self) -> None:
         result = run_backtest(_tape(_sawtooth()), strategy="sma_crossover")

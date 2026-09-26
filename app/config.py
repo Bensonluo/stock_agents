@@ -115,6 +115,10 @@ class Settings(BaseSettings):
     # Backtesting
     backtest_initial_cash: float = 10000.0
     backtest_commission: float = 0.001
+    # CPU-bound engine runs execute on this dedicated bounded pool instead of
+    # the API event loop (the default 300-draw null benchmark blocks the loop
+    # for seconds per backtest); concurrent backtests queue rather than fan out.
+    backtest_executor_workers: int = 2
 
 
 @lru_cache

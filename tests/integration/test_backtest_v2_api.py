@@ -166,6 +166,47 @@ class TestCalibrateEndpoint:
 
 
 class TestLegacyRunEndpoint:
+    def test_technical_score_through_legacy_endpoint(self, client: TestClient) -> None:
+        """Frontend path: the form posts the flat score_threshold field; the
+        legacy endpoint used to 500 because the service's hand-maintained
+        parameter dict omitted technical_score."""
+        response = client.post(
+            "/api/backtest/run",
+            json={
+                "symbol": "AAPL",
+                "strategy": "technical_score",
+                "start_date": "2024-01-01",
+                "end_date": "2025-12-31",
+                "score_threshold": 10,
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["strategy"] == "technical_score"
+        for key in ("final_value", "total_return_pct", "sharpe_ratio", "max_drawdown"):
+            assert key in body
+        assert len(body["equity"]) == 400
+
+    def test_sma_crossover_params_still_pass(self, client: TestClient) -> None:
+        # Regression: named parameters through the legacy contract.
+        response = client.post(
+            "/api/backtest/run",
+            json={
+                "symbol": "AAPL",
+                "strategy": "sma_crossover",
+                "start_date": "2024-01-01",
+                "end_date": "2025-12-31",
+                "sma_short": 10,
+                "sma_long": 40,
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["strategy"] == "sma_crossover"
+        assert body["total_trades"] >= 1
+
     def test_legacy_contract_backed_by_the_v2_engine(self, client: TestClient) -> None:
         response = client.post(
             "/api/backtest/run",

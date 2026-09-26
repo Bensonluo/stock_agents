@@ -1,5 +1,8 @@
 """Backtesting service for trading strategies."""
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from typing import Any
 
 import pandas as pd
@@ -8,6 +11,7 @@ import yfinance as yf
 from app.backtest import (
     CN_STOCK,
     STRATEGIES,
+    STRATEGY_PARAMETERS,
     US_STOCK,
     CostModel,
     build_manifest,
@@ -19,9 +23,30 @@ from app.backtest import (
     walk_forward as walk_forward_engine,
 )
 from app.backtest.null_benchmark import NULL_ITERATIONS
+from app.config import settings
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# The engine is a CPU-bound bar-by-bar loop; running it inline in the event
+# loop stalls every HTTP/WebSocket/analysis task sharing the worker (the
+# default 300-draw null benchmark alone blocks for seconds on ~2,500 bars).
+# A dedicated bounded pool means concurrent backtests queue instead of
+# fanning out onto the shared default executor.
+_BACKTEST_EXECUTOR = ThreadPoolExecutor(
+    max_workers=settings.backtest_executor_workers, thread_name_prefix="backtest"
+)
+
+
+async def _run_engine(fn, /, *args, **kwargs):
+    """Await a sync engine call on the dedicated bounded backtest pool.
+
+    ``fn`` is bound into the ``partial`` at call time from the module's
+    namespace, so tests monkeypatching ``app.services.backtest_service``
+    names keep working.
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_BACKTEST_EXECUTOR, partial(fn, *args, **kwargs))
 
 
 def _series_to_points(series: pd.Series | None) -> list[dict[str, float | str]] | None:
@@ -41,12 +66,11 @@ class BacktestService:
     - Strategy comparison
     """
 
-    STRATEGY_PARAMETERS = {
-        "sma_crossover": frozenset({"sma_short", "sma_long"}),
-        "rsi_strategy": frozenset({"rsi_period", "rsi_overbought", "rsi_oversold"}),
-        "macd_strategy": frozenset({"fast_period", "slow_period", "signal_period"}),
-        "buy_and_hold": frozenset(),
-    }
+    # Single source of truth: the engine's canonical strategy→parameter
+    # registry (module import). A hand-maintained copy used to live here and
+    # omitted technical_score, so the legacy endpoint rejected every
+    # score_threshold request with a 500.
+    STRATEGY_PARAMETERS = STRATEGY_PARAMETERS
 
     async def run_backtest(
         self,
@@ -83,7 +107,8 @@ class BacktestService:
             raise ValueError(f"No data available for {symbol}")
 
         selected_params = self._get_strategy_params(strategy, strategy_params)
-        result = run_v2_engine(
+        result = await _run_engine(
+            run_v2_engine,
             data,
             strategy=strategy,
             cost_model=CostModel(commission_rate=commission),
@@ -142,7 +167,8 @@ class BacktestService:
         if benchmark_symbol:
             benchmark_data = await self._fetch_data(benchmark_symbol, start_date, end_date)
 
-        result = run_v2_engine(
+        result = await _run_engine(
+            run_v2_engine,
             data,
             strategy=strategy,
             cost_model=self._cost_model(market),
@@ -194,7 +220,8 @@ class BacktestService:
     ) -> dict[str, Any]:
         """Rolling walk-forward: pick params on train, score unseen test windows."""
         data = await self._fetch_data(symbol, start_date, end_date)
-        report = walk_forward_engine(
+        report = await _run_engine(
+            walk_forward_engine,
             data,
             strategy=strategy,
             param_grid=param_grid,
@@ -234,7 +261,8 @@ class BacktestService:
         if benchmark_symbol:
             benchmark_data = await self._fetch_data(benchmark_symbol, start_date, end_date)
 
-        report = calibrate_engine(
+        report = await _run_engine(
+            calibrate_engine,
             data,
             strategy=strategy,
             horizons=tuple(horizons or (20, 60)),
