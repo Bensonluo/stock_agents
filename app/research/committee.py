@@ -10,6 +10,12 @@ from __future__ import annotations
 
 from typing import Any
 
+# The committee's high-risk / crash-shock position cap. Stated in the limit
+# verdict's conditions AND carried as position_cap_pct — the ReAct gate
+# applies `min(position_size, position_cap)`, so a limit verdict without the
+# cap field never actually bounded the published position.
+LIMIT_POSITION_CAP_PCT = 5.0
+
 
 def committee_review(
     symbol: str,
@@ -65,7 +71,7 @@ def committee_review(
         conditions.append("A stop-loss is mandatory.")
         if isinstance(suggested, int | float):
             conditions.append(f"Engine suggested {suggested}% — capped by committee.")
-        return _decision("limit", conditions)
+        return _decision("limit", conditions, position_cap_pct=LIMIT_POSITION_CAP_PCT)
 
     if risk_level == "medium":
         conditions.append("Size within suggested limit; monitor volatility percentile.")

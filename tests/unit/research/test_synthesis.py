@@ -189,6 +189,25 @@ class TestRiskCommittee:
         assert any("5%" in condition for condition in decision["conditions"])
         assert any("stop-loss" in condition.lower() for condition in decision["conditions"])
 
+    def test_limit_verdict_carries_the_five_percent_cap(self) -> None:
+        """The limit branch must set position_cap_pct — react_agent's gate
+        (`min(position_size, position_cap)`) keys off it, and without the cap
+        a high-risk "Position capped at 5%" promise never binds the published
+        position (review 2026-09-26, legacy P1: limit 分支漏传 cap)."""
+        decision = committee_review(
+            "X",
+            risk={
+                "risk_level": "high",
+                "metrics": {},
+                "position_recommendation": {"max_position_size": 10},
+            },
+            quality=None,
+            audit_verdict="pass",
+        )
+
+        assert decision["verdict"] == "limit"
+        assert decision["position_cap_pct"] == 5.0
+
     def test_insufficient_risk_is_watch_not_buy(self) -> None:
         decision = committee_review("X", risk=None, quality=None, audit_verdict="pass")
 
