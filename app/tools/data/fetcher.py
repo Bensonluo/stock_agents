@@ -380,27 +380,37 @@ def yfinance_news_articles(items: list[dict[str, Any]], symbol: str) -> list[dic
     return articles
 
 
-def finnhub_news_articles(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def finnhub_news_articles(
+    items: list[dict[str, Any]], *, symbol: str | None = None
+) -> list[dict[str, Any]]:
     """Map Finnhub /company-news items to the canonical article shape.
 
     Finnhub's raw keys (headline/url/datetime) are renamed to the canonical
     ones so recency decay (parse_published reads epoch ints) and dedup (link
     key) work without provider-specific branching downstream.
+
+    ``symbol`` stamps the queried symbol onto every article
+    (``original_symbol`` + ``related_symbols``): the feed is per-company, so
+    attribution is a fact of the request. Sentiment's per-symbol matching
+    keys off those fields — unattributed fallback news starves every symbol
+    but the first (review 2026-09-26, P2#7).
     """
     articles: list[dict[str, Any]] = []
     for item in items:
         title = item.get("headline")
         if not title:
             continue
-        articles.append(
-            {
-                "title": title,
-                "link": item.get("url"),
-                "published": item.get("datetime"),
-                "source": item.get("source"),
-                "summary": item.get("summary"),
-            }
-        )
+        article: dict[str, Any] = {
+            "title": title,
+            "link": item.get("url"),
+            "published": item.get("datetime"),
+            "source": item.get("source"),
+            "summary": item.get("summary"),
+        }
+        if symbol:
+            article["original_symbol"] = symbol
+            article["related_symbols"] = [symbol]
+        articles.append(article)
     return articles
 
 
@@ -1306,7 +1316,7 @@ async def _finnhub_fetch(symbol: str) -> dict[str, Any] | None:
         },
     }
 
-    news_data = finnhub_news_articles(news[:10]) if isinstance(news, list) else []
+    news_data = finnhub_news_articles(news[:10], symbol=symbol) if isinstance(news, list) else []
 
     logger.info(f"[finnhub] OK for {symbol}")
     return {"market_data": market_data, "financial_data": financial_data, "news_data": news_data}
@@ -1345,7 +1355,7 @@ async def fetch_us_news(symbol: str) -> list[dict[str, Any]]:
         logger.warning(f"[finnhub-news] failed for {symbol}: {e}")
         return []
     items = news if isinstance(news, list) else []
-    return finnhub_news_articles(items[:20])
+    return finnhub_news_articles(items[:20], symbol=symbol)
 
 
 async def _finnhub_historical(symbol: str, period: str) -> dict[str, Any] | None:

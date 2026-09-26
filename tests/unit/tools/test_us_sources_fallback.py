@@ -25,7 +25,13 @@ import pytest
 
 import app.tools.data.fetcher as fetcher_mod
 from app.config import get_settings
-from app.tools.data.fetcher import _akshare_us, _sina_us_hist, fetch_historical, fetch_us_news
+from app.tools.data.fetcher import (
+    _akshare_us,
+    _sina_us_hist,
+    fetch_historical,
+    fetch_us_news,
+    finnhub_news_articles,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -197,3 +203,37 @@ async def test_stooq_us_symbol_carries_us_suffix(monkeypatch: pytest.MonkeyPatch
 async def test_fetch_us_news_without_key_returns_empty() -> None:
     """No FINNHUB_API_KEY → [] (empty-feed behavior, never an exception)."""
     assert await fetch_us_news("AAPL") == []
+
+
+async def test_finnhub_news_articles_stamp_symbol_attribution() -> None:
+    """Finnhub articles must carry original_symbol/related_symbols when the
+    queried symbol is known — sentiment's per-symbol matching keys off those
+    fields, and unattributed fallback news starves every symbol but the
+    first (review 2026-09-26, P2#7)."""
+    items = [{"headline": "Apple profit rises", "url": "https://x/1", "datetime": 1, "source": "R"}]
+    stamped = finnhub_news_articles(items, symbol="AAPL")
+    assert stamped[0]["original_symbol"] == "AAPL"
+    assert stamped[0]["related_symbols"] == ["AAPL"]
+    # Without a symbol the canonical five-key shape stays unchanged.
+    plain = finnhub_news_articles(items)
+    assert "original_symbol" not in plain[0]
+    assert "related_symbols" not in plain[0]
+
+
+async def test_fetch_us_news_articles_carry_symbol_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The provider seam end to end: key set + fake /company-news → every
+    returned article is attributed to the queried symbol."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "finnhub_api_key", "test-key")
+    items = [
+        {"headline": f"Apple story {i}", "url": f"https://x/{i}", "datetime": 1, "source": "R"}
+        for i in range(3)
+    ]
+    monkeypatch.setattr(fetcher_mod, "_finnhub_get", lambda path, params: items)
+    articles = await fetch_us_news("AAPL")
+    assert len(articles) == 3
+    assert all(
+        a["original_symbol"] == "AAPL" and a["related_symbols"] == ["AAPL"] for a in articles
+    )
