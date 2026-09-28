@@ -18,6 +18,7 @@ from app.analysis.events import next_earnings_window
 from app.analysis.fundamental import compact_quality_view
 from app.analysis.ic import STATIC_DIMENSION_WEIGHTS
 from app.analysis.portfolio import suggest_weights
+from app.analysis.regime import decision_warnings, regime_warnings
 from app.analysis.technical import compact_weekly_view
 from app.analysis.valuation import compact_valuation_view
 
@@ -102,6 +103,13 @@ class ReportService:
             overall_risk_level = risk.get("overall_risk_level", "medium")
             market_regime = risk.get("market_regime")
             risk = risk.get("risk_by_symbol") or {}
+        else:
+            # ReAct shape: assess_risk parks the run-level regime under a
+            # namespaced key beside the per-symbol entries — lift it out so
+            # the flat map stays purely per-symbol (position sizing reads it).
+            market_regime = risk.get("market_regime")
+            if market_regime is not None:
+                risk = {k: v for k, v in risk.items() if k != "market_regime"}
 
         sentiment = data.get("sentiment_analysis") or {}
         overall_sentiment = sentiment.get("overall_sentiment", {})
@@ -515,21 +523,30 @@ class ReportService:
             risk = c["risk_flat"].get(symbol) or {}
 
             if not any([fundamental, technical, sentiment, risk]):
-                by_symbol[symbol] = {
+                rec = {
                     "action": "hold",
                     "confidence": 0.3,
                     "composite_score": 50.0,
                     "reasoning": "Insufficient analysis data to derive a recommendation",
                 }
-                continue
-            by_symbol[symbol] = derive_recommendation(
-                symbol,
-                fundamental,
-                technical,
-                sentiment,
-                risk,
-                dimension_weights=dimension_weights,
-            )
+            else:
+                rec = derive_recommendation(
+                    symbol,
+                    fundamental,
+                    technical,
+                    sentiment,
+                    risk,
+                    dimension_weights=dimension_weights,
+                )
+            # Same decision-layer warnings the pipeline decision agent emits
+            # (shared generators in app/analysis/regime.py) so both paths
+            # speak with one voice. Warning-free recs omit the key.
+            warnings = decision_warnings(
+                rec["action"], risk, rec.get("confidence") or 0
+            ) + regime_warnings(rec["action"], c["market_regime"])
+            if warnings:
+                rec["warnings"] = warnings
+            by_symbol[symbol] = rec
 
         portfolio_actions = [
             {"symbol": s, "action": v["action"], "confidence": v["confidence"]}

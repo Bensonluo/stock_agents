@@ -228,9 +228,9 @@ class TestDecisionWarnings:
     """Warnings consume the 0-1 confidence scale the formula actually emits."""
 
     def _warnings(self, confidence: float) -> list[str]:
-        module = _load_agent_module("decision_agent.py", "decision_agent_warnings")
-        agent = module.DecisionMakingAgent()
-        return agent._generate_decision_warnings("buy", {}, confidence)
+        from app.analysis.regime import decision_warnings
+
+        return decision_warnings("buy", {}, confidence)
 
     def test_normal_confidence_is_quiet(self) -> None:
         assert not any("Low confidence" in w for w in self._warnings(0.72))

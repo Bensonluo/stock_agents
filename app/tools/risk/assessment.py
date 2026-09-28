@@ -6,6 +6,7 @@ import numpy as np
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from app.analysis.regime import classify_market_regime
 from app.analysis.risk import (
     aligned_returns,
     average_dollar_volume,
@@ -57,7 +58,32 @@ def assess_risk(market_data: dict) -> dict[str, Any]:
             logger.error(f"Risk assessment failed for {symbol}: {e}")
             results[symbol] = _minimal_risk(data, symbol)
 
+    # One market-regime block per run, parked beside the per-symbol
+    # entries under a namespaced key (the flat {symbol: {...}} contract
+    # feeds calculate_position_size and must stay per-symbol only).
+    # Mirrors the pipeline risk agent: same benchmark → same market.
+    regime = _market_regime(market_data)
+    if regime:
+        results["market_regime"] = regime
+
     return results
+
+
+def _market_regime(market_data: dict) -> dict[str, Any] | None:
+    """Classify the run's regime from the first attached benchmark.
+
+    Every symbol block in a run carries the same benchmark, so the first
+    one found classifies the whole run. No benchmark anywhere → None
+    (degraded run: no fabricated regime).
+    """
+    for data in market_data.values():
+        if not isinstance(data, dict):
+            continue
+        benchmark = _get_benchmark_history(data)
+        if benchmark:
+            closes = benchmark.get("close") or []
+            return classify_market_regime(list(closes))
+    return None
 
 
 def _assess_symbol(symbol: str, data: dict) -> dict[str, Any]:

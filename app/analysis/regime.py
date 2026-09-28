@@ -1,4 +1,4 @@
-"""Market-regime classification from the benchmark series.
+"""Market-regime classification and the warnings it conditions.
 
 Per-symbol analysis is regime-blind: the same technical picture means
 different things in a grinding bull market and a high-volatility bear.
@@ -10,6 +10,11 @@ Pure annotation, in the liquidity / sector_relative tradition: the
 regime block describes context and never touches risk scores, weights,
 or position sizes. Policy decisions built on it are separate, explicit
 changes.
+
+The ``decision_warnings`` / ``regime_warnings`` generators live here so
+both decision surfaces — the pipeline decision agent and the ReAct
+derived recommendations — import the SAME functions from a leaf module
+(the report service cannot import the decision agent: circular).
 
 Pure functions only — no network, no storage.
 """
@@ -110,3 +115,66 @@ def _realized_vol(prices: list[float]) -> float | None:
     mean = sum(returns) / len(returns)
     var = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
     return (var * 252) ** 0.5
+
+
+def decision_warnings(action: str, risk: dict, confidence: float) -> list[str]:
+    """Decision-specific warnings for a recommendation.
+
+    Low confidence (< 0.5 on the formula's 0-1 scale — degraded holds and
+    stale-capped calls), high-risk buys, and strong-conviction actions.
+    Shared by the pipeline decision agent and the ReAct derived
+    recommendations so both paths speak with one voice.
+    """
+    warnings: list[str] = []
+
+    if confidence < 0.5:
+        warnings.append(
+            "Low confidence in this recommendation. Consider waiting for clearer signals."
+        )
+
+    risk_level = risk.get("risk_level", "")
+    if risk_level in ["high", "very_high"]:
+        if "buy" in action:
+            warnings.append("High risk stock - use strict stop-loss and limit position size.")
+
+    if "strong" in action:
+        warnings.append("Strong conviction signal - ensure it aligns with your risk tolerance.")
+
+    return warnings
+
+
+def regime_warnings(action: str, regime: dict | None) -> list[str]:
+    """Buy-side risk warnings from the market regime (iteration 76 block).
+
+    Pure annotation, in the liquidity / sector_relative tradition: the
+    regime can only APPEND warning strings — never an input to the
+    action, score, confidence, or position size (all decided before
+    this runs). Sells/holds get nothing: the regime's edge case is a
+    recommendation to add risk into a hostile market.
+    """
+    if not isinstance(regime, dict) or regime.get("status") != "ok" or "buy" not in action:
+        return []
+
+    warnings: list[str] = []
+    if regime.get("trend") == "bear":
+        vs_sma = regime.get("price_vs_sma200")
+        where = (
+            f" ({vs_sma:+.1%} vs its 200-day average)" if isinstance(vs_sma, int | float) else ""
+        )
+        warnings.append(
+            "Counter-trend entry: the benchmark is in a bear regime"
+            f"{where} — counter-trend buys historically carry lower hit rates."
+        )
+    if regime.get("volatility_regime") == "elevated":
+        ratio = regime.get("vol_ratio_20d_vs_full")
+        scale = f" ({ratio:.1f}x its full-window level)" if isinstance(ratio, int | float) else ""
+        warnings.append(
+            f"Market volatility is elevated{scale} — expect wider swings and size accordingly."
+        )
+    drawdown = regime.get("drawdown_from_52w_high")
+    if isinstance(drawdown, int | float) and drawdown <= -0.20:
+        warnings.append(
+            f"Benchmark sits {abs(drawdown):.1%} below its 52-week high — "
+            "falling-knife risk; prefer scaling in over a single entry."
+        )
+    return warnings

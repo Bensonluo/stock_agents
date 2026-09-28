@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.agents.decision_agent import DecisionMakingAgent, _regime_warnings
+from app.agents.decision_agent import DecisionMakingAgent
+from app.analysis.regime import regime_warnings as _regime_warnings
 
 _BEAR = {
     "status": "ok",

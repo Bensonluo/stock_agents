@@ -5,6 +5,7 @@ from typing import Any
 
 from app.agents.base import StatelessAgent
 from app.analysis.ic import DECISION_FORMULA_VERSION
+from app.analysis.regime import decision_warnings, regime_warnings
 from app.analysis.sizing import RISK_BUDGET_PCT, STOP_MULTIPLE, atr_position_size
 from app.orchestration.state import AgentState
 from app.services.report_service import derive_recommendation
@@ -202,8 +203,11 @@ class DecisionMakingAgent(StatelessAgent):
             "position_size": position_size,
             "price_targets": price_targets,
             "rationale": rationale,
-            "warnings": self._generate_decision_warnings(action, risk, confidence)
-            + _regime_warnings(action, market_regime),
+            # Shared generators (app/analysis/regime.py) — the ReAct derived
+            # recommendations emit the same warnings, so both decision
+            # surfaces speak with one voice.
+            "warnings": decision_warnings(action, risk, confidence)
+            + regime_warnings(action, market_regime),
         }
 
     def _extract_technical_score(self, technical: dict) -> float | None:
@@ -371,39 +375,6 @@ class DecisionMakingAgent(StatelessAgent):
 
         return targets
 
-    def _generate_decision_warnings(self, action: str, risk: dict, confidence: float) -> list[str]:
-        """Generate decision-specific warnings.
-
-        Args:
-            action: Recommended action
-            risk: Risk assessment
-            confidence: Confidence score
-
-        Returns:
-            List of warnings
-        """
-        warnings = []
-
-        # Low confidence warning (confidence is 0-1 from derive_recommendation;
-        # the old < 50 threshold compared against a 0-100 scale that no longer
-        # exists, so the warning fired on every decision and meant nothing)
-        if confidence < 0.5:
-            warnings.append(
-                "Low confidence in this recommendation. Consider waiting for clearer signals."
-            )
-
-        # High risk warning
-        risk_level = risk.get("risk_level", "")
-        if risk_level in ["high", "very_high"]:
-            if "buy" in action:
-                warnings.append("High risk stock - use strict stop-loss and limit position size.")
-
-        # Strong action warning
-        if "strong" in action:
-            warnings.append("Strong conviction signal - ensure it aligns with your risk tolerance.")
-
-        return warnings
-
     def _create_portfolio_summary(self, decisions: dict) -> dict[str, Any]:
         """Create portfolio-level summary.
 
@@ -530,40 +501,3 @@ def _market_context_line(regime: dict | None) -> str | None:
         + "; ".join(parts)
         + "."
     )
-
-
-def _regime_warnings(action: str, regime: dict | None) -> list[str]:
-    """Buy-side risk warnings from the market regime (iteration 76 block).
-
-    Pure annotation, in the liquidity / sector_relative tradition: the
-    regime can only APPEND warning strings — never an input to the
-    action, score, confidence, or position size (all decided before
-    this runs). Sells/holds get nothing: the regime's edge case is a
-    recommendation to add risk into a hostile market.
-    """
-    if not isinstance(regime, dict) or regime.get("status") != "ok" or "buy" not in action:
-        return []
-
-    warnings: list[str] = []
-    if regime.get("trend") == "bear":
-        vs_sma = regime.get("price_vs_sma200")
-        where = (
-            f" ({vs_sma:+.1%} vs its 200-day average)" if isinstance(vs_sma, int | float) else ""
-        )
-        warnings.append(
-            "Counter-trend entry: the benchmark is in a bear regime"
-            f"{where} — counter-trend buys historically carry lower hit rates."
-        )
-    if regime.get("volatility_regime") == "elevated":
-        ratio = regime.get("vol_ratio_20d_vs_full")
-        scale = f" ({ratio:.1f}x its full-window level)" if isinstance(ratio, int | float) else ""
-        warnings.append(
-            f"Market volatility is elevated{scale} — expect wider swings and size accordingly."
-        )
-    drawdown = regime.get("drawdown_from_52w_high")
-    if isinstance(drawdown, int | float) and drawdown <= -0.20:
-        warnings.append(
-            f"Benchmark sits {abs(drawdown):.1%} below its 52-week high — "
-            "falling-knife risk; prefer scaling in over a single entry."
-        )
-    return warnings
