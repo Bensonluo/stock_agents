@@ -87,6 +87,26 @@ class TestScenarioEvals:
         result = _grade(state, report)
         assert result.passed, result.summary()
 
+    async def test_market_data_outage_gates_directional_decisions(self):
+        """Full quotes outage (the 2026-09-27 production shape): no bars and
+        no benchmark for any symbol. The market-data gate must withhold
+        direction — hold at zero conviction, composite None — while the
+        report stays schema-compliant and the surviving dimensions stay
+        visible in the reasoning."""
+        state = _synthetic_state("TEST", seed=5)
+        state["market_data"]["TEST"].pop("historical_data", None)
+        state["market_data"].pop("benchmark_historical_data", None)
+        state, report = await _run_pipeline(state)
+        result = _grade(state, report)
+        assert result.passed, result.summary()
+        decision = state["decision"]["decisions"]["TEST"]
+        assert decision["action"] == "hold"
+        assert decision["confidence"] == 0.0
+        # DecisionMakingAgent renames derive_recommendation's composite_score
+        # to ``score``; the gated shape carries None (no composite opinion).
+        assert decision["score"] is None
+        assert "surviving evidence" in decision["rationale"]
+
     async def test_multi_symbol_mixed_regimes(self):
         """3-symbol fan-out: uptrend + flat + deep drawdown in one run.
 
