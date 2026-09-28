@@ -31,7 +31,11 @@ MIN_IC_RUNS = 2
 # targets. Bump whenever the formula's math changes materially (weights
 # logic, action bands, score normalization). Display endpoints keep the
 # all-vintage view with the recorded caveat.
-DECISION_FORMULA_VERSION = "2026-09-25.1"
+# 2026-09-28.1: market-data gate — runs with no usable technical dimension
+# now withhold direction (hold/None composite) instead of emitting a
+# renormalized sentiment-driven score; pre-gate vintages' degraded-run
+# scores are no longer this formula's targets.
+DECISION_FORMULA_VERSION = "2026-09-28.1"
 
 
 def decision_formula_version(result: dict[str, Any]) -> str | None:

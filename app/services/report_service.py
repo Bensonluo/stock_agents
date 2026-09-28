@@ -706,6 +706,16 @@ def derive_recommendation(
     dimensions that measured something. Full-data composites are
     bit-identical (all four present → the classic 45/30/15/10 blend).
 
+    Renormalization stops at the market-data gate: a symbol whose only
+    price-data dimension (technical) is unusable — block absent/empty, a
+    failed-fetch ``_error`` block, or the pipeline's ``insufficient_data``
+    block whose hardcoded zero score is absence, not neutrality — gets no
+    directional call at all. Hold at zero conviction with the surviving
+    evidence recorded in the reasoning; news sentiment renormalized to
+    full weight must never masquerade as a directional view. Stale-but-
+    present bars are data, not absence, and are not gated (dated view,
+    confidence capped below).
+
     ``dimension_weights`` overrides the directional blend (fundamental/
     technical/sentiment) — the IC-adaptive weights pathway. Unknown keys
     are ignored and missing keys fall back to the static constants, so a
@@ -775,6 +785,36 @@ def derive_recommendation(
                 "holding with zero conviction"
                 if risk_available
                 else "No dimension has data to score; holding with zero conviction"
+            ),
+        }
+
+    # Market-data gate (2026-09-27 production smoke): with every quotes
+    # feed down, symbols still shipped directional calls — news sentiment,
+    # renormalized to full weight over the missing technical dimension,
+    # published "sell" at 0.85 on zero price data. No usable technical
+    # dimension means no direction to judge: withhold the call, hold at
+    # zero conviction, keep the surviving evidence visible. Unusable is
+    # either no numeric technical score (block absent/empty/_error) or
+    # the pipeline's insufficient_data block, whose hardcoded score 0 is
+    # absence dressed as a neutral vote. Stale-but-present bars carry a
+    # real score and never hit this gate — iteration 23 semantics (the
+    # view stands, confidence capped) apply unchanged below.
+    if tech_score is None or technical.get("status") == "insufficient_data":
+        survivors = []
+        if fund_score is not None:
+            survivors.append(f"fundamental {fund_score:.0f}/{fund_rec}")
+        if sent_score is not None:
+            survivors.append(f"sentiment {sent_score:+.0f}")
+        if risk_available:
+            survivors.append(f"risk {risk_level}")
+        return {
+            "action": "hold",
+            "confidence": 0.0,
+            "composite_score": None,
+            "reasoning": (
+                "Market data unavailable — technical analysis has nothing to "
+                "score; directional action withheld, holding with zero "
+                f"conviction (surviving evidence: {', '.join(survivors)})"
             ),
         }
 
