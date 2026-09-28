@@ -1,6 +1,8 @@
 """Main FastAPI application entry point."""
 
+import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,7 +40,35 @@ async def lifespan(app: FastAPI):
 
     logger.info("Application components initialized")
 
+    # Opt-in daily watchlist scheduler (app/services/daily_run.py) — default
+    # off, so lifespan behavior is unchanged until DAILY_RUN_ENABLED=true.
+    daily_task: asyncio.Task | None = None
+    if settings.daily_run_enabled:
+        from app.services.daily_run import _next_run_at, daily_run_loop
+
+        # Fail fast on a malformed DAILY_RUN_TIME: abandon the scheduler with
+        # a clear error instead of a task that dies on its first scheduling.
+        try:
+            next_at = _next_run_at(datetime.now(), settings.daily_run_time)
+        except ValueError as exc:
+            logger.error(
+                f"Invalid DAILY_RUN_TIME={settings.daily_run_time!r} ({exc}); "
+                "daily watchlist run disabled"
+            )
+        else:
+            daily_task = asyncio.create_task(daily_run_loop(), name="daily-watchlist-run")
+            logger.info(f"Daily watchlist run enabled: next at {next_at.isoformat()}")
+
     yield
+
+    if daily_task is not None:
+        daily_task.cancel()
+        try:
+            await daily_task
+        except asyncio.CancelledError:
+            logger.info("Daily watchlist run scheduler stopped")
+        except Exception as exc:
+            logger.error(f"Daily watchlist run scheduler exited early: {exc}")
 
     logger.info("Shutting down application")
 

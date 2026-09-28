@@ -52,6 +52,16 @@ class Settings(BaseSettings):
     # False = the fixed 45/30/15 blend, always.
     ic_adaptive_weights_enabled: bool = True
 
+    # Daily watchlist auto-run (opt-in scheduler; off by default — behavior is
+    # unchanged until explicitly enabled). One analysis workflow per calendar
+    # day at DAILY_RUN_TIME (server local time) over the comma-separated
+    # DAILY_RUN_SYMBOLS, persisted to analysis_history like a manual run so
+    # IC replay / calibration gates accumulate evidence without hand-feeding.
+    daily_run_enabled: bool = False
+    daily_run_symbols: str = "600000,AAPL"
+    # 16:00 ≈ after the A-share close, with the overnight US session decided.
+    daily_run_time: str = "16:00"
+
     # Monitoring
     enable_metrics: bool = True
     metrics_port: int = 9090
