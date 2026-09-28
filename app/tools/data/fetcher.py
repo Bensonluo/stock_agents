@@ -1817,9 +1817,12 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
                 "close": df["Close"].tolist(),
                 "volume": df["Volume"].tolist(),
             }
+            record_provider_outcome("yfinance-hist", "ok")
             _cache_set(cache_key, result, ttl=60)
             return result
+        record_provider_outcome("yfinance-hist", "fail", "empty frame")
     except Exception as e:
+        record_provider_outcome("yfinance-hist", "fail", f"{type(e).__name__}: {e}")
         logger.warning(f"[yfinance-hist] failed for {symbol}: {e}")
 
     # finnhub (snapshot only on free tier — /stock/candle is paid)
@@ -1827,9 +1830,12 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
         try:
             result = await _finnhub_historical(symbol, period)
             if result and result.get("dates"):
+                record_provider_outcome("finnhub-hist", "ok")
                 _cache_set(cache_key, result, ttl=60)
                 return result
+            record_provider_outcome("finnhub-hist", "fail", "no dates")
         except Exception as e:
+            record_provider_outcome("finnhub-hist", "fail", f"{type(e).__name__}: {e}")
             logger.warning(f"[finnhub-hist] failed for {symbol}: {e}")
 
     # alpha vantage (free tier: 25 req/day, 1/sec — 1 call per analysis; the
@@ -1840,13 +1846,22 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
             result = await _alphavantage_historical(symbol, period)
             if result and result.get("dates"):
                 if _history_covers_period(result, period):
+                    record_provider_outcome("alphavantage-hist", "ok")
                     _cache_set(cache_key, result, ttl=60)
                     return result
+                record_provider_outcome(
+                    "alphavantage-hist",
+                    "fail",
+                    f"coverage gate: {len(result['dates'])} bars cannot cover {period}",
+                )
                 logger.info(
                     f"[alphavantage-hist] {symbol}: {len(result['dates'])} bars cannot "
                     f"cover period={period} — continuing down the chain"
                 )
+            else:
+                record_provider_outcome("alphavantage-hist", "fail", "no dates")
         except Exception as e:
+            record_provider_outcome("alphavantage-hist", "fail", f"{type(e).__name__}: {e}")
             logger.warning(f"[alphavantage-hist] failed for {symbol}: {e}")
 
     # HK: Tencent's own quote APIs first (same network as Tencent Cloud),
@@ -1859,9 +1874,11 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
             hist = market.get("historical_data")
             if hist and hist.get("dates"):
                 payload = {"symbol": symbol, "period": period, **hist}
+                record_provider_outcome("tencent-hk-hist", "ok")
                 _cache_set(cache_key, payload, ttl=60)
                 return payload
         except Exception as e:
+            record_provider_outcome("tencent-hk-hist", "fail", f"{type(e).__name__}: {e}")
             logger.warning(f"[tencent-hk-hist] failed for {symbol}: {e}")
 
         try:
@@ -1877,9 +1894,11 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
                     "period": period,
                     **{k: v for k, v in hist.items()},
                 }
+                record_provider_outcome("eastmoney-hk-hist", "ok")
                 _cache_set(cache_key, result, ttl=60)
                 return result
         except Exception as e:
+            record_provider_outcome("eastmoney-hk-hist", "fail", f"{type(e).__name__}: {e}")
             logger.warning(f"[eastmoney-hk-hist] failed for {symbol}: {e}")
 
     # akshare
@@ -1924,17 +1943,26 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
                 record_provider_outcome("akshare-cn-hist", "ok")
 
         elif _is_hk_symbol(symbol):
+            hk_error: str | None = None
+            try:
 
-            def hist_fn():
-                return ak.stock_hk_hist(
-                    symbol=_hk_akshare_code(symbol),
-                    period="daily",
-                    start_date=start_date,
-                    end_date=end_date,
-                    adjust="qfq",
-                )
+                def hist_fn():
+                    return ak.stock_hk_hist(
+                        symbol=_hk_akshare_code(symbol),
+                        period="daily",
+                        start_date=start_date,
+                        end_date=end_date,
+                        adjust="qfq",
+                    )
 
-            df = await asyncio.to_thread(hist_fn)
+                df = await asyncio.to_thread(hist_fn)
+            except Exception as e:
+                logger.warning(f"[akshare-hist] HK failed for {symbol}: {e}")
+                hk_error = f"{type(e).__name__}: {e}"
+            if df is None or df.empty:
+                record_provider_outcome("akshare-hk-hist", "fail", hk_error or "empty HK frame")
+            else:
+                record_provider_outcome("akshare-hk-hist", "ok")
 
         else:
             # US: Sina daily is the CN-server-viable source (verified live
@@ -1944,8 +1972,10 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
             sina = await _sina_us_hist(symbol, period)
             if sina and sina.get("dates"):
                 result = {"symbol": symbol, "period": period, **sina}
+                record_provider_outcome("sina-us-hist", "ok")
                 _cache_set(cache_key, result, ttl=60)
                 return result
+            record_provider_outcome("sina-us-hist", "fail", "no dates")
 
         if df is not None and not df.empty:
             col_map = {
@@ -2004,9 +2034,12 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
                     "close": quotes.get("close", []),
                     "volume": quotes.get("volume", []),
                 }
+                record_provider_outcome("yahoo-api-hist", "ok")
                 _cache_set(cache_key, result, ttl=60)
                 return result
+        record_provider_outcome("yahoo-api-hist", "fail", "no chart data")
     except Exception as e:
+        record_provider_outcome("yahoo-api-hist", "fail", f"{type(e).__name__}: {e}")
         logger.warning(f"[yahoo-api-hist] failed for {symbol}: {e}")
 
     # Stooq free CSV (last resort; accessible from CN where Yahoo blocks)
@@ -2041,9 +2074,12 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
                 "close": df["Close"].tolist(),
                 "volume": df["Volume"].tolist() if "Volume" in df else [],
             }
+            record_provider_outcome("stooq-hist", "ok")
             _cache_set(cache_key, result, ttl=60)
             return result
+        record_provider_outcome("stooq-hist", "fail", "no usable frame")
     except Exception as e:
+        record_provider_outcome("stooq-hist", "fail", f"{type(e).__name__}: {e}")
         logger.warning(f"[stooq-hist] failed for {symbol}: {e}")
 
     return {"error": f"All providers failed for {symbol}", "symbol": symbol}

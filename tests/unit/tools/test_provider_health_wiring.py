@@ -17,6 +17,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
+import requests
 
 import app.agents.data_agent as data_agent_mod
 import app.tools.data.fetcher as fetcher_mod
@@ -251,6 +252,178 @@ class TestFetchHistoricalWiring:
         providers = _providers()
         assert providers["akshare-cn-hist"]["ok"] == 1
         assert "tencent-cn-hist" not in providers
+
+
+class TestFetchHistoricalChainWiring:
+    """Every attempt layer of fetch_historical's US/HK fallback chain.
+
+    The CN branch records were iteration 101; these tests pin the remaining
+    seams: a provider that was never called (no key / earlier layer ok) is
+    never recorded, and every layer that does run records exactly one
+    outcome without touching the data path.
+    """
+
+    _FULL_DEATH_PROVIDERS = {
+        "yfinance-hist",
+        "finnhub-hist",
+        "alphavantage-hist",
+        "sina-us-hist",
+        "yahoo-api-hist",
+        "stooq-hist",
+    }
+
+    @staticmethod
+    def _install_healthy_yf(monkeypatch: pytest.MonkeyPatch) -> None:
+        class _Ticker:
+            def __init__(self, symbol: str) -> None:
+                pass
+
+            def history(self, **kwargs: Any) -> pd.DataFrame:
+                index = pd.to_datetime(list(_DATES))
+                return pd.DataFrame(
+                    {
+                        "Open": [10.0, 11.0, 12.0],
+                        "High": [10.5, 11.5, 12.5],
+                        "Low": [9.5, 10.5, 11.5],
+                        "Close": [10.2, 11.2, 12.2],
+                        "Volume": [1_000, 1_100, 1_200],
+                    },
+                    index=index,
+                )
+
+        monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=_Ticker))
+
+    @staticmethod
+    def _kill_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Sina answers nothing usable; Yahoo/Stooq HTTP is dead — every
+        layer below akshare fails without touching the network."""
+
+        async def _dead_sina(symbol: str, period: str = fetcher_mod.DEFAULT_HISTORY_PERIOD) -> None:
+            return None
+
+        def _dead_get(*args: Any, **kwargs: Any) -> Any:
+            raise requests.RequestException("blocked")
+
+        monkeypatch.setattr(fetcher_mod, "_sina_us_hist", _dead_sina)
+        monkeypatch.setattr(fetcher_mod.requests, "get", _dead_get)
+
+    @pytest.mark.asyncio
+    async def test_healthy_yfinance_records_ok_and_stops_chain(self, monkeypatch) -> None:
+        self._install_healthy_yf(monkeypatch)
+
+        result = await fetcher_mod.fetch_historical("AAPL", "3mo")
+
+        assert result["dates"] == list(_DATES)
+        assert result["close"] == [10.2, 11.2, 12.2]
+        providers = _providers()
+        assert set(providers) == {"yfinance-hist"}
+        assert providers["yfinance-hist"]["ok"] == 1
+
+    @pytest.mark.asyncio
+    async def test_full_chain_death_records_every_layer_fail(self, monkeypatch) -> None:
+        _install_ak(monkeypatch, _RecorderAk())  # dead yfinance; akshare importable
+        get_settings().finnhub_api_key = "test-key"
+        get_settings().alpha_vantage_key = "test-key"
+
+        async def _free_tier_no_candle(symbol: str, period: str) -> None:
+            return None  # /stock/candle is paid-only; nothing usable comes back
+
+        async def _thin_av(symbol: str, period: str) -> dict[str, Any]:
+            # free-tier cap shape: dates present, far short of the 3y window
+            return {
+                "dates": list(_DATES),
+                "open": [],
+                "high": [],
+                "low": [],
+                "close": [],
+                "volume": [],
+            }
+
+        monkeypatch.setattr(fetcher_mod, "_finnhub_historical", _free_tier_no_candle)
+        monkeypatch.setattr(fetcher_mod, "_alphavantage_historical", _thin_av)
+        self._kill_tail(monkeypatch)
+
+        result = await fetcher_mod.fetch_historical("AAPL", "3y")
+
+        assert result == {"error": "All providers failed for AAPL", "symbol": "AAPL"}
+        providers = _providers()
+        assert set(providers) == self._FULL_DEATH_PROVIDERS
+        for name in self._FULL_DEATH_PROVIDERS:
+            assert providers[name]["fail"] == 1, name
+            assert providers[name]["ok"] == 0, name
+        assert providers["yfinance-hist"]["last_error"] == "RuntimeError: Too Many Requests"
+        assert providers["finnhub-hist"]["last_error"] == "no dates"
+        assert (
+            providers["alphavantage-hist"]["last_error"] == "coverage gate: 3 bars cannot cover 3y"
+        )
+        assert "RequestException" in providers["yahoo-api-hist"]["last_error"]
+        assert "RequestException" in providers["stooq-hist"]["last_error"]
+
+    @pytest.mark.asyncio
+    async def test_missing_api_keys_leave_keyed_layers_unrecorded(self, monkeypatch) -> None:
+        _install_ak(monkeypatch, _RecorderAk())  # keys stay None via the autouse fixture
+        self._kill_tail(monkeypatch)
+
+        result = await fetcher_mod.fetch_historical("AAPL", "3y")
+
+        assert result["error"].startswith("All providers failed")
+        providers = _providers()
+        assert set(providers) == {"yfinance-hist", "sina-us-hist", "yahoo-api-hist", "stooq-hist"}
+
+    @pytest.mark.asyncio
+    async def test_sina_ok_stops_chain_before_yahoo_and_stooq(self, monkeypatch) -> None:
+        _install_ak(monkeypatch, _RecorderAk())
+
+        async def _live_sina(
+            symbol: str, period: str = fetcher_mod.DEFAULT_HISTORY_PERIOD
+        ) -> dict[str, Any]:
+            return {
+                "dates": list(_DATES),
+                "open": [10.0, 11.0, 12.0],
+                "high": [10.5, 11.5, 12.5],
+                "low": [9.5, 10.5, 11.5],
+                "close": [10.2, 11.2, 12.2],
+                "volume": [1_000, 1_100, 1_200],
+            }
+
+        monkeypatch.setattr(fetcher_mod, "_sina_us_hist", _live_sina)
+        monkeypatch.setattr(
+            fetcher_mod.requests,
+            "get",
+            lambda *args, **kwargs: pytest.fail("yahoo/stooq must not be called"),
+        )
+
+        result = await fetcher_mod.fetch_historical("AAPL", "3y")
+
+        assert result["dates"] == list(_DATES)
+        providers = _providers()
+        assert set(providers) == {"yfinance-hist", "sina-us-hist"}
+        assert providers["sina-us-hist"]["ok"] == 1
+
+    @pytest.mark.asyncio
+    async def test_hk_tencent_fail_akshare_hk_catches(self, monkeypatch) -> None:
+        module = types.ModuleType("akshare")
+        module.stock_hk_hist = lambda **kwargs: _em_frame()  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "akshare", module)
+        monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=_DeadYf.Ticker))
+
+        async def _tencent_dead(symbol: str) -> None:
+            raise ConnectionError("HK quote drop")
+
+        monkeypatch.setattr(fetcher_mod, "_tencent_hk_fetch", _tencent_dead)
+        monkeypatch.setattr(fetcher_mod, "_eastmoney_hk_klines", lambda *args: [])
+
+        result = await fetcher_mod.fetch_historical("0700.HK", "3y")
+
+        assert result["dates"] == list(_DATES)
+        providers = _providers()
+        assert set(providers) == {"yfinance-hist", "tencent-hk-hist", "akshare-hk-hist"}
+        assert providers["tencent-hk-hist"]["fail"] == 1
+        assert "ConnectionError" in providers["tencent-hk-hist"]["last_error"]
+        assert providers["akshare-hk-hist"]["ok"] == 1
+        # eastmoney answered with no klines (and no exception): per the HK
+        # seam's ok/exception wiring the no-klines fall-through records nothing.
+        assert "eastmoney-hk-hist" not in providers
 
 
 class TestFetchStockDataLoopWiring:
