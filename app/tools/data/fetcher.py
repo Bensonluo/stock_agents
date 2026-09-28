@@ -13,6 +13,7 @@ import pandas as pd
 import requests
 
 from app.config import get_settings
+from app.tools.data.tencent_benchmark import tencent_index_history
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -159,12 +160,21 @@ def _sync_fetch_benchmark_history(yahoo_symbol: str) -> dict[str, Any] | None:
     ``aligned_returns`` regresses against (same as historical_data)."""
     import yfinance as yf
 
-    df = yf.Ticker(yahoo_symbol).history(period=BENCHMARK_HISTORY_PERIOD, interval="1d")
+    try:
+        df = yf.Ticker(yahoo_symbol).history(period=BENCHMARK_HISTORY_PERIOD, interval="1d")
+    except Exception:
+        # Rate-limited yfinance (the production CN host's documented state
+        # since 2026-09-25) raises before any frame exists — the Tencent
+        # fallback below is the seam that keeps benchmarks alive.
+        df = pd.DataFrame()
     if df.empty or "Close" not in df.columns:
-        return None
+        # yfinance dark → Tencent kline for the two market indexes; same
+        # {symbol, dates, close} contract. Tencent failing too keeps the
+        # None semantics (fail-uncached, retried next invocation).
+        return tencent_index_history(yahoo_symbol)
     dates = [d.strftime("%Y-%m-%d") for d in df.index]
     if not dates:
-        return None
+        return tencent_index_history(yahoo_symbol)
     return {"symbol": yahoo_symbol, "dates": dates, "close": [float(c) for c in df["Close"]]}
 
 
