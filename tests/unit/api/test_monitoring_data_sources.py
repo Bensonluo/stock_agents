@@ -6,6 +6,8 @@ under test is mounted alone so no other route's dependencies leak in.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -47,3 +49,15 @@ def test_data_sources_empty_snapshot_is_still_200(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json()["providers"] == {}
+
+
+def test_monitoring_reset_returns_iso_timestamp(client: TestClient) -> None:
+    """POST /reset once bound its timestamp field to the module logger object,
+    which jsonable_encoder cannot serialize -- the endpoint 500ed on every
+    call. The timestamp must be a parseable ISO string."""
+    response = client.post("/api/monitoring/reset")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "reset"
+    datetime.fromisoformat(body["timestamp"])

@@ -1,5 +1,7 @@
 """Monitoring and metrics endpoints."""
 
+from datetime import datetime
+
 from fastapi import APIRouter, Query
 
 from app.monitoring import AlertSeverity, get_monitor
@@ -211,7 +213,7 @@ async def reset_monitoring():
 
     return {
         "status": "reset",
-        "timestamp": logger,
+        "timestamp": datetime.now().isoformat(),
     }
 
 
