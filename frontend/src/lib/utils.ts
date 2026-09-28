@@ -155,6 +155,12 @@ export const API = {
     return response.json() as Promise<SystemHealth>
   },
 
+  getDataSourceHealth: async () => {
+    const response = await fetch(`${API_BASE_URL}/api/monitoring/data-sources`)
+    if (!response.ok) throw new Error('Failed to get data source health')
+    return response.json() as Promise<DataSourceHealthResponse>
+  },
+
   getMetrics: async (agentName?: string) => {
     const response = await fetch(
       `${API_BASE_URL}/api/monitoring/metrics${agentName ? `?agent_name=${agentName}` : ''}`
@@ -496,6 +502,24 @@ export interface ConfidenceCalibrationResponse {
   brier_skill_score?: number | null
   reliability?: ReliabilityBin[]
   execution_time?: number
+}
+
+// Per-provider outcome counters for the data chain's fallback seams.
+// In-process state: providers appear only after their first recorded call,
+// and every counter resets when the backend process restarts.
+export interface ProviderHealthStats {
+  total_calls: number
+  ok: number
+  fail: number
+  fallback: number
+  last_ok_at: string | null
+  last_error: string | null
+  last_error_at: string | null
+}
+
+export interface DataSourceHealthResponse {
+  providers: Record<string, ProviderHealthStats>
+  generated_at: string
 }
 
 export interface SystemHealth {

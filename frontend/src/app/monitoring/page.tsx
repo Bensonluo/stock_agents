@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { cn, API } from '@/lib/utils'
-import type { ReactProgressResponse } from '@/lib/utils'
+import type { ReactProgressResponse, DataSourceHealthResponse, ProviderHealthStats } from '@/lib/utils'
 import {
   Database, TrendingUp, BarChart3, MessageSquare, Shield, Brain, FileText,
   Loader2, CheckCircle2, XCircle, Clock, ArrowLeft, Wrench, Zap
@@ -40,6 +40,10 @@ interface WorkflowState {
   agents: Record<string, AgentState>
   current_agent: string | null
   running_agents?: string[]
+  // Synthesized join annotation from the workflow status API; currently
+  // "analysis_barrier" while the parallel analysis superstep has fully
+  // settled but risk_assessment has not started. Null/absent otherwise.
+  phase?: string | null
   progress: number
   updated_at: string
 }
@@ -225,12 +229,97 @@ function ReactMonitor({ threadId }: { threadId: string }) {
   )
 }
 
+/* ── Data-source health panel ──────────────────────────────────── */
+
+type ProviderTone = 'healthy' | 'degraded' | 'down'
+
+function providerTone(stats: ProviderHealthStats): ProviderTone {
+  if (stats.fail === 0) return 'healthy'
+  if (stats.ok + stats.fallback === 0) return 'down'
+  return 'degraded'
+}
+
+const TONE_DOT: Record<ProviderTone, string> = {
+  healthy: 'bg-green-500',
+  degraded: 'bg-amber-500',
+  down: 'bg-red-500',
+}
+
+function relativeTime(iso: string | null): string | null {
+  if (!iso) return null
+  const ms = Date.now() - new Date(iso).getTime()
+  if (Number.isNaN(ms)) return null
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  if (seconds < 60) return `${seconds} 秒前`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} 分钟前`
+  return `${Math.floor(minutes / 60)} 小时前`
+}
+
+function DataSourceHealthPanel({ health }: { health: DataSourceHealthResponse | null }) {
+  const providers = Object.entries(health?.providers ?? {})
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <Database className="h-4 w-4" />
+            数据源健康
+          </span>
+          <Badge variant="outline">{providers.length} 个源</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {providers.length === 0 ? (
+          <p className="text-center py-4 text-sm text-muted-foreground">暂无记录</p>
+        ) : (
+          <div className="space-y-1">
+            {providers.map(([name, stats]) => {
+              const lastOk = relativeTime(stats.last_ok_at)
+              return (
+                <div key={name} className="py-1.5 border-b border-border/30 last:border-0">
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span className={cn('inline-block w-2 h-2 rounded-full shrink-0', TONE_DOT[providerTone(stats)])} />
+                      <span className="font-mono truncate">{name}</span>
+                    </span>
+                    <span className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-green-600">成功 {stats.ok}</span>
+                      <span className="text-muted-foreground">·</span>
+                      <span className="text-amber-600">兜底 {stats.fallback}</span>
+                      <span className="text-muted-foreground">·</span>
+                      <span className="text-red-500">失败 {stats.fail}</span>
+                      {lastOk && (
+                        <>
+                          <span className="text-muted-foreground">·</span>
+                          <span className="text-muted-foreground" title="最后成功时间">{lastOk}</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  {stats.last_error && (
+                    <p className="mt-1 text-xs text-red-500/80 truncate" title={stats.last_error}>
+                      最近错误: {stats.last_error}
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <p className="pt-2 text-[10px] text-muted-foreground">进程内计数，重启后清零</p>
+      </CardContent>
+    </Card>
+  )
+}
+
 /* ── Pipeline Monitoring View (original) ───────────────────────── */
 
 function PipelineMonitor({ threadId }: { threadId: string }) {
   const router = useRouter()
   const [workflow, setWorkflow] = useState<WorkflowState | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
+  const [dataSourceHealth, setDataSourceHealth] = useState<DataSourceHealthResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [polling, setPolling] = useState(true)
 
@@ -259,13 +348,25 @@ function PipelineMonitor({ threadId }: { threadId: string }) {
     } catch { /* ignore */ }
   }, [threadId])
 
+  const fetchDataSourceHealth = useCallback(async () => {
+    try {
+      const data = await API.getDataSourceHealth()
+      setDataSourceHealth(data)
+    } catch { /* keep the last snapshot; this panel is a side channel */ }
+  }, [])
+
   useEffect(() => {
     if (!threadId || !polling) return
     fetchWorkflow()
     fetchLogs()
-    const interval = setInterval(() => { fetchWorkflow(); fetchLogs() }, 1000)
+    fetchDataSourceHealth()
+    const interval = setInterval(() => {
+      fetchWorkflow()
+      fetchLogs()
+      fetchDataSourceHealth()
+    }, 1000)
     return () => clearInterval(interval)
-  }, [threadId, polling, fetchWorkflow, fetchLogs])
+  }, [threadId, polling, fetchWorkflow, fetchLogs, fetchDataSourceHealth])
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -336,6 +437,14 @@ function PipelineMonitor({ threadId }: { threadId: string }) {
                 ))}
               </div>
             )}
+            {workflow.phase === 'analysis_barrier' && (
+              <div className="mt-3">
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-xs text-amber-600">
+                  <Clock className="h-3 w-3" />
+                  并行分析汇合中
+                </span>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -371,6 +480,8 @@ function PipelineMonitor({ threadId }: { threadId: string }) {
           )
         })}
       </div>
+
+      <DataSourceHealthPanel health={dataSourceHealth} />
 
       <Card>
         <CardHeader className="pb-2">
