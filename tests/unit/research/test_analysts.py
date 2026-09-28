@@ -142,3 +142,24 @@ class TestAnalystPanel:
         result = asyncio.run(attach_analyst_panel(_synthesis(), llm=ExplodingLLM()))
 
         assert all("analysts" not in e for e in result["per_symbol"].values())
+
+    def test_empty_debate_does_not_kill_panel(self) -> None:
+        """debate.get("bull_points") without a default raised ``None + []``
+        TypeError inside _request_panel, degrading the panel for every symbol
+        at once. An entry whose debate carries no point lists must still
+        build its payload and attach a valid panel."""
+        synthesis = _synthesis()
+        synthesis["per_symbol"]["AAPL"]["debate"] = {}  # no bull/bear point lists
+
+        panel = {
+            "AAPL": {
+                "technical": {
+                    "view": "Thin debate, no evidence refs.",
+                    "cites": ["deterministic_synthesis"],
+                }
+            }
+        }
+
+        result = asyncio.run(attach_analyst_panel(synthesis, llm=_llm_responding(panel)))
+
+        assert "technical" in result["per_symbol"]["AAPL"]["analysts"]

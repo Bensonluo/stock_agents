@@ -87,7 +87,7 @@ async def _request_panel(synthesis: dict[str, Any], llm: Any) -> dict[str, dict[
         refs = sorted(
             {
                 point["evidence_ref"]
-                for point in (debate.get("bull_points") + debate.get("bear_points", []))
+                for point in (debate.get("bull_points", []) + debate.get("bear_points", []))
             }
         )
         payloads[symbol] = {
