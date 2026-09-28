@@ -184,9 +184,13 @@ async def run_backtest(request: BacktestRequest) -> BacktestResponse:
             execution_time=execution_time,
         )
 
+    except ValueError as e:
+        # Semantic engine rejection (unknown strategy param, no data for the
+        # window, ...) — a client error, same mapping as the /v2 routes.
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/strategies")

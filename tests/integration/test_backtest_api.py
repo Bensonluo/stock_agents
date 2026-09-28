@@ -98,3 +98,37 @@ def test_run_endpoint_rejects_unknown_fields_without_calling_service(
 
     assert response.status_code == 422
     run_backtest.assert_not_awaited()
+
+
+def _run_payload() -> dict:
+    return {
+        "symbol": "AAPL",
+        "strategy": "buy_and_hold",
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+    }
+
+
+def test_run_endpoint_maps_engine_value_errors_to_422(
+    backtest_client: tuple[TestClient, AsyncMock],
+) -> None:
+    """Semantic engine rejections (bad params, no data) are client errors, not 500s."""
+    client, run_backtest = backtest_client
+    run_backtest.side_effect = ValueError("No data available for AAPL")
+
+    response = client.post("/api/backtest/run", json=_run_payload())
+
+    assert response.status_code == 422
+    assert "No data available for AAPL" in response.json()["detail"]
+
+
+def test_run_endpoint_keeps_internal_bugs_as_500(
+    backtest_client: tuple[TestClient, AsyncMock],
+) -> None:
+    """Only ValueError maps to 422; engine bugs (TypeError/KeyError) stay 500."""
+    client, run_backtest = backtest_client
+    run_backtest.side_effect = KeyError("equity column missing")
+
+    response = client.post("/api/backtest/run", json=_run_payload())
+
+    assert response.status_code == 500
