@@ -1198,55 +1198,63 @@ function ReactReport({ answer, report: structuredReport }: {
                         </ResponsiveContainer>
                       </div>
                     )}
-                    <div className="flex justify-between"><span className="text-slate-500">趋势</span><span className={trendColor(t.trend)}>{trendZh(t.trend)}</span></div>
-                    {t.adx != null && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">趋势强度</span>
-                        <span className={cn('font-medium', t.trend_strength === 'strong' || t.trend_strength === 'very_strong' ? 'text-green-600' : t.trend_strength === 'developing' ? 'text-amber-600' : 'text-slate-500')}>
-                          {t.trend_strength === 'very_strong' ? '极强' : t.trend_strength === 'strong' ? '强势' : t.trend_strength === 'developing' ? '形成中' : '偏弱（区间）'}
-                          <span className="ml-1.5 font-normal text-slate-400">ADX {t.adx.toFixed(1)}</span>
-                        </span>
-                      </div>
+                    {t.status ? (
+                      <p className="text-xs text-amber-600">
+                        ⚠ 行情数据不可用（{t.status === 'insufficient_data' ? '历史数据不足' : '未获取到行情数据'}），未生成技术分析
+                      </p>
+                    ) : (
+                      <>
+                        <div className="flex justify-between"><span className="text-slate-500">趋势</span><span className={trendColor(t.trend)}>{trendZh(t.trend)}</span></div>
+                        {t.adx != null && (
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">趋势强度</span>
+                            <span className={cn('font-medium', t.trend_strength === 'strong' || t.trend_strength === 'very_strong' ? 'text-green-600' : t.trend_strength === 'developing' ? 'text-amber-600' : 'text-slate-500')}>
+                              {t.trend_strength === 'very_strong' ? '极强' : t.trend_strength === 'strong' ? '强势' : t.trend_strength === 'developing' ? '形成中' : '偏弱（区间）'}
+                              <span className="ml-1.5 font-normal text-slate-400">ADX {t.adx.toFixed(1)}</span>
+                            </span>
+                          </div>
+                        )}
+                        {t.macd != null && (
+                          <div className="flex justify-between"><span className="text-slate-500">MACD</span><span className={trendColor(t.macd)}>{trendZh(t.macd)}</span></div>
+                        )}
+                        <div className="flex justify-between"><span className="text-slate-500">RSI</span><span className={trendColor(t.rsi)}>{trendZh(t.rsi)}</span></div>
+                        {(t.support?.s1 != null || t.resistance?.r1 != null) && (
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">支撑 / 压力</span>
+                            <span className="font-medium">
+                              <span className="text-green-700">{t.support?.s1 != null ? formatNumber(t.support.s1) : '-'}</span>
+                              {' / '}
+                              <span className="text-red-700">{t.resistance?.r1 != null ? formatNumber(t.resistance.r1) : '-'}</span>
+                            </span>
+                          </div>
+                        )}
+                        {t.freshness?.stale && (
+                          <p className="text-xs text-amber-600">⚠ 数据截至 {t.freshness.as_of}（{t.freshness.age_days} 天前，已陈旧）</p>
+                        )}
+                        <div className="flex justify-between"><span className="text-slate-500">情绪分</span><span className={cn('font-medium', (t.sentiment_score || 0) >= 0 ? 'text-green-600' : 'text-red-600')}>{formatNumber(t.sentiment_score, 0)}</span></div>
+                        {alignment && !['insufficient_data', 'unknown'].includes(alignment) && (
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">周线排列</span>
+                            <span className={trendColor(alignment)}>
+                              {alignment === 'bullish' ? '多头' : alignment === 'bearish' ? '空头' : '缠绕'}
+                              {weekly.alignment.weeks_in_state ? ` · ${weekly.alignment.weeks_in_state} 周` : ''}
+                            </span>
+                          </div>
+                        )}
+                        {weekly.status === 'insufficient_data' && (
+                          <div className="flex justify-between"><span className="text-slate-500">周线排列</span><span className="text-slate-400">数据不足</span></div>
+                        )}
+                        {crosses.map(([pair, cross]: [string, any]) => cross?.direction && (
+                          <div key={pair} className="flex justify-between">
+                            <span className="text-slate-500">交叉 {pair.replace('_', '/')}</span>
+                            <span className={cross.direction === 'golden' ? 'text-green-600' : 'text-red-600'}>
+                              {cross.direction === 'golden' ? '金叉' : '死叉'}
+                              {cross.weeks_since != null ? ` · ${cross.weeks_since} 周前` : ''}
+                            </span>
+                          </div>
+                        ))}
+                      </>
                     )}
-                    {t.macd != null && (
-                      <div className="flex justify-between"><span className="text-slate-500">MACD</span><span className={trendColor(t.macd)}>{trendZh(t.macd)}</span></div>
-                    )}
-                    <div className="flex justify-between"><span className="text-slate-500">RSI</span><span className={trendColor(t.rsi)}>{trendZh(t.rsi)}</span></div>
-                    {(t.support?.s1 != null || t.resistance?.r1 != null) && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">支撑 / 压力</span>
-                        <span className="font-medium">
-                          <span className="text-green-700">{t.support?.s1 != null ? formatNumber(t.support.s1) : '-'}</span>
-                          {' / '}
-                          <span className="text-red-700">{t.resistance?.r1 != null ? formatNumber(t.resistance.r1) : '-'}</span>
-                        </span>
-                      </div>
-                    )}
-                    {t.freshness?.stale && (
-                      <p className="text-xs text-amber-600">⚠ 数据截至 {t.freshness.as_of}（{t.freshness.age_days} 天前，已陈旧）</p>
-                    )}
-                    <div className="flex justify-between"><span className="text-slate-500">情绪分</span><span className={cn('font-medium', (t.sentiment_score || 0) >= 0 ? 'text-green-600' : 'text-red-600')}>{formatNumber(t.sentiment_score, 0)}</span></div>
-                    {alignment && !['insufficient_data', 'unknown'].includes(alignment) && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">周线排列</span>
-                        <span className={trendColor(alignment)}>
-                          {alignment === 'bullish' ? '多头' : alignment === 'bearish' ? '空头' : '缠绕'}
-                          {weekly.alignment.weeks_in_state ? ` · ${weekly.alignment.weeks_in_state} 周` : ''}
-                        </span>
-                      </div>
-                    )}
-                    {weekly.status === 'insufficient_data' && (
-                      <div className="flex justify-between"><span className="text-slate-500">周线排列</span><span className="text-slate-400">数据不足</span></div>
-                    )}
-                    {crosses.map(([pair, cross]: [string, any]) => cross?.direction && (
-                      <div key={pair} className="flex justify-between">
-                        <span className="text-slate-500">交叉 {pair.replace('_', '/')}</span>
-                        <span className={cross.direction === 'golden' ? 'text-green-600' : 'text-red-600'}>
-                          {cross.direction === 'golden' ? '金叉' : '死叉'}
-                          {cross.weeks_since != null ? ` · ${cross.weeks_since} 周前` : ''}
-                        </span>
-                      </div>
-                    ))}
                   </div>
                 )
               })}

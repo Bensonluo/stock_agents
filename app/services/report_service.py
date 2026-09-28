@@ -188,6 +188,12 @@ class ReportService:
                 "sentiment_score": score,
                 "weekly_trend": compact_weekly_view(analysis.get("weekly_sma")),
             }
+            # Degraded entries (no bars / insufficient history) must not read
+            # as a real neutral verdict on the wire — the frontend renders an
+            # outage line for them. Healthy entries omit the key (the same
+            # optional-key convention as freshness and the sparkline).
+            if analysis.get("status", "available") != "available" or not signals:
+                entry["status"] = analysis.get("status") or "unavailable"
             # Stale feeds (suspension, broken source) must be visible in the
             # final report, not silently presented as current signals.
             freshness = analysis.get("freshness")
