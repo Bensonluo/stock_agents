@@ -156,6 +156,14 @@ export const API = {
     return response.json() as Promise<ConfidenceCalibrationResponse>
   },
 
+  getTopKPortfolio: async (horizonBars = 20, topK = 1) => {
+    const response = await fetch(
+      `${API_BASE_URL}/api/history/portfolio?horizon_bars=${horizonBars}&top_k=${topK}`
+    )
+    if (!response.ok) throw new Error('Failed to get top-k portfolio')
+    return response.json() as Promise<TopKPortfolioResponse>
+  },
+
   // Monitoring endpoints
   getHealth: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/health`)
@@ -541,6 +549,34 @@ export interface ConfidenceCalibrationResponse {
   brier_score?: number | null
   brier_skill_score?: number | null
   reliability?: ReliabilityBin[]
+  execution_time?: number
+}
+
+export interface TopKPortfolioResponse {
+  method: string
+  top_k: number
+  horizon_bars: number
+  records_examined: number
+  runs_evaluated: number
+  runs_pending_maturity: number
+  runs_skipped: number
+  runs_duplicate: number
+  runs_narrow: number
+  caveat: string
+  status: 'ok' | 'insufficient_history'
+  excess_mean?: number
+  excess_std?: number | null
+  excess_t_stat?: number | null
+  hit_rate?: number
+  per_run: Array<{
+    thread_id: string
+    date: string
+    symbols: number
+    top_return: number
+    baseline_return: number
+    excess: number
+    regime_trend?: string | null
+  }>
   execution_time?: number
 }
 

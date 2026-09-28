@@ -19,6 +19,7 @@ from app.services.ic_service import (
     evaluate_decision_ic,
     evaluate_ic_decay,
     evaluate_regime_conditional_ic,
+    evaluate_topk_portfolio,
 )
 from app.storage.database import AnalysisRecord, get_database
 
@@ -322,6 +323,35 @@ async def decision_ic_by_regime(
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001
         logger.error(f"[History API] 状态条件 IC 评估失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/portfolio")
+async def topk_portfolio(
+    horizon_bars: int = Query(20, ge=1, le=250, description="前向窗口（交易日数）"),
+    top_k: int = Query(1, ge=1, le=10, description="按复合分取前 k 名等权持有"),
+    limit: int = Query(200, ge=1, le=1000, description="检查的最近完成记录数"),
+):
+    """
+    决策层信号质量：top-k 等权组合 vs 全截面等权基准
+
+    IC 回答「排序准不准」，这里回答「照着排序做会怎样」：每个历史 run
+    按复合分取前 k 名等权持有 horizon_bars 个交易日，与等权持有全部
+    有分标的的基准比较超额收益。截面不足 k+1 个标的的 run 记
+    runs_narrow（排序无可执行空间），不伪造零超额。成本/滑点未计
+    （caveat 披露）。历史不足时如实 insufficient_history。
+    """
+    from time import time
+
+    start = time()
+    try:
+        result = await evaluate_topk_portfolio(top_k=top_k, horizon_bars=horizon_bars, limit=limit)
+        result["execution_time"] = round(time() - start, 3)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[History API] top-k 组合评估失败: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

@@ -18,6 +18,7 @@ import {
   type ICDecayResponse,
   type RegimeBinSummary,
   type RegimeConditionalICResponse,
+  type TopKPortfolioResponse,
 } from '@/lib/utils'
 
 const HORIZONS = [
@@ -49,6 +50,7 @@ export function SignalQualityCard() {
   const [decay, setDecay] = useState<ICDecayResponse | null>(null)
   const [calib, setCalib] = useState<ConfidenceCalibrationResponse | null>(null)
   const [regimeIc, setRegimeIc] = useState<RegimeConditionalICResponse | null>(null)
+  const [topk, setTopk] = useState<TopKPortfolioResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -65,6 +67,11 @@ export function SignalQualityCard() {
     void API.getRegimeConditionalIC(parseInt(h))
       .then(setRegimeIc)
       .catch(() => setRegimeIc(null))
+    // The money-terms view shares the horizon as well; quiet on failure —
+    // the ranking views render fine without it.
+    void API.getTopKPortfolio(parseInt(h))
+      .then(setTopk)
+      .catch(() => setTopk(null))
     try {
       setIc(await API.getDecisionIC(parseInt(h)))
     } catch {
@@ -446,6 +453,91 @@ export function SignalQualityCard() {
             </div>
           </div>
         )}
+        {topk && topk.status === 'ok' && typeof topk.excess_mean === 'number' ? (
+          <div className="space-y-2 border-t pt-3">
+            <div className="text-xs font-medium text-muted-foreground">
+              照做收益 · 前 {topk.top_k} 名等权 vs 全截面等权（{topk.horizon_bars} 交易日）
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              <span
+                className={
+                  topk.excess_mean > 0
+                    ? 'font-semibold text-emerald-600 dark:text-emerald-400'
+                    : topk.excess_mean < 0
+                      ? 'font-semibold text-red-500'
+                      : 'font-semibold'
+                }
+              >
+                平均超额 {(topk.excess_mean * 100).toFixed(2)}%
+              </span>
+              <span className="text-muted-foreground">
+                跑赢基准 run 占比{' '}
+                {typeof topk.hit_rate === 'number' ? `${(topk.hit_rate * 100).toFixed(0)}%` : '—'}
+              </span>
+              {typeof topk.excess_t_stat === 'number' && (
+                <span className="text-muted-foreground">
+                  t{' '}
+                  <span
+                    className={
+                      topk.excess_t_stat >= 2
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : topk.excess_t_stat <= -2
+                          ? 'text-red-500'
+                          : ''
+                    }
+                  >
+                    {topk.excess_t_stat.toFixed(2)}
+                  </span>
+                </span>
+              )}
+            </div>
+            {topk.per_run.slice(-6).reverse().map((run) => (
+              <div
+                key={run.thread_id}
+                className="flex items-center justify-between text-xs py-1 border-b border-border/40 last:border-0"
+              >
+                <span className="text-muted-foreground">
+                  {run.date} · {run.symbols} 标的
+                  {run.regime_trend
+                    ? ` · ${REGIME_BIN_LABELS[run.regime_trend] ?? run.regime_trend}`
+                    : ''}
+                </span>
+                <span
+                  className={
+                    run.excess > 0
+                      ? 'font-semibold text-emerald-600 dark:text-emerald-400'
+                      : run.excess < 0
+                        ? 'font-semibold text-red-500'
+                        : 'font-semibold'
+                  }
+                >
+                  照做 {(run.top_return * 100).toFixed(2)}% vs 基准{' '}
+                  {(run.baseline_return * 100).toFixed(2)}% → {run.excess >= 0 ? '+' : ''}
+                  {(run.excess * 100).toFixed(2)}pp
+                </span>
+              </div>
+            ))}
+            <div className="text-xs text-muted-foreground">
+              {topk.runs_evaluated} 个 run 已评估
+              {topk.runs_pending_maturity > 0
+                ? ` · ${topk.runs_pending_maturity} 个待窗口成熟`
+                : ''}
+              {topk.runs_narrow > 0 ? ` · ${topk.runs_narrow} 个截面过窄（不足 k+1 标的）` : ''}
+              {topk.runs_duplicate > 0 ? ` · ${topk.runs_duplicate} 条重复已剔除` : ''}
+            </div>
+            <p className="text-[11px] text-muted-foreground/70">{topk.caveat}</p>
+          </div>
+        ) : topk ? (
+          <div className="space-y-1 border-t pt-3">
+            <p className="text-sm text-amber-600 dark:text-amber-400">历史尚不足以核算照做收益</p>
+            <p className="text-xs text-muted-foreground">
+              需要 ≥{topk.top_k + 1} 个有分标的、前向窗口已成熟的 run 累计至少 2 个。当前{' '}
+              {topk.records_examined} 条记录：{topk.runs_evaluated} 条已评估、
+              {topk.runs_pending_maturity} 条待成熟、{topk.runs_narrow} 条截面过窄。多标的 run
+              积累后此处自动点亮。
+            </p>
+          </div>
+        ) : null}
         {ic && (
           <p className="text-[11px] text-muted-foreground/70 border-t pt-2">{ic.caveat}</p>
         )}

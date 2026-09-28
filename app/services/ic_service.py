@@ -21,6 +21,8 @@ import hashlib
 import json
 from bisect import bisect_left
 from collections.abc import Awaitable, Callable
+from math import sqrt
+from statistics import fmean, stdev
 from time import monotonic
 from typing import Any
 
@@ -67,6 +69,12 @@ CAVEAT = (
 CALIBRATION_CAVEAT = (
     CAVEAT + " Confidence is a heuristic composite, not a fitted probability; "
     "Brier here measures how far it is from behaving like one."
+)
+
+PORTFOLIO_CAVEAT = (
+    CAVEAT + " Excess is gross of costs, taxes and slippage, measured on daily "
+    "closes against an equal-weight whole-cross-section baseline; it prices "
+    "the ranking, not a tradable strategy."
 )
 
 # Replay price fetches are evaluation reads of daily data. The shared
@@ -278,6 +286,13 @@ async def _replay(
                     "symbols": len(forward),
                     "ic": ic,
                     "regime_trend": regime_trend,
+                    # The measured cross-section (score + forward return per
+                    # symbol) the top-k portfolio view acts on. Internal-only
+                    # key: _bucket_payload strips it from the API's per_run
+                    # rows so IC responses stay lean.
+                    "legs": [
+                        {"symbol": s, "score": scores[s], "forward": f} for s, f in forward.items()
+                    ],
                 }
             )
 
@@ -308,7 +323,9 @@ def _bucket_payload(
         "runs_skipped": bucket["skipped"],
         "runs_other_vintage": bucket["vintage_excluded"],
         "runs_duplicate": bucket["duplicates"],
-        "per_run": bucket["evaluated"][-20:],
+        "per_run": [
+            {k: v for k, v in run.items() if k != "legs"} for run in bucket["evaluated"][-20:]
+        ],
     }
     if with_dimensions:
         payload["dimensions"] = {
@@ -596,6 +613,82 @@ async def evaluate_confidence_calibration(
         reliability=reliability_curve(pairs),
         status="ok",
     )
+    return payload
+
+
+async def evaluate_topk_portfolio(
+    *,
+    top_k: int = 1,
+    horizon_bars: int = 20,
+    limit: int = 200,
+    records: list[AnalysisRecord] | None = None,
+    fetch_history: HistoryFetcher | None = None,
+) -> dict[str, Any]:
+    """Money-terms sibling of the rank IC: hold the top-k scored names
+    equal-weight; benchmark against the equal-weight whole cross-section.
+
+    Same replay discipline as the IC view (per-horizon maturity, duplicate
+    collapse, vintage-free display view) over the same forward returns; only
+    the unit of analysis changes — from "did the ordering correlate" to "what
+    did acting on the top of the ordering yield". A cross-section of n <= top_k
+    symbols has no ranking edge to act on (the pick IS the market), so the run
+    tallies ``runs_narrow`` instead of fabricating a zero excess.
+    """
+    if horizon_bars <= 0:
+        raise ValueError("horizon_bars must be positive")
+    if top_k <= 0:
+        raise ValueError("top_k must be positive")
+
+    records, fetch_history = _resolve_inputs(records, limit, fetch_history)
+    bucket = (await _replay([horizon_bars], records, fetch_history))[horizon_bars]
+
+    per_run: list[dict[str, Any]] = []
+    excesses: list[float] = []
+    runs_narrow = 0
+    for run in bucket["evaluated"]:
+        legs = run["legs"]
+        if len(legs) <= top_k:
+            runs_narrow += 1
+            continue
+        ranked = sorted(legs, key=lambda leg: leg["score"], reverse=True)
+        top_return = fmean([leg["forward"] for leg in ranked[:top_k]])
+        baseline_return = fmean([leg["forward"] for leg in ranked])
+        excess = top_return - baseline_return
+        excesses.append(excess)
+        per_run.append(
+            {
+                "thread_id": run["thread_id"],
+                "date": run["date"],
+                "symbols": len(legs),
+                "top_return": top_return,
+                "baseline_return": baseline_return,
+                "excess": excess,
+                "regime_trend": run["regime_trend"],
+            }
+        )
+
+    payload: dict[str, Any] = {
+        "method": "topk_equal_weight_excess",
+        "top_k": top_k,
+        "horizon_bars": horizon_bars,
+        "records_examined": len(records),
+        "runs_evaluated": len(excesses),
+        "runs_pending_maturity": bucket["pending"],
+        "runs_skipped": bucket["skipped"],
+        "runs_duplicate": bucket["duplicates"],
+        "runs_narrow": runs_narrow,
+        "per_run": per_run[-20:],
+        "caveat": PORTFOLIO_CAVEAT,
+    }
+    if excesses:
+        payload["excess_mean"] = fmean(excesses)
+        payload["hit_rate"] = sum(1 for e in excesses if e > 0) / len(excesses)
+    if len(excesses) >= 2:
+        std = stdev(excesses)
+        payload["excess_std"] = std
+        if std > 0:
+            payload["excess_t_stat"] = fmean(excesses) / std * sqrt(len(excesses))
+    payload["status"] = "ok" if len(excesses) >= MIN_IC_RUNS else "insufficient_history"
     return payload
 
 
