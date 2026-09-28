@@ -219,13 +219,13 @@ export const API = {
   getRetryStats: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/retry/stats`)
     if (!response.ok) throw new Error('Failed to get retry stats')
-    return response.json()
+    return response.json() as Promise<RetryStatsResponse>
   },
 
   getTimeoutStats: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/timeout/stats`)
     if (!response.ok) throw new Error('Failed to get timeout stats')
-    return response.json()
+    return response.json() as Promise<TimeoutStatsResponse>
   },
 
   resetCircuitBreaker: async (name?: string) => {
@@ -605,32 +605,83 @@ export interface DataSourceHealthResponse {
   generated_at: string
 }
 
+// System-wide agent monitor overview (GET /api/monitoring/health — the
+// monitor's get_system_overview). In-process counters: agents appear as they
+// register executions, and everything resets when the backend restarts.
 export interface SystemHealth {
-  status: string
-  agents: Record<string, AgentHealth>
-  uptime: number
   timestamp: string
+  total_agents: number
+  total_executions: number
+  total_successful: number
+  total_failed: number
+  total_timeout: number
+  overall_success_rate: number
+  avg_health_score: number
+  agents_health: Record<string, number>
+  unhealthy_agents: string[]
+  recent_events: MonitorEvent[]
+  active_alerts: MonitorAlert[]
 }
 
-export interface AgentHealth {
-  health_score: number
+export interface MonitorEvent {
+  event_type: string
+  agent: string
+  timestamp: string
+  data?: Record<string, unknown>
+}
+
+export interface MonitorAlert {
+  alert_id: string
+  severity: 'low' | 'medium' | 'high' | 'critical'
+  type: string
+  agent: string
+  message: string
+  timestamp: string
+  metadata?: Record<string, unknown>
+}
+
+// Per-agent circuit breaker state (GET /api/monitoring/circuit-breakers —
+// registry.get_all_stats). failure_rate is a 0-1 fraction.
+export interface CircuitBreakerStats {
+  name: string
+  state: 'CLOSED' | 'OPEN' | 'HALF_OPEN'
   total_calls: number
   successful_calls: number
   failed_calls: number
-  success_rate: number
-  avg_latency: number
-  p95_latency: number
-  p99_latency: number
-  last_error?: string
+  failure_rate: number
+  last_failure_time: string | null
+  last_state_change: string | null
+  opened_count: number
+  config: { failure_threshold: number; success_threshold: number; timeout: number }
 }
 
 export interface CircuitBreakersResponse {
-  [agentName: string]: {
-    state: 'CLOSED' | 'OPEN' | 'HALF_OPEN'
-    failure_count: number
-    success_count: number
-    last_failure_time?: string
-    last_success_time?: string
+  [agentName: string]: CircuitBreakerStats
+}
+
+// Retry manager statistics (GET /api/monitoring/retry/stats). success_rate /
+// avg_delay are absent when the retry history is empty (flat-zero shape).
+export interface RetryStatsResponse {
+  total_retries: number
+  successful_retries: number
+  failed_retries: number
+  success_rate?: number
+  avg_attempts: number
+  total_delay: number
+  avg_delay?: number
+}
+
+// Per-operation timeout statistics (GET /api/monitoring/timeout/stats).
+// timeout_rate is a 0-1 fraction.
+export interface TimeoutStatsResponse {
+  [operation: string]: {
+    total_calls: number
+    completed_calls: number
+    timeout_calls: number
+    error_calls: number
+    avg_execution_time: number
+    max_execution_time: number
+    timeout_rate: number
   }
 }
 
