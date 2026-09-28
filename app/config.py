@@ -58,7 +58,11 @@ class Settings(BaseSettings):
     # DAILY_RUN_SYMBOLS, persisted to analysis_history like a manual run so
     # IC replay / calibration gates accumulate evidence without hand-feeding.
     daily_run_enabled: bool = False
-    daily_run_symbols: str = "600000,AAPL"
+    # Cross-sector CN universe (茅台/招行/神华/恒瑞/海康/伊利): the scheduler
+    # exists to feed the IC views, which need >= 3 scored symbols per run to
+    # rank — and server-side US symbols sit behind Yahoo-429, where a dead
+    # leg silently shrinks the cross-section. Pinned by test_default_universe_*.
+    daily_run_symbols: str = "600519,600036,601088,600276,002415,600887"
     # 16:00 ≈ after the A-share close, with the overnight US session decided.
     daily_run_time: str = "16:00"
 

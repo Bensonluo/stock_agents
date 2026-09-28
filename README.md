@@ -336,7 +336,7 @@ every metric.
 | `MAX_RETRIES` | Max retry attempts per agent | `3` |
 | `TIMEOUT_PER_AGENT` | Timeout per agent (seconds) | `300` |
 | `DAILY_RUN_ENABLED` | Opt-in daily watchlist analysis scheduler | `false` |
-| `DAILY_RUN_SYMBOLS` | Comma-separated watchlist for the daily run | `600000,AAPL` |
+| `DAILY_RUN_SYMBOLS` | Comma-separated watchlist for the daily run (cross-sector CN default; IC views need ≥3 scored symbols per run) | `600519,600036,601088,600276,002415,600887` |
 | `DAILY_RUN_TIME` | Daily-run trigger time, server local `HH:MM` | `16:00` |
 
 The daily run executes one analysis workflow per calendar day over the

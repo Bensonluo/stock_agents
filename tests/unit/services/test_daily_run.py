@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -11,7 +12,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 import app.services.daily_run as daily_run_module
-from app.config import settings
+from app.analysis.ic import MIN_IC_SYMBOLS
+from app.config import Settings, settings
 from app.services.daily_run import (
     DAILY_RUN_QUERY,
     _next_run_at,
@@ -77,6 +79,26 @@ def test_parse_symbols_single() -> None:
 def test_parse_symbols_empty_stays_empty() -> None:
     assert _parse_symbols("") == []
     assert _parse_symbols(" , ") == []
+
+
+def test_default_universe_feeds_the_measurement_chain() -> None:
+    # The scheduler exists to feed the IC / calibration / adaptive-weight
+    # machinery, and the IC views need >= MIN_IC_SYMBOLS scored symbols per
+    # run to rank. A default watchlist thinner than that starves every view
+    # except calibration on the feature's own defaults.
+    default = Settings.model_fields["daily_run_symbols"].default
+    symbols = _parse_symbols(default)
+    assert len(symbols) >= MIN_IC_SYMBOLS
+    assert len(set(symbols)) == len(symbols)
+
+
+def test_default_universe_is_all_cn() -> None:
+    # Production data-chain reality: server-side US symbols sit behind
+    # Yahoo-429, and a dead leg drops out of the IC cross-section — the run
+    # silently degrades back toward the minimum. Ship a CN-only default;
+    # operators wanting US exposure opt in via DAILY_RUN_SYMBOLS.
+    default = Settings.model_fields["daily_run_symbols"].default
+    assert all(re.fullmatch(r"\d{6}", s) for s in _parse_symbols(default))
 
 
 # --- run_daily_once ----------------------------------------------------------
