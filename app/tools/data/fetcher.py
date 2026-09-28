@@ -103,6 +103,17 @@ def _is_chinese_symbol(symbol: str) -> bool:
     return symbol.isdigit() and len(symbol) == 6
 
 
+def _cn_tencent_symbol(symbol: str) -> str:
+    """6-digit A-share code -> Tencent market-prefixed code (sh600000/sz000001).
+
+    Same SH/SZ split as `_convert_to_yahoo_symbol` (6 -> Shanghai, 0/3 ->
+    Shenzhen, anything else defaults to Shanghai).
+    """
+    if symbol.startswith(("0", "3")):
+        return f"sz{symbol}"
+    return f"sh{symbol}"
+
+
 # Benchmarks for beta/alpha/R² regression, shared with the pipeline data
 # agent: S&P 500 for international names, SSE Composite for A-shares.
 # Fetched through the shared 30-min cache so ReAct tool calls (one symbol
@@ -1034,6 +1045,51 @@ async def _akshare_cn(symbol: str, ak: Any) -> dict[str, Any] | None:
     }
 
 
+def _sync_fetch_tencent_cn_hist(symbol: str, ak: Any, days: int) -> pd.DataFrame | None:
+    """A-share daily bars from Tencent kline (`stock_zh_a_hist_tx`), East
+    Money-column-shaped — the shared CN-history fallback seam.
+
+    push2his.eastmoney.com is domain-blocked from the production CN host
+    (verified 2026-09-27: akshare and bare curl both TCP-dropped there),
+    while Tencent's kline endpoints answer from the same box. The returned
+    frame is renamed to East Money's Chinese column contract with volume
+    converted from 股 (shares, the tx contract) to 手 (100-share lots, the
+    EM 成交量 contract every existing mapping emits); amount stays yuan on
+    both sides. Returns None when Tencent also fails or has no rows —
+    callers keep their existing degradation path. Sync on purpose: both
+    call sites already run inside asyncio.to_thread workers.
+    """
+    end_date = datetime.now().strftime("%Y%m%d")
+    start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
+    try:
+        df = ak.stock_zh_a_hist_tx(
+            symbol=_cn_tencent_symbol(symbol),
+            start_date=start_date,
+            end_date=end_date,
+            adjust="qfq",
+        )
+    except Exception as e:
+        logger.warning(f"[tencent-cn-hist] failed for {symbol}: {e}")
+        return None
+    if df is None or df.empty:
+        return None
+    df = df.rename(
+        columns={
+            "date": "日期",
+            "open": "开盘",
+            "close": "收盘",
+            "high": "最高",
+            "low": "最低",
+            "volume": "成交量",
+            "amount": "成交额",
+        }
+    )
+    if "成交量" in df.columns:
+        # 股 -> 手: keep the unit the EM path has always emitted.
+        df["成交量"] = df["成交量"] / 100.0
+    return df
+
+
 def _pct_to_ratio(value: Any) -> float | None:
     """Convert an AkShare percentage (31.0 for 31%) to a decimal ratio."""
     try:
@@ -1782,16 +1838,31 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
         end_date = datetime.now().strftime("%Y%m%d")
         start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
 
+        df = None
         if _is_chinese_symbol(symbol):
+            try:
 
-            def hist_fn():
-                return ak.stock_zh_a_hist(
-                    symbol=symbol,
-                    period="daily",
-                    start_date=start_date,
-                    end_date=end_date,
-                    adjust="qfq",
-                )
+                def hist_fn():
+                    return ak.stock_zh_a_hist(
+                        symbol=symbol,
+                        period="daily",
+                        start_date=start_date,
+                        end_date=end_date,
+                        adjust="qfq",
+                    )
+
+                df = await asyncio.to_thread(hist_fn)
+            except Exception as e:
+                logger.warning(f"[akshare-hist] East Money failed for {symbol}: {e}")
+            if df is None or df.empty:
+                # push2his.eastmoney.com is domain-blocked from the
+                # production CN host (2026-09-27) while Tencent's kline
+                # answers from the same box: same window, same qfq basis,
+                # EM-shaped frame. A Tencent failure falls through to the
+                # pre-existing chain below unchanged.
+                fallback = await asyncio.to_thread(_sync_fetch_tencent_cn_hist, symbol, ak, days)
+                if fallback is not None:
+                    df = fallback
 
         elif _is_hk_symbol(symbol):
 
@@ -1804,6 +1875,8 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
                     adjust="qfq",
                 )
 
+            df = await asyncio.to_thread(hist_fn)
+
         else:
             # US: Sina daily is the CN-server-viable source (verified live
             # 2026-09-25 — East Money's US kline endpoints are connection-
@@ -1814,9 +1887,7 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
                 result = {"symbol": symbol, "period": period, **sina}
                 _cache_set(cache_key, result, ttl=60)
                 return result
-            hist_fn = None
 
-        df = await asyncio.to_thread(hist_fn) if hist_fn is not None else None
         if df is not None and not df.empty:
             col_map = {
                 "日期": "date",

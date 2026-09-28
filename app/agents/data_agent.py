@@ -36,6 +36,7 @@ from app.tools.data.fetcher import (  # noqa: E402
     _indicator_value,  # noqa: F401
     _pct_to_ratio,  # noqa: F401
     _sync_fetch_akshare_financials,
+    _sync_fetch_tencent_cn_hist,
     benchmark_ticker_for,
     earnings_records,
     fetch_benchmark_history,
@@ -318,13 +319,22 @@ def _sync_fetch_akshare_history(symbol: str, ak) -> dict[str, Any] | None:
 
     Without bars the technical agent has nothing to compute on — CN symbols
     degraded to spot-only. Same keys as `_historical_data_to_dict` so every
-    downstream consumer is source-agnostic.
+    downstream consumer is source-agnostic. East Money first; when
+    push2his.eastmoney.com is unreachable (domain-blocked from the
+    production CN host since 2026-09-27) the Tencent kline fallback serves
+    the same window through the same mapping below.
     """
     start = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
     end = datetime.now().strftime("%Y%m%d")
-    df = ak.stock_zh_a_hist(
-        symbol=symbol, period="daily", start_date=start, end_date=end, adjust="qfq"
-    )
+    df = None
+    try:
+        df = ak.stock_zh_a_hist(
+            symbol=symbol, period="daily", start_date=start, end_date=end, adjust="qfq"
+        )
+    except Exception as e:
+        logger.warning(f"AkShare East Money history failed for {symbol}: {e}")
+    if df is None or df.empty:
+        df = _sync_fetch_tencent_cn_hist(symbol, ak, DEFAULT_HISTORY_DAYS)
 
     if df is None or df.empty:
         return None
