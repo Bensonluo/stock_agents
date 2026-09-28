@@ -4,6 +4,7 @@ from fastapi import APIRouter, Query
 
 from app.monitoring import AlertSeverity, get_monitor
 from app.resilience import get_circuit_breaker_registry, get_retry_manager, get_time_limiter
+from app.tools.data.provider_health import provider_health_snapshot
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -20,6 +21,17 @@ async def get_system_health():
     """
     monitor = get_monitor()
     return monitor.get_system_overview()
+
+
+@router.get("/data-sources")
+async def get_data_source_health():
+    """Get data-source provider outcome counters.
+
+    Returns:
+        Per-provider ok/fail/fallback counts and recency for the data
+        chain's fallback seams (in-process state, resets on restart)
+    """
+    return provider_health_snapshot()
 
 
 @router.get("/metrics")

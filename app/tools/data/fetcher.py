@@ -13,6 +13,7 @@ import pandas as pd
 import requests
 
 from app.config import get_settings
+from app.tools.data.provider_health import record_provider_outcome
 from app.tools.data.tencent_benchmark import tencent_index_history
 from app.utils.logging import get_logger
 
@@ -160,21 +161,35 @@ def _sync_fetch_benchmark_history(yahoo_symbol: str) -> dict[str, Any] | None:
     ``aligned_returns`` regresses against (same as historical_data)."""
     import yfinance as yf
 
+    def _tencent_with_health() -> dict[str, Any] | None:
+        bench = tencent_index_history(yahoo_symbol)
+        record_provider_outcome(
+            "tencent-benchmark",
+            "ok" if bench is not None else "fail",
+            None if bench is not None else "no benchmark data",
+        )
+        return bench
+
+    yf_error: str | None = None
     try:
         df = yf.Ticker(yahoo_symbol).history(period=BENCHMARK_HISTORY_PERIOD, interval="1d")
-    except Exception:
+    except Exception as e:
         # Rate-limited yfinance (the production CN host's documented state
         # since 2026-09-25) raises before any frame exists — the Tencent
         # fallback below is the seam that keeps benchmarks alive.
         df = pd.DataFrame()
+        yf_error = f"{type(e).__name__}: {e}"
     if df.empty or "Close" not in df.columns:
         # yfinance dark → Tencent kline for the two market indexes; same
         # {symbol, dates, close} contract. Tencent failing too keeps the
         # None semantics (fail-uncached, retried next invocation).
-        return tencent_index_history(yahoo_symbol)
+        record_provider_outcome("yfinance-benchmark", "fail", yf_error or "empty history frame")
+        return _tencent_with_health()
     dates = [d.strftime("%Y-%m-%d") for d in df.index]
     if not dates:
-        return tencent_index_history(yahoo_symbol)
+        record_provider_outcome("yfinance-benchmark", "fail", "history frame has no dates")
+        return _tencent_with_health()
+    record_provider_outcome("yfinance-benchmark", "ok")
     return {"symbol": yahoo_symbol, "dates": dates, "close": [float(c) for c in df["Close"]]}
 
 
@@ -999,11 +1014,14 @@ async def _akshare_cn(symbol: str, ak: Any) -> dict[str, Any] | None:
         )
 
     df = None
+    em_error: str | None = None
     try:
         df = await asyncio.to_thread(_get_hist)
     except Exception as e:
         logger.warning(f"[akshare-cn-snap] East Money failed for {symbol}: {e}")
+        em_error = f"{type(e).__name__}: {e}"
     if df is None or df.empty:
+        record_provider_outcome("akshare-cn", "fail", em_error or "empty East Money frame")
         # push2his.eastmoney.com is domain-blocked from the production CN
         # host (2026-09-27) while Tencent's kline answers from the same box:
         # same window, same qfq basis, EM-shaped frame (volume 股 -> 手).
@@ -1015,6 +1033,8 @@ async def _akshare_cn(symbol: str, ak: Any) -> dict[str, Any] | None:
         )
         if fallback is not None:
             df = fallback
+    else:
+        record_provider_outcome("akshare-cn", "ok")
     if df is None or df.empty:
         return None
 
@@ -1096,9 +1116,12 @@ def _sync_fetch_tencent_cn_hist(symbol: str, ak: Any, days: int) -> pd.DataFrame
         )
     except Exception as e:
         logger.warning(f"[tencent-cn-hist] failed for {symbol}: {e}")
+        record_provider_outcome("tencent-cn-hist", "fail", f"{type(e).__name__}: {e}")
         return None
     if df is None or df.empty:
+        record_provider_outcome("tencent-cn-hist", "fail", "empty kline frame")
         return None
+    record_provider_outcome("tencent-cn-hist", "ok")
     df = df.rename(
         columns={
             "date": "日期",
@@ -1752,9 +1775,12 @@ async def fetch_stock_data(symbol: str) -> dict[str, Any] | None:
             if result and _snapshot_has_price(result):
                 flat = _flatten_snapshot(result, symbol)
                 _cache_set(cache_key, flat)
+                record_provider_outcome(name, "ok")
                 return flat
+            record_provider_outcome(name, "fail", "no price")
             logger.info(f"[{name}] no price data for {symbol}, trying next provider")
         except Exception as e:
+            record_provider_outcome(name, "fail", f"{type(e).__name__}: {e}")
             logger.warning(f"[{name}] exception for {symbol}: {e}")
         # Small delay between providers to avoid rate limiting
         await asyncio.sleep(1)
@@ -1866,6 +1892,7 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
 
         df = None
         if _is_chinese_symbol(symbol):
+            em_error: str | None = None
             try:
 
                 def hist_fn():
@@ -1880,7 +1907,11 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
                 df = await asyncio.to_thread(hist_fn)
             except Exception as e:
                 logger.warning(f"[akshare-hist] East Money failed for {symbol}: {e}")
+                em_error = f"{type(e).__name__}: {e}"
             if df is None or df.empty:
+                record_provider_outcome(
+                    "akshare-cn-hist", "fail", em_error or "empty East Money frame"
+                )
                 # push2his.eastmoney.com is domain-blocked from the
                 # production CN host (2026-09-27) while Tencent's kline
                 # answers from the same box: same window, same qfq basis,
@@ -1889,6 +1920,8 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
                 fallback = await asyncio.to_thread(_sync_fetch_tencent_cn_hist, symbol, ak, days)
                 if fallback is not None:
                     df = fallback
+            else:
+                record_provider_outcome("akshare-cn-hist", "ok")
 
         elif _is_hk_symbol(symbol):
 

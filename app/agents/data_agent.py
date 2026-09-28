@@ -47,6 +47,7 @@ from app.tools.data.fetcher import (  # noqa: E402
     sector_benchmark_ticker,
 )
 from app.tools.data.fetcher import dedup_news as _dedup_news  # noqa: E402
+from app.tools.data.provider_health import record_provider_outcome  # noqa: E402
 from app.tools.data.tencent_spot import tencent_cn_spot_table  # noqa: E402
 
 
@@ -751,16 +752,25 @@ class AkShareDataAgent(BaseAgent):
         so the single-round-trip design survives the fallback. EM healthy
         never touches Tencent.
         """
+        em_error: str | None = None
         try:
             async with _akshare_semaphore:
                 em_df = await asyncio.to_thread(_sync_fetch_akshare_spot_table, ak)
         except Exception as e:
             logger.error(f"Error fetching AkShare spot table: {e}")
             em_df = None
+            em_error = f"{type(e).__name__}: {e}"
         if em_df is not None and not em_df.empty:
+            record_provider_outcome("em-spot-table", "ok")
             return em_df
+        record_provider_outcome("em-spot-table", "fail", em_error or "empty spot table")
         logger.info("[data_agent] EM spot table dead, falling back to Tencent quotes")
-        return await asyncio.to_thread(tencent_cn_spot_table, cn_symbols)
+        tx_df = await asyncio.to_thread(tencent_cn_spot_table, cn_symbols)
+        if tx_df is not None and not tx_df.empty:
+            record_provider_outcome("tencent-spot", "ok")
+        else:
+            record_provider_outcome("tencent-spot", "fail", "no spot table")
+        return tx_df
 
     async def _fetch_akshare_stock_info(self, symbol: str, spot_df) -> dict[str, Any] | None:
         """Slice one symbol's market row out of the pre-fetched spot table.
