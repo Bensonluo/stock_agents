@@ -87,6 +87,56 @@ class TestScenarioEvals:
         result = _grade(state, report)
         assert result.passed, result.summary()
 
+    async def test_bear_regime_surfaces_context_and_counter_trend_warnings(self):
+        """The regime arc's end-to-end contract, gated at the report level:
+        a real bear benchmark must reach the report's risk section as a
+        regime block and stamp counter-trend warnings on buy decisions.
+        Alternating -1.0%/-0.2% steps keep real dispersion in the tape —
+        a constant-rate decline is a zero-variance series the classifier
+        honestly refuses (the iteration-76 fixture lesson)."""
+        state = _synthetic_state()
+        bench = state["market_data"]["TEST"]["benchmark_historical_data"]
+        price, closes = 200.0, []
+        for i in range(len(bench["dates"])):
+            price *= 1 - (0.010 if i % 2 == 0 else 0.002)
+            closes.append(round(price, 6))
+        bench["close"] = closes
+        bench["open"] = [closes[0]] + closes[:-1]
+        bench["high"] = [c * 1.005 for c in closes]
+        bench["low"] = [c * 0.995 for c in closes]
+        state, report = await _run_pipeline(state)
+        result = _grade(state, report)
+        assert result.passed, result.summary()
+
+        regime = report["sections"]["risk_analysis"]["market_regime"]
+        assert regime["status"] == "ok"
+        assert regime["trend"] == "bear"
+
+        rec = report["sections"]["recommendations"]["by_symbol"]["TEST"]
+        if rec["action"] == "buy":
+            # A counter-trend buy must say so — the warnings are the only
+            # place the regime context reaches the reader's decision.
+            assert rec.get("warnings"), "bear-regime buy carries no warnings"
+            assert any("regime" in w for w in rec["warnings"])
+
+    async def test_short_benchmark_withholds_regime_trend(self):
+        """Under 200 benchmark bars the classifier withholds the trend
+        (status ok, trend None) — the report must never fabricate a
+        regime where none was measurable, and no regime warnings fire."""
+        state = _synthetic_state()
+        bench = state["market_data"]["TEST"]["benchmark_historical_data"]
+        for key in ("dates", "open", "high", "low", "close", "volume"):
+            bench[key] = bench[key][-150:]
+        state, report = await _run_pipeline(state)
+        result = _grade(state, report)
+        assert result.passed, result.summary()
+
+        regime = report["sections"]["risk_analysis"]["market_regime"]
+        assert regime["status"] == "ok"
+        assert regime["trend"] is None
+        rec = report["sections"]["recommendations"]["by_symbol"]["TEST"]
+        assert not any("regime" in w for w in rec.get("warnings") or [])
+
     async def test_market_data_outage_gates_directional_decisions(self):
         """Full quotes outage (the 2026-09-27 production shape): no bars and
         no benchmark for any symbol. The market-data gate must withhold
