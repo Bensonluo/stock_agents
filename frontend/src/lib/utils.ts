@@ -140,6 +140,14 @@ export const API = {
     return response.json() as Promise<ICDecayResponse>
   },
 
+  getRegimeConditionalIC: async (horizonBars = 20) => {
+    const response = await fetch(
+      `${API_BASE_URL}/api/history/ic/regime?horizon_bars=${horizonBars}`
+    )
+    if (!response.ok) throw new Error('Failed to get regime-conditional IC')
+    return response.json() as Promise<RegimeConditionalICResponse>
+  },
+
   getConfidenceCalibration: async (horizonBars = 20) => {
     const response = await fetch(
       `${API_BASE_URL}/api/history/ic/calibration?horizon_bars=${horizonBars}`
@@ -455,7 +463,13 @@ export interface DecisionICResponse {
   runs_evaluated: number
   runs_pending_maturity: number
   runs_skipped: number
-  per_run: Array<{ thread_id: string; date: string; symbols: number; ic: number }>
+  per_run: Array<{
+    thread_id: string
+    date: string
+    symbols: number
+    ic: number
+    regime_trend?: string | null
+  }>
   dimensions?: Record<string, DimensionSummary | null>
   caveat: string
   status: 'ok' | 'insufficient_history'
@@ -475,6 +489,31 @@ export interface ICDecayResponse {
   horizons: ICDecayPoint[]
   status: 'ok' | 'insufficient_history'
   caveat: string
+  execution_time?: number
+}
+
+export interface RegimeBinSummary {
+  runs: number
+  ic_mean?: number
+  ic_std?: number | null
+  icir?: number | null
+  t_stat?: number | null
+  ic_positive_rate?: number
+  status: 'ok' | 'insufficient_history'
+}
+
+export interface RegimeConditionalICResponse {
+  method: string
+  horizon_bars: number
+  records_examined: number
+  runs_evaluated: number
+  runs_pending_maturity: number
+  runs_skipped: number
+  runs_duplicate: number
+  regimes: Record<'bull' | 'bear' | 'neutral' | 'unknown', RegimeBinSummary>
+  status: 'ok' | 'insufficient_history'
+  caveat: string
+  regime_caveat: string
   execution_time?: number
 }
 

@@ -16,6 +16,8 @@ import {
   type ConfidenceCalibrationResponse,
   type DecisionICResponse,
   type ICDecayResponse,
+  type RegimeBinSummary,
+  type RegimeConditionalICResponse,
 } from '@/lib/utils'
 
 const HORIZONS = [
@@ -30,6 +32,13 @@ const DIMENSION_LABELS: Record<string, string> = {
   sentiment: '情绪面',
 }
 
+const REGIME_BIN_LABELS: Record<string, string> = {
+  bull: '牛市',
+  bear: '熊市',
+  neutral: '震荡',
+  unknown: '未记录',
+}
+
 function fmt(value: number | null | undefined, digits = 3): string {
   return typeof value === 'number' ? value.toFixed(digits) : '—'
 }
@@ -39,6 +48,7 @@ export function SignalQualityCard() {
   const [ic, setIc] = useState<DecisionICResponse | null>(null)
   const [decay, setDecay] = useState<ICDecayResponse | null>(null)
   const [calib, setCalib] = useState<ConfidenceCalibrationResponse | null>(null)
+  const [regimeIc, setRegimeIc] = useState<RegimeConditionalICResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -50,6 +60,11 @@ export function SignalQualityCard() {
     void API.getConfidenceCalibration(parseInt(h))
       .then(setCalib)
       .catch(() => setCalib(null))
+    // Regime bins share the horizon too, and stay quiet on fetch failure —
+    // the aggregate IC view renders fine without them.
+    void API.getRegimeConditionalIC(parseInt(h))
+      .then(setRegimeIc)
+      .catch(() => setRegimeIc(null))
     try {
       setIc(await API.getDecisionIC(parseInt(h)))
     } catch {
@@ -78,6 +93,10 @@ export function SignalQualityCard() {
   )
   const decayPoints = (decay?.horizons ?? []).filter(
     (p) => p.status === 'ok' || p.runs_pending_maturity > 0
+  )
+  // Bins with zero runs render nothing — an empty regime has no story.
+  const regimeEntries = Object.entries(regimeIc?.regimes ?? {}).filter(
+    (entry): entry is [string, RegimeBinSummary] => entry[1].runs > 0
   )
   const calibGap =
     typeof calib?.avg_confidence === 'number' && typeof calib?.base_rate === 'number'
@@ -179,6 +198,9 @@ export function SignalQualityCard() {
                   >
                     <span className="text-muted-foreground">
                       {run.date} · {run.symbols} 标的
+                      {run.regime_trend
+                        ? ` · ${REGIME_BIN_LABELS[run.regime_trend] ?? run.regime_trend}`
+                        : ''}
                     </span>
                     <span
                       className={
@@ -379,6 +401,47 @@ export function SignalQualityCard() {
             </p>
           </div>
         ) : null}
+        {regimeEntries.length > 0 && (
+          <div className="space-y-1 border-t pt-3">
+            <div className="text-xs font-medium text-muted-foreground">
+              市场状态分桶 · 推荐排序在哪种市场里更可信
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {regimeEntries.map(([name, bin]) => {
+                const t = typeof bin.t_stat === 'number' ? bin.t_stat : null
+                const cls =
+                  t !== null && t >= 2
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : t !== null && t <= -2
+                      ? 'text-red-500'
+                      : ''
+                return (
+                  <div key={name} className="px-2 py-1 rounded-md bg-muted/50 text-xs">
+                    <span className="text-muted-foreground">
+                      {REGIME_BIN_LABELS[name] ?? name} · {bin.runs} run
+                    </span>{' '}
+                    {typeof bin.ic_mean === 'number' ? (
+                      <span className={bin.status === 'ok' ? `font-semibold ${cls}` : ''}>
+                        {bin.ic_mean >= 0 ? '+' : ''}
+                        {bin.ic_mean.toFixed(3)}
+                        {bin.status === 'ok' && t !== null ? (
+                          <span className="text-muted-foreground"> · t {t.toFixed(2)}</span>
+                        ) : (
+                          <span className="text-muted-foreground"> · 样本不足</span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">样本不足</span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              同一份重放按 run 当时基准分类的市场状态分桶 · regime 上线前的历史与基准降级跑单列「未记录」
+            </div>
+          </div>
+        )}
         {ic && (
           <p className="text-[11px] text-muted-foreground/70 border-t pt-2">{ic.caveat}</p>
         )}

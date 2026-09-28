@@ -52,6 +52,29 @@ def decision_formula_version(result: dict[str, Any]) -> str | None:
     return version if isinstance(version, str) and version else None
 
 
+def regime_trend_of_result(result: dict[str, Any]) -> str | None:
+    """Extract the run-level market regime trend from a stored analysis result.
+
+    The regime block lives at ``risk_assessment.market_regime`` in both
+    stored shapes — the pipeline nests it beside ``risk_by_symbol``
+    (attached at the risk-state level since iteration 76), and the ReAct
+    path parks it as a namespaced key beside the flat per-symbol entries
+    (iteration 115). Runs whose regime was never measured — recorded
+    before regime tracking, degraded benchmarks — return ``None`` and bin
+    APART from measured regimes in the conditional views, never as a
+    fake neutral. A withheld trend (sub-200-bar benchmark, status ok but
+    ``trend=None``) is equally unknown.
+    """
+    risk = result.get("risk_assessment")
+    if not isinstance(risk, dict):
+        return None
+    regime = risk.get("market_regime")
+    if not isinstance(regime, dict) or regime.get("status") != "ok":
+        return None
+    trend = regime.get("trend")
+    return trend if isinstance(trend, str) and trend else None
+
+
 def decision_scores(result: dict[str, Any]) -> dict[str, float]:
     """Extract ``{symbol: composite score}`` from a stored analysis result.
 

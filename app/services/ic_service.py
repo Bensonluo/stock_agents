@@ -33,6 +33,7 @@ from app.analysis.forecast_calibration import (
 )
 from app.analysis.ic import (
     DECISION_FORMULA_VERSION,
+    MIN_IC_RUNS,
     MIN_IC_SYMBOLS,
     STATIC_DIMENSION_WEIGHTS,
     adaptive_dimension_weights,
@@ -41,6 +42,7 @@ from app.analysis.ic import (
     decision_scores,
     ic_summary,
     information_coefficient,
+    regime_trend_of_result,
 )
 from app.storage.database import AnalysisRecord, get_database
 from app.tools.data.fetcher import fetch_historical
@@ -210,6 +212,10 @@ async def _replay(
 
         scores = decision_scores(result)
         dimensions = decision_dimension_scores(result)
+        # Regime label for the conditional views — computed once per record,
+        # horizon-independent like the entry bar. None = never measured, which
+        # the regime-conditional IC bins apart from every measured regime.
+        regime_trend = regime_trend_of_result(result)
         run_date = (record.created_at or "")[:10]
         if len(scores) < MIN_IC_SYMBOLS or not run_date:
             for bucket in buckets.values():
@@ -271,6 +277,7 @@ async def _replay(
                     "date": run_date,
                     "symbols": len(forward),
                     "ic": ic,
+                    "regime_trend": regime_trend,
                 }
             )
 
@@ -386,6 +393,78 @@ async def evaluate_ic_decay(
         "horizons": points,
         "status": "ok" if any(p["status"] == "ok" for p in points) else ("insufficient_history"),
         "caveat": CAVEAT,
+    }
+
+
+# Fixed bin order for the regime-conditional view. "unknown" holds runs whose
+# regime was never measured — reported beside the measured bins so the split
+# of evidence is visible, never silently mixed into a measured regime.
+REGIME_BINS = ("bull", "bear", "neutral", "unknown")
+
+REGIME_CAVEAT = (
+    "Regime labels come from each run's benchmark classification at decision "
+    "time; runs recorded before regime tracking (or with degraded benchmarks) "
+    "bin as unknown. Thin per-regime bins are reported as insufficient rather "
+    "than aggregated away."
+)
+
+
+async def evaluate_regime_conditional_ic(
+    *,
+    horizon_bars: int = 20,
+    limit: int = 200,
+    records: list[AnalysisRecord] | None = None,
+    fetch_history: HistoryFetcher | None = None,
+) -> dict[str, Any]:
+    """IC per market-regime bin — does ranking skill depend on the regime?
+
+    One replay pass (same series cache and maturity discipline as the
+    aggregate view); the evaluated runs are then grouped by the regime trend
+    they were made under. A bin needs ``MIN_IC_RUNS`` evaluated runs to be
+    ``ok`` — a single run in one regime keeps its mean but is not confirmed
+    evidence. Unlabeled runs bin as ``unknown`` rather than contaminating a
+    measured regime.
+    """
+    if horizon_bars <= 0:
+        raise ValueError("horizon_bars must be positive")
+
+    records, fetch_history = _resolve_inputs(records, limit, fetch_history)
+    bucket = (await _replay([horizon_bars], records, fetch_history))[horizon_bars]
+
+    grouped: dict[str, list[float]] = {name: [] for name in REGIME_BINS}
+    for run in bucket["evaluated"]:
+        trend = run.get("regime_trend")
+        grouped[trend if trend in REGIME_BINS else "unknown"].append(run["ic"])
+
+    regimes: dict[str, Any] = {}
+    any_ok = False
+    for name in REGIME_BINS:
+        ics = grouped[name]
+        summary = ic_summary(ics)
+        entry: dict[str, Any] = {"runs": len(ics)}
+        if summary is not None:
+            entry.update(summary)
+            if len(ics) >= MIN_IC_RUNS:
+                entry["status"] = "ok"
+                any_ok = True
+            else:
+                entry["status"] = "insufficient_history"
+        else:
+            entry["status"] = "insufficient_history"
+        regimes[name] = entry
+
+    return {
+        "method": "spearman_rank_ic_by_regime",
+        "horizon_bars": horizon_bars,
+        "records_examined": len(records),
+        "runs_evaluated": len(bucket["evaluated"]),
+        "runs_pending_maturity": bucket["pending"],
+        "runs_skipped": bucket["skipped"],
+        "runs_duplicate": bucket["duplicates"],
+        "regimes": regimes,
+        "status": "ok" if any_ok else "insufficient_history",
+        "caveat": CAVEAT,
+        "regime_caveat": REGIME_CAVEAT,
     }
 
 

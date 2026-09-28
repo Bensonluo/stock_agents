@@ -18,6 +18,7 @@ from app.services.ic_service import (
     evaluate_confidence_calibration,
     evaluate_decision_ic,
     evaluate_ic_decay,
+    evaluate_regime_conditional_ic,
 )
 from app.storage.database import AnalysisRecord, get_database
 
@@ -294,6 +295,33 @@ async def decision_confidence_calibration(
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001
         logger.error(f"[History API] 置信度校准失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/ic/regime")
+async def decision_ic_by_regime(
+    horizon_bars: int = Query(20, ge=1, le=250, description="前向窗口（交易日数）"),
+    limit: int = Query(200, ge=1, le=1000, description="检查的最近完成记录数"),
+):
+    """
+    决策层信号质量：按市场状态分桶的秩 IC
+
+    同一份重放按 run 当时的市场状态（牛/熊/震荡，读基准分类）分桶
+    聚合——「这套推荐在什么市场里更可信」。未记录状态的 run（regime
+    上线前的历史、基准降级跑）单列 unknown 桶，绝不混入已测桶。
+    桶内不足 MIN_IC_RUNS 个 run 时如实 insufficient_history。
+    """
+    from time import time
+
+    start = time()
+    try:
+        result = await evaluate_regime_conditional_ic(horizon_bars=horizon_bars, limit=limit)
+        result["execution_time"] = round(time() - start, 3)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[History API] 状态条件 IC 评估失败: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
