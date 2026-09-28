@@ -17,6 +17,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
+import app.agents.data_agent as data_agent_mod
 from app.agents.data_agent import (
     AkShareDataAgent,
     _debt_to_equity_from_asset_ratio,
@@ -96,6 +97,11 @@ class _FakeAk:
             raise self._hist_error
         if self._hist_empty:
             return pd.DataFrame()
+        if symbol not in {row[0] for row in _SPOT_ROWS}:
+            # An unknown code has no bars on any source — with history now
+            # fetched outside the spot gate, the fake must not hand a
+            # market row to a symbol the whole market doesn't know.
+            return pd.DataFrame()
         assert kwargs.get("period") == "daily"
         assert kwargs.get("adjust") == "qfq"
         rows = [
@@ -161,8 +167,15 @@ class TestSpotTableFetchEconomics:
 
     async def test_spot_fetch_failure_degrades_but_financials_survive(self, monkeypatch):
         """Spot table down != agent down: financial feed still collected."""
+        # Both spot sources dark (EM raises, Tencent stubbed dead) and the
+        # history feeds with them: market_data goes empty — the documented
+        # degradation — while the financial feed keeps flowing.
+        monkeypatch.setattr(data_agent_mod, "tencent_cn_spot_table", lambda symbols: None)
         fake, result = await _run(
-            monkeypatch, ["600519", "000001"], spot_error=RuntimeError("eastmoney down")
+            monkeypatch,
+            ["600519", "000001"],
+            spot_error=RuntimeError("eastmoney down"),
+            hist_error=ConnectionError("history down"),
         )
 
         assert fake.spot_calls == 1

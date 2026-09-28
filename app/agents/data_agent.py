@@ -47,6 +47,7 @@ from app.tools.data.fetcher import (  # noqa: E402
     sector_benchmark_ticker,
 )
 from app.tools.data.fetcher import dedup_news as _dedup_news  # noqa: E402
+from app.tools.data.tencent_spot import tencent_cn_spot_table  # noqa: E402
 
 
 def _yfinance_debt_to_equity_ratio(value: Any) -> float | None:
@@ -684,18 +685,41 @@ class AkShareDataAgent(BaseAgent):
         financial_data = {}
 
         # One spot-table round-trip for ALL symbols; slices are local.
-        spot_df = await self._fetch_akshare_spot_table(ak)
+        spot_df = await self._fetch_akshare_spot_table(ak, cn_symbols)
 
         async def _collect(symbol: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
             """Per-symbol history + financials; both degrade to None alone."""
             stock_info = await self._fetch_akshare_stock_info(symbol, spot_df)
-            if stock_info:
-                # Daily bars unlock full technical analysis; without them
-                # the symbol degrades to spot-only (still a valid report).
-                history = await self._fetch_akshare_history(symbol, ak)
-                if history:
+            # Daily bars are fetched regardless of the spot outcome: they
+            # unlock full technical analysis, and with both spot sources
+            # dark the Tencent kline inside _fetch_akshare_history still
+            # answers — the old spot-gates-history design made that
+            # fallback unreachable and killed the whole A-share path.
+            history = await self._fetch_akshare_history(symbol, ak)
+            if history:
+                if stock_info:
                     stock_info["historical_data"] = history
                     stock_info["as_of"] = history["dates"][-1]
+                else:
+                    # No spot row anywhere: derive a minimal quote from the
+                    # closes — the same derivation the ReAct fetcher's
+                    # _akshare_cn uses. All sources dead keeps stock_info
+                    # None (the existing degradation).
+                    closes = history.get("close") or []
+                    current = closes[-1] if closes else None
+                    prev = closes[-2] if len(closes) > 1 else None
+                    stock_info = {
+                        "symbol": symbol,
+                        "current_price": current,
+                        "previous_close": prev,
+                        "change": current - prev if current and prev else None,
+                        "change_percent": (
+                            ((current - prev) / prev * 100) if current and prev else None
+                        ),
+                        "historical_data": history,
+                        "as_of": history["dates"][-1],
+                        "timestamp": datetime.now().isoformat(),
+                    }
 
             financials = await self._fetch_akshare_financials(symbol, ak)
             return stock_info, financials
@@ -717,14 +741,26 @@ class AkShareDataAgent(BaseAgent):
             "financial_data": financial_data,
         }
 
-    async def _fetch_akshare_spot_table(self, ak):
-        """Fetch the shared spot table; None when the source is unreachable."""
+    async def _fetch_akshare_spot_table(self, ak, cn_symbols: list[str]):
+        """Fetch the shared spot table; None when both sources are unreachable.
+
+        East Money first (its table is the column contract everything
+        downstream slices). When push2 is unreachable (RemoteDisconnected
+        from the production CN host since 2026-09-28), Tencent's batch
+        quote serves the same EM-shaped table — one GET for all symbols,
+        so the single-round-trip design survives the fallback. EM healthy
+        never touches Tencent.
+        """
         try:
             async with _akshare_semaphore:
-                return await asyncio.to_thread(_sync_fetch_akshare_spot_table, ak)
+                em_df = await asyncio.to_thread(_sync_fetch_akshare_spot_table, ak)
         except Exception as e:
             logger.error(f"Error fetching AkShare spot table: {e}")
-            return None
+            em_df = None
+        if em_df is not None and not em_df.empty:
+            return em_df
+        logger.info("[data_agent] EM spot table dead, falling back to Tencent quotes")
+        return await asyncio.to_thread(tencent_cn_spot_table, cn_symbols)
 
     async def _fetch_akshare_stock_info(self, symbol: str, spot_df) -> dict[str, Any] | None:
         """Slice one symbol's market row out of the pre-fetched spot table.
