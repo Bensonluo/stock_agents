@@ -51,6 +51,7 @@ export function SignalQualityCard() {
   const [calib, setCalib] = useState<ConfidenceCalibrationResponse | null>(null)
   const [regimeIc, setRegimeIc] = useState<RegimeConditionalICResponse | null>(null)
   const [topk, setTopk] = useState<TopKPortfolioResponse | null>(null)
+  const [topK, setTopK] = useState(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -67,11 +68,6 @@ export function SignalQualityCard() {
     void API.getRegimeConditionalIC(parseInt(h))
       .then(setRegimeIc)
       .catch(() => setRegimeIc(null))
-    // The money-terms view shares the horizon as well; quiet on failure —
-    // the ranking views render fine without it.
-    void API.getTopKPortfolio(parseInt(h))
-      .then(setTopk)
-      .catch(() => setTopk(null))
     try {
       setIc(await API.getDecisionIC(parseInt(h)))
     } catch {
@@ -92,6 +88,15 @@ export function SignalQualityCard() {
       .then(setDecay)
       .catch(() => setDecay(null))
   }, [])
+
+  // The money-terms view shares the horizon and adds its own knob: how many
+  // top-scored names the replayed portfolio holds. Quiet on failure — the
+  // ranking views render fine without it.
+  useEffect(() => {
+    void API.getTopKPortfolio(parseInt(horizon), topK)
+      .then(setTopk)
+      .catch(() => setTopk(null))
+  }, [horizon, topK])
 
   const isSignal = typeof ic?.t_stat === 'number' && ic.t_stat >= 2
   const isAntiSignal = typeof ic?.t_stat === 'number' && ic.t_stat <= -2
@@ -455,8 +460,23 @@ export function SignalQualityCard() {
         )}
         {topk && topk.status === 'ok' && typeof topk.excess_mean === 'number' ? (
           <div className="space-y-2 border-t pt-3">
-            <div className="text-xs font-medium text-muted-foreground">
-              照做收益 · 前 {topk.top_k} 名等权 vs 全截面等权（{topk.horizon_bars} 交易日）
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-medium text-muted-foreground">
+                照做收益 · 前 {topk.top_k} 名等权 vs 全截面等权（{topk.horizon_bars} 交易日）
+              </div>
+              <div className="flex gap-1">
+                {[1, 2, 3, 5].map((k) => (
+                  <Button
+                    key={k}
+                    variant={topk.top_k === k ? 'default' : 'outline'}
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => setTopK(k)}
+                  >
+                    前{k}
+                  </Button>
+                ))}
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
               <span
@@ -474,6 +494,11 @@ export function SignalQualityCard() {
                 跑赢基准 run 占比{' '}
                 {typeof topk.hit_rate === 'number' ? `${(topk.hit_rate * 100).toFixed(0)}%` : '—'}
               </span>
+              {typeof topk.excess_std === 'number' && (
+                <span className="text-muted-foreground">
+                  超额 σ {(topk.excess_std * 100).toFixed(2)}%
+                </span>
+              )}
               {typeof topk.excess_t_stat === 'number' && (
                 <span className="text-muted-foreground">
                   t{' '}
