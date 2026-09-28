@@ -1049,6 +1049,13 @@ function ReactReport({ answer, report: structuredReport }: {
                       )}
                     </div>
                   )}
+                  {rec.warnings?.length > 0 && (
+                    <div className="mt-2 p-2 bg-amber-50 border border-amber-100 rounded text-xs text-amber-700 space-y-0.5">
+                      {rec.warnings.map((w: string, i: number) => (
+                        <p key={i}>⚠ {w}</p>
+                      ))}
+                    </div>
+                  )}
                   {(rec.reasoning || rec.rationale) && (
                     <p className="text-xs text-slate-500 mt-2 leading-relaxed">{rec.reasoning || rec.rationale}</p>
                   )}
@@ -1413,6 +1420,13 @@ function ReactReport({ answer, report: structuredReport }: {
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-slate-500">行业相对（{r.sector_relative.benchmark_ticker}）</span>
                         <span className="font-medium">β {formatNumber(r.sector_relative.beta_sector, 2)} · R² {formatNumber(r.sector_relative.r_squared_sector, 2)}</span>
+                      </div>
+                    )}
+                    {r.warnings?.length > 0 && (
+                      <div className="p-2 bg-amber-50 border border-amber-100 rounded text-xs text-amber-700 space-y-0.5">
+                        {r.warnings.map((w: string, i: number) => (
+                          <p key={i}>⚠ {w}</p>
+                        ))}
                       </div>
                     )}
                   </div>

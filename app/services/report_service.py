@@ -479,6 +479,13 @@ class ReportService:
                 "take_profit": (decision.get("price_targets") or {}).get("take_profit"),
                 "rationale": decision.get("rationale"),
             }
+            # Decision warnings (low-confidence notices, regime-conditional
+            # buyer-risk warnings) are user-facing risk flags — the
+            # recommendation card renders them. Warning-free decisions omit
+            # the key (optional-key convention).
+            warnings = decision.get("warnings")
+            if warnings:
+                summary["by_symbol"][symbol]["warnings"] = warnings
             if "buy" in str(action):
                 summary["portfolio_actions"].append({"symbol": symbol, "action": action})
             elif "sell" in str(action):
