@@ -385,7 +385,11 @@ export function SignalQualityCard() {
             )}
             <div className="text-xs text-muted-foreground">
               {calib.predictions} 条 buy/sell 方向主张已对账 · {calib.runs_pending_maturity} run
-              待窗口成熟 · 平盘对双向均判错 · hold 不参与
+              待窗口成熟
+              {typeof calib.runs_duplicate === 'number' && calib.runs_duplicate > 0
+                ? ` · ${calib.runs_duplicate} 条重复已剔除`
+                : ''}{' '}
+              · 平盘对双向均判错 · hold 不参与
             </div>
             <p className="text-[11px] text-muted-foreground/70">{calib.caveat}</p>
           </div>

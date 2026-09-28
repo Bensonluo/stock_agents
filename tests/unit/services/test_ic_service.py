@@ -405,6 +405,49 @@ class TestConfidenceCalibration:
                 horizon_bars=0, records=[], fetch_history=_fetcher({})
             )
 
+    async def test_duplicate_stored_run_claims_count_once(self) -> None:
+        dates = _bdates(300)
+        run_idx = 239
+        series = {
+            sym: (dates, _two_phase_closes(dates, run_idx, rate))
+            for sym, rate in zip("AB", (0.001, 0.002))
+        }
+        actions = {"A": ("buy", 0.8), "B": ("buy", 0.6)}
+        # A re-submitted request stores the same date and the same claims
+        # under a new thread: one measurement, not two — the Brier score
+        # and the reliability curve must not see the same claims twice.
+        records = [
+            _claim_record("c7", f"{dates[run_idx]}T10:00:00", actions),
+            _claim_record("c8", f"{dates[run_idx]}T14:00:00", actions),
+        ]
+        result = await evaluate_confidence_calibration(
+            horizon_bars=20, records=records, fetch_history=_fetcher(series)
+        )
+        assert result["status"] == "ok"
+        assert result["runs_evaluated"] == 1
+        assert result["runs_duplicate"] == 1
+        assert result["predictions"] == 2  # each claim scored once, not 4
+        assert result["brier_score"] == 0.1  # the hand-computed single-record value
+
+    async def test_same_claims_different_day_are_distinct_evidence(self) -> None:
+        dates = _bdates(300)
+        run_idx = 239
+        series = {
+            sym: (dates, _two_phase_closes(dates, run_idx, rate))
+            for sym, rate in zip("AB", (0.001, 0.002))
+        }
+        actions = {"A": ("buy", 0.8), "B": ("buy", 0.6)}
+        records = [
+            _claim_record("c9", f"{dates[run_idx]}T10:00:00", actions),
+            _claim_record("c10", f"{dates[run_idx + 1]}T10:00:00", actions),
+        ]
+        result = await evaluate_confidence_calibration(
+            horizon_bars=20, records=records, fetch_history=_fetcher(series)
+        )
+        assert result["runs_evaluated"] == 2
+        assert result["runs_duplicate"] == 0
+        assert result["predictions"] == 4
+
 
 class TestReplayIntegrity:
     """Defenses from the 2026-09-26 review: duplicate stored requests are

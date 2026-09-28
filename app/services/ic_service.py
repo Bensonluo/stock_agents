@@ -497,6 +497,8 @@ async def evaluate_confidence_calibration(
     runs_evaluated = 0
     runs_pending = 0
     runs_skipped = 0
+    runs_duplicate = 0
+    seen: set[str] = set()
     series_cache: dict[str, tuple[list[str], list[float]] | None] = {}
 
     async def _series(symbol: str) -> tuple[list[str], list[float]] | None:
@@ -527,6 +529,16 @@ async def evaluate_confidence_calibration(
         if not claims or not run_date:
             runs_skipped += 1
             continue
+
+        # Same dedup key as the IC replay — a re-submitted request stores a
+        # new record carrying the same date and claims; scoring both copies
+        # double-counts one measurement in the Brier/reliability aggregates.
+        fingerprint = _decisions_fingerprint(result, run_date)
+        if fingerprint is not None:
+            if fingerprint in seen:
+                runs_duplicate += 1
+                continue
+            seen.add(fingerprint)
 
         run_pairs: list[tuple[float, bool]] = []
         pending = False
@@ -567,6 +579,7 @@ async def evaluate_confidence_calibration(
         "runs_evaluated": runs_evaluated,
         "runs_pending_maturity": runs_pending,
         "runs_skipped": runs_skipped,
+        "runs_duplicate": runs_duplicate,
         "caveat": CALIBRATION_CAVEAT,
     }
     if not pairs:

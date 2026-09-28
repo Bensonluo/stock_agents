@@ -532,6 +532,7 @@ export interface ConfidenceCalibrationResponse {
   runs_evaluated: number
   runs_pending_maturity: number
   runs_skipped: number
+  runs_duplicate?: number
   caveat: string
   status: 'ok' | 'insufficient_history'
   predictions?: number
