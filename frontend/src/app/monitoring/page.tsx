@@ -72,6 +72,7 @@ function ReactMonitor({ threadId }: { threadId: string }) {
   const [progress, setProgress] = useState<ReactProgressResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [polling, setPolling] = useState(true)
+  const { health: dataSourceHealth, fetchHealth: fetchDataSourceHealth } = useDataSourceHealth()
 
   const fetchProgress = useCallback(async () => {
     try {
@@ -88,10 +89,14 @@ function ReactMonitor({ threadId }: { threadId: string }) {
 
   useEffect(() => {
     fetchProgress()
+    fetchDataSourceHealth()
     if (!polling) return
-    const interval = setInterval(fetchProgress, 2000)
+    const interval = setInterval(() => {
+      fetchProgress()
+      fetchDataSourceHealth()
+    }, 2000)
     return () => clearInterval(interval)
-  }, [threadId, polling, fetchProgress])
+  }, [threadId, polling, fetchProgress, fetchDataSourceHealth])
 
   useEffect(() => {
     if (progress?.status !== 'completed') return
@@ -214,6 +219,9 @@ function ReactMonitor({ threadId }: { threadId: string }) {
         </Card>
       )}
 
+      {/* Data-source health — global provider counters, not thread-scoped */}
+      <DataSourceHealthPanel health={dataSourceHealth} />
+
       {/* Actions */}
       <div className="flex justify-center gap-4">
         <Button variant="outline" onClick={() => router.push('/')}>
@@ -254,6 +262,16 @@ function relativeTime(iso: string | null): string | null {
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes} 分钟前`
   return `${Math.floor(minutes / 60)} 小时前`
+}
+
+function useDataSourceHealth() {
+  const [health, setHealth] = useState<DataSourceHealthResponse | null>(null)
+  const fetchHealth = useCallback(async () => {
+    try {
+      setHealth(await API.getDataSourceHealth())
+    } catch { /* keep the last snapshot; this panel is a side channel */ }
+  }, [])
+  return { health, fetchHealth }
 }
 
 function DataSourceHealthPanel({ health }: { health: DataSourceHealthResponse | null }) {
@@ -319,7 +337,7 @@ function PipelineMonitor({ threadId }: { threadId: string }) {
   const router = useRouter()
   const [workflow, setWorkflow] = useState<WorkflowState | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
-  const [dataSourceHealth, setDataSourceHealth] = useState<DataSourceHealthResponse | null>(null)
+  const { health: dataSourceHealth, fetchHealth: fetchDataSourceHealth } = useDataSourceHealth()
   const [error, setError] = useState<string | null>(null)
   const [polling, setPolling] = useState(true)
 
@@ -347,13 +365,6 @@ function PipelineMonitor({ threadId }: { threadId: string }) {
       if (res.ok) { const data = await res.json(); setLogs(data.logs || []) }
     } catch { /* ignore */ }
   }, [threadId])
-
-  const fetchDataSourceHealth = useCallback(async () => {
-    try {
-      const data = await API.getDataSourceHealth()
-      setDataSourceHealth(data)
-    } catch { /* keep the last snapshot; this panel is a side channel */ }
-  }, [])
 
   useEffect(() => {
     if (!threadId || !polling) return
@@ -525,26 +536,41 @@ function PipelineMonitor({ threadId }: { threadId: string }) {
 
 /* ── Main Page ─────────────────────────────────────────────────── */
 
+/* No workflow selected — the health panel is global (process-wide provider
+ * counters), so it stays useful here. No other data flows on this branch,
+ * so the panel drives its own lightweight 10s polling. */
+function NoWorkflowSelected() {
+  const router = useRouter()
+  const { health: dataSourceHealth, fetchHealth: fetchDataSourceHealth } = useDataSourceHealth()
+
+  useEffect(() => {
+    fetchDataSourceHealth()
+    const interval = setInterval(fetchDataSourceHealth, 10000)
+    return () => clearInterval(interval)
+  }, [fetchDataSourceHealth])
+
+  return (
+    <div className="max-w-4xl mx-auto p-6 space-y-6">
+      <Card>
+        <CardContent className="p-8 text-center">
+          <p className="text-muted-foreground">No workflow selected</p>
+          <Button className="mt-4" onClick={() => router.push('/')}>
+            Start New Analysis
+          </Button>
+        </CardContent>
+      </Card>
+      <DataSourceHealthPanel health={dataSourceHealth} />
+    </div>
+  )
+}
+
 function MonitoringPage() {
   const searchParams = useSearchParams()
   const threadId = searchParams.get('thread_id')
   const mode = searchParams.get('mode')
 
-  const router = useRouter()
-
   if (!threadId) {
-    return (
-      <div className="max-w-4xl mx-auto p-6">
-        <Card>
-          <CardContent className="p-8 text-center">
-            <p className="text-muted-foreground">No workflow selected</p>
-            <Button className="mt-4" onClick={() => router.push('/')}>
-              Start New Analysis
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    )
+    return <NoWorkflowSelected />
   }
 
   if (mode === 'react') {
