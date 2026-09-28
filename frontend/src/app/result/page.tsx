@@ -324,6 +324,9 @@ function PipelineResultPage({ threadId }: { threadId: string | null }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedSection, setExpandedSection] = useState<string | null>(null)
+  // Set when the result came from the SQLite history archive rather than
+  // the in-memory workflow cache (lost on every server restart).
+  const [historyDate, setHistoryDate] = useState<string | null>(null)
 
   useEffect(() => {
     if (!threadId) {
@@ -334,13 +337,28 @@ function PipelineResultPage({ threadId }: { threadId: string | null }) {
     const fetchResult = async () => {
       try {
         const res = await fetch(`${API_BASE}/analysis/result/${threadId}`)
-        if (!res.ok) {
-          if (res.status === 404) {
-            setError('未找到分析结果')
-          } else {
-            throw new Error(`HTTP ${res.status}`)
+        if (res.status === 404) {
+          // The in-memory workflow cache is lost on restart; the history
+          // archive stores the same result shape. Fall back before giving up.
+          const hres = await fetch(`${API_BASE}/history/${threadId}`)
+          if (hres.ok) {
+            const hdata = await hres.json()
+            const archived = hdata?.result
+            if (archived && typeof archived === 'object' && Object.keys(archived).length > 0) {
+              if (archived.error) {
+                setError(`该次分析运行失败（历史记录）— ${archived.error}`)
+              } else {
+                setResult(archived as AnalysisResult)
+                setHistoryDate(hdata.created_at ?? null)
+              }
+              return
+            }
           }
+          setError('未找到分析结果')
           return
+        }
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`)
         }
         const data = await res.json()
         setResult(data)
@@ -465,12 +483,19 @@ function PipelineResultPage({ threadId }: { threadId: string | null }) {
               </p>
             </div>
           </div>
-          {result.execution_metadata?.execution_time && (
-            <div className="flex items-center gap-2 text-sm text-slate-500">
-              <Clock className="h-4 w-4" />
-              <span>{result.execution_metadata.execution_time.toFixed(1)}秒</span>
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            {historyDate && (
+              <Badge variant="outline" className="text-xs text-slate-500" title={`历史存档 · 生成于 ${historyDate}`}>
+                历史记录 · {historyDate.slice(0, 10)}
+              </Badge>
+            )}
+            {result.execution_metadata?.execution_time && (
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <Clock className="h-4 w-4" />
+                <span>{result.execution_metadata.execution_time.toFixed(1)}秒</span>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
