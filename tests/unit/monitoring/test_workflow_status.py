@@ -215,3 +215,93 @@ class TestParallelAndDegradedSemantics:
         # store at capacity: completed workflows age out, the active runner stays
         assert workflow_status.get_workflow_state("new-runner") is not None
         assert len(workflow_status.list_workflows()) <= workflow_status.MAX_TRACKED_WORKFLOWS
+
+
+ANALYSIS_TRIO = ("technical_analysis", "sentiment_analysis", "fundamental_analysis")
+
+
+def _reach_barrier(thread_id: str) -> None:
+    """Drive the store to the parallel join window: fan-out done, risk not yet released."""
+    workflow_status.update_agent_status(thread_id, "data_collection", "completed")
+    for agent in ANALYSIS_TRIO:
+        workflow_status.update_agent_status(thread_id, agent, "running")
+    for agent in ANALYSIS_TRIO:
+        workflow_status.update_agent_status(thread_id, agent, "completed")
+
+
+class TestAnalysisBarrierPhase:
+    """Visibility of the parallel join barrier (analysis_barrier node).
+
+    The node is a no-op spin that writes no agent_status, so during the join
+    current_agent/running_agents are both empty while the workflow is still
+    running — the status API must still say WHERE the pipeline is parked.
+    """
+
+    async def test_parallel_join_window_reports_barrier_phase(self):
+        workflow_status.init_workflow("t1")
+        _reach_barrier("t1")
+        state = workflow_status.get_workflow_state("t1")
+
+        assert state["current_agent"] is None  # the blind spot this fixes
+        assert state["running_agents"] == []
+        assert state["phase"] == "analysis_barrier"
+        assert state["status"] == "running"  # not stalled: parked at the join
+
+        # The monitor API response model must carry the phase through
+        # (response_model filters undeclared fields).
+        from app.api.routes.monitor import WorkflowStatusResponse
+
+        assert WorkflowStatusResponse.model_validate(state).phase == "analysis_barrier"
+
+    async def test_barrier_phase_clears_once_risk_starts(self):
+        workflow_status.init_workflow("t1")
+        _reach_barrier("t1")
+
+        workflow_status.update_agent_status("t1", "risk_assessment", "running")
+        state = workflow_status.get_workflow_state("t1")
+
+        assert state["phase"] is None  # no residue after the barrier releases
+
+    async def test_barrier_phase_clears_on_workflow_completion(self):
+        workflow_status.init_workflow("t1")
+        _reach_barrier("t1")
+        for agent in workflow_status.PIPELINE_AGENTS[4:]:
+            workflow_status.update_agent_status("t1", agent, "completed")
+
+        state = workflow_status.get_workflow_state("t1")
+        assert state["status"] == "completed"
+        assert state["phase"] is None
+
+    async def test_sequential_mode_has_no_barrier_phase(self):
+        """parallel_execution=False runs one agent at a time — no join semantics."""
+        workflow_status.init_workflow("t1")
+        workflow_status.update_agent_status("t1", "data_collection", "completed")
+        for agent in ANALYSIS_TRIO:
+            workflow_status.update_agent_status("t1", agent, "running")
+            assert workflow_status.get_workflow_state("t1")["phase"] is None
+            workflow_status.update_agent_status("t1", agent, "completed")
+            assert workflow_status.get_workflow_state("t1")["phase"] is None
+
+    async def test_partial_trio_does_not_report_barrier(self):
+        """While any analysis branch is still running the trio is not settled."""
+        workflow_status.init_workflow("t1")
+        workflow_status.update_agent_status("t1", "data_collection", "completed")
+        for agent in ANALYSIS_TRIO:
+            workflow_status.update_agent_status("t1", agent, "running")
+        workflow_status.update_agent_status("t1", "technical_analysis", "completed")
+
+        assert workflow_status.get_workflow_state("t1")["phase"] is None
+
+    async def test_degraded_branch_still_reports_barrier_while_peers_settle(self):
+        """A degraded (failed) branch is settled too — the barrier waits for siblings."""
+        workflow_status.init_workflow("t1")
+        workflow_status.update_agent_status("t1", "data_collection", "completed")
+        for agent in ANALYSIS_TRIO:
+            workflow_status.update_agent_status("t1", agent, "running")
+        workflow_status.update_agent_status("t1", "technical_analysis", "failed", error="boom")
+        workflow_status.update_agent_status("t1", "sentiment_analysis", "completed")
+
+        assert workflow_status.get_workflow_state("t1")["phase"] is None  # fundamental still up
+
+        workflow_status.update_agent_status("t1", "fundamental_analysis", "completed")
+        assert workflow_status.get_workflow_state("t1")["phase"] == "analysis_barrier"

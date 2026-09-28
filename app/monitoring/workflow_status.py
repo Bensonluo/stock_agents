@@ -20,6 +20,9 @@ PIPELINE_AGENTS = [
     "report_generation",
 ]
 
+# The fan-out analysis stage that converges on the analysis_barrier node.
+PARALLEL_ANALYSIS_AGENTS = ("technical_analysis", "fundamental_analysis", "sentiment_analysis")
+
 MAX_LOG_ENTRIES = 200
 # Cap on tracked workflows; the oldest finished ones are evicted first so a
 # long-running process does not grow the store without bound.
@@ -50,6 +53,8 @@ def init_workflow(thread_id: str):
         "agents": {a: {"name": a, "status": "pending"} for a in PIPELINE_AGENTS},
         "current_agent": None,
         "running_agents": [],
+        "phase": None,
+        "parallel_observed": False,
         "progress": 0.0,
         "created_at": datetime.now().isoformat(),
         "updated_at": datetime.now().isoformat(),
@@ -64,6 +69,13 @@ def update_agent_status(thread_id: str, agent: str, status: str, error: str | No
 
     state = _workflow_states[thread_id]
     previous = state["agents"].get(agent, {})
+    # 记录是否出现过并发执行：第二个 agent 进入 running 时另一个仍在跑，只可能
+    # 是并行 fan-out（顺序模式一次只有一个 agent 在跑）。用于区分汇合语义。
+    if status == "running" and not state["parallel_observed"]:
+        if any(
+            info["status"] == "running" for name, info in state["agents"].items() if name != agent
+        ):
+            state["parallel_observed"] = True
     state["agents"][agent] = {
         "name": agent,
         "status": status,
@@ -94,6 +106,23 @@ def update_agent_status(thread_id: str, agent: str, status: str, error: str | No
         state["status"] = "partial" if failed else "completed"
     elif failed:
         state["status"] = "failed"
+
+    # 汇合屏障可见性：analysis_barrier 节点是空转的汇合点，不写 agent_status，
+    # 屏障期间 current_agent/running_agents 全空而整体 status 仍是 running——
+    # 监控端看起来像卡死。这里在 status 层合成阶段标注（零管线改动）：
+    # 并行 fan-out 的三个分析 agent 全到终态、risk 还没起、无人在跑 = 流水线
+    # 停在汇合屏障（等待/释放 risk_assessment）。顺序模式没有汇合语义，不标注。
+    state["phase"] = (
+        "analysis_barrier"
+        if state["parallel_observed"]
+        and not running
+        and all(
+            state["agents"][name]["status"] in ("completed", "failed")
+            for name in PARALLEL_ANALYSIS_AGENTS
+        )
+        and state["agents"]["risk_assessment"]["status"] == "pending"
+        else None
+    )
 
 
 def add_log(thread_id: str, agent: str, level: str, message: str):

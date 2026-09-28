@@ -22,6 +22,9 @@ class WorkflowStatusResponse(BaseModel):
     agents: dict[str, AgentStatus]
     current_agent: str | None = None
     running_agents: list[str] = []  # full fan-out set during parallel stages
+    # Synthesized join annotation: "analysis_barrier" while the parallel
+    # analysis stage has fully settled but risk_assessment has not started.
+    phase: str | None = None
     progress: float
     created_at: str
     updated_at: str
