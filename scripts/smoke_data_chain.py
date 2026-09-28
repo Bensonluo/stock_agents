@@ -187,6 +187,32 @@ def check_full_analysis() -> tuple[str, str]:
     return "PASS", f"HTTP 200 with decisions after {elapsed:.0f}s"
 
 
+def check_provider_health_endpoint() -> tuple[str, str]:
+    """GET /api/monitoring/data-sources -- provider outcome counters live.
+
+    Runs after the --full analysis so the counters have had a run to record;
+    even a degraded run records its failed attempts, so an empty providers
+    dict after a completed analysis means the wiring never fired."""
+    try:
+        resp = requests.get("http://localhost:8000/api/monitoring/data-sources", timeout=10)
+    except Exception as e:
+        return "FAIL", f"{type(e).__name__}"
+    if resp.status_code != 200:
+        return "FAIL", f"HTTP {resp.status_code}"
+    body = resp.json()
+    if set(body) != {"providers", "generated_at"}:
+        return "FAIL", f"unexpected shape: {sorted(body)}"
+    providers = body["providers"]
+    n = len(providers)
+    if n == 0:
+        return "FAIL", "no provider outcomes recorded after a completed analysis"
+    sample = next(iter(providers.values()))
+    expected = {"total_calls", "ok", "fail", "fallback", "last_ok_at", "last_error", "last_error_at"}
+    if set(sample) != expected:
+        return "FAIL", f"per-provider shape drift: {sorted(sample)}"
+    return "PASS", f"{n} providers recorded"
+
+
 def main() -> int:
     checks = [
         ("tencent daily K (600000)", check_tencent_daily_k),
@@ -198,6 +224,7 @@ def main() -> int:
     ]
     if "--full" in sys.argv:
         checks.append(("full analysis chain (--full)", check_full_analysis))
+        checks.append(("provider health endpoint (post-analysis)", check_provider_health_endpoint))
     else:
         print("[INFO] --full absent -- end-to-end analysis chain not probed")
         print("       enable with: docker exec -i stock_agent_api python - --full \\")
