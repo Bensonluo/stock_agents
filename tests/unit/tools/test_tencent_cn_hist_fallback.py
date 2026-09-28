@@ -295,3 +295,122 @@ class TestFetchHistoricalFallback:
 
         assert via_tx["volume"] == via_em["volume"]
         assert set(via_tx) == set(via_em)  # no stray keys from the tx path
+
+
+_FAKE_FINANCIALS = {
+    "symbol": "600519",
+    "metrics": {"roe": 0.31, "trailing_eps": 64.0},
+    "timestamp": "2026-09-28T00:00:00",
+}
+
+
+async def _run_cn_snapshot(
+    monkeypatch: pytest.MonkeyPatch, fake: _RecorderAk
+) -> dict[str, Any] | None:
+    """Run the ReAct/provider-chain CN snapshot (`_akshare_cn`) offline.
+
+    ``_akshare_cn`` takes the akshare module as an argument, so the recorder
+    IS the module here — no sys.modules install needed. The financials seam
+    (datacenter-web/Sina, still alive in production while EM is blocked) is
+    faked to pin that it survives the history outage.
+    """
+    monkeypatch.setattr(
+        fetcher_mod, "_sync_fetch_akshare_financials", lambda symbol, ak: _FAKE_FINANCIALS
+    )
+    return await fetcher_mod._akshare_cn("600519", fake)
+
+
+class TestAkshareCNSnapshotFallback:
+    """Third history entry point: the ReAct/provider-chain CN snapshot.
+
+    Before the fix, an East Money outage inside ``_akshare_cn._get_hist``
+    blew through to ``_akshare_fetch``'s blanket except — the whole snapshot
+    died, including the still-alive financials chain that only runs after
+    the history gate. The empty-frame variant killed it the same way. Here
+    the snapshot gets the same Tencent fallback seam as ``fetch_historical``
+    and the pipeline's AkShare agent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_em_disconnect_falls_back_and_keeps_financials(self, monkeypatch) -> None:
+        """The production failure shape (TCP drop mid-response) must land on
+        Tencent-derived prices with the financial chain still assembled."""
+        fake = _RecorderAk(
+            em_error=http.client.RemoteDisconnected(
+                "Remote end closed connection without response"
+            ),
+            tx_frame=_tx_frame(),
+        )
+
+        result = await _run_cn_snapshot(monkeypatch, fake)
+
+        assert len(fake.em_calls) == 1
+        assert len(fake.tx_calls) == 1
+        mkt = result["market_data"]
+        # current/prev derive from the tx closes, not a dead EM feed.
+        assert mkt["current_price"] == 1660.0
+        assert mkt["previous_close"] == 1640.0
+        assert mkt["change"] == 20.0
+        # tx 股 -> 手: the unit the EM path has always emitted.
+        assert mkt["volume"] == 25_000
+        hist = mkt["historical_data"]
+        assert hist["close"] == [1620.0, 1640.0, 1660.0]
+        assert hist["volume"] == [24_000, 26_500, 25_000]
+        assert hist["amount"] == list(_AMOUNTS_YUAN)
+        # The datacenter-web financial chain must survive the EM outage —
+        # this is what the pre-fix blow-up silently killed.
+        assert result["financial_data"] == _FAKE_FINANCIALS
+
+    @pytest.mark.asyncio
+    async def test_em_empty_frame_falls_back_to_tencent(self, monkeypatch) -> None:
+        """EM answering with zero rows is also a dead feed for this symbol."""
+        fake = _RecorderAk(em_frame=pd.DataFrame(), tx_frame=_tx_frame())
+
+        result = await _run_cn_snapshot(monkeypatch, fake)
+
+        assert len(fake.tx_calls) == 1
+        assert result["market_data"]["current_price"] == 1660.0
+        assert result["market_data"]["historical_data"]["amount"] == list(_AMOUNTS_YUAN)
+
+    @pytest.mark.asyncio
+    async def test_healthy_em_never_touches_tencent(self, monkeypatch) -> None:
+        """EM healthy means the fallback must not even be attempted, and the
+        snapshot stays bit-for-bit what the EM path has always emitted."""
+        fake = _RecorderAk(em_frame=_em_frame(), tx_error=RuntimeError("must not run"))
+
+        result = await _run_cn_snapshot(monkeypatch, fake)
+
+        assert fake.tx_calls == []
+        assert result["market_data"] == {
+            "symbol": "600519",
+            "current_price": 1660.0,
+            "previous_close": 1640.0,
+            "change": 20.0,
+            "change_percent": (1660.0 - 1640.0) / 1640.0 * 100,
+            "volume": 25_000,
+            "historical_data": {
+                "dates": list(_DATES),
+                "open": [1600.0, 1620.0, 1640.0],
+                "high": [1625.0, 1645.0, 1665.0],
+                "low": [1595.0, 1615.0, 1635.0],
+                "close": [1620.0, 1640.0, 1660.0],
+                "volume": [24_000, 26_500, 25_000],
+                "amount": list(_AMOUNTS_YUAN),
+            },
+        }
+        assert result["financial_data"] == _FAKE_FINANCIALS
+
+    @pytest.mark.asyncio
+    async def test_both_sources_fail_returns_none(self, monkeypatch) -> None:
+        """Tencent failing too must land on the pre-existing total-failure
+        return — an extra attempted hop, not a new failure mode."""
+        fake = _RecorderAk(em_error=ConnectionError("EM drop"), tx_error=ConnectionError("tx drop"))
+
+        assert await _run_cn_snapshot(monkeypatch, fake) is None
+
+    @pytest.mark.asyncio
+    async def test_tencent_empty_frame_returns_none(self, monkeypatch) -> None:
+        """A zero-row Tencent answer is as dead as a raised one."""
+        fake = _RecorderAk(em_error=ConnectionError("EM drop"), tx_frame=pd.DataFrame())
+
+        assert await _run_cn_snapshot(monkeypatch, fake) is None

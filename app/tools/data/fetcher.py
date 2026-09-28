@@ -998,7 +998,23 @@ async def _akshare_cn(symbol: str, ak: Any) -> dict[str, Any] | None:
             symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq"
         )
 
-    df = await asyncio.to_thread(_get_hist)
+    df = None
+    try:
+        df = await asyncio.to_thread(_get_hist)
+    except Exception as e:
+        logger.warning(f"[akshare-cn-snap] East Money failed for {symbol}: {e}")
+    if df is None or df.empty:
+        # push2his.eastmoney.com is domain-blocked from the production CN
+        # host (2026-09-27) while Tencent's kline answers from the same box:
+        # same window, same qfq basis, EM-shaped frame (volume 股 -> 手).
+        # Before this, an EM outage blew through to _akshare_fetch's blanket
+        # except and killed the whole snapshot — including the financials
+        # chain below, which only runs past this gate.
+        fallback = await asyncio.to_thread(
+            _sync_fetch_tencent_cn_hist, symbol, ak, DEFAULT_HISTORY_DAYS
+        )
+        if fallback is not None:
+            df = fallback
     if df is None or df.empty:
         return None
 
