@@ -98,8 +98,11 @@ export function SignalQualityCard() {
       .catch(() => setTopk(null))
   }, [horizon, topK])
 
-  const isSignal = typeof ic?.t_stat === 'number' && ic.t_stat >= 2
-  const isAntiSignal = typeof ic?.t_stat === 'number' && ic.t_stat <= -2
+  // Prefer the Newey-West t for the verdict: daily runs share most of the
+  // forward window, and the i.i.d. t overstates significance exactly there.
+  const tForVerdict = typeof ic?.t_stat_nw === 'number' ? ic.t_stat_nw : ic?.t_stat
+  const isSignal = typeof tForVerdict === 'number' && tForVerdict >= 2
+  const isAntiSignal = typeof tForVerdict === 'number' && tForVerdict <= -2
   const dimEntries = Object.entries(ic?.dimensions ?? {}).filter(
     (entry): entry is [string, NonNullable<typeof entry[1]>] => entry[1] !== null
   )
@@ -183,8 +186,12 @@ export function SignalQualityCard() {
                 <div className="text-lg font-bold">{fmt(ic.icir)}</div>
               </div>
               <div className="p-3 bg-muted/50 rounded-lg">
-                <div className="text-xs text-muted-foreground">t 统计量</div>
-                <div className="text-lg font-bold">{fmt(ic.t_stat, 2)}</div>
+                <div className="text-xs text-muted-foreground">
+                  t 统计量{typeof ic.t_stat_nw === 'number' ? ' · NW' : ''}
+                </div>
+                <div className="text-lg font-bold">
+                  {fmt(typeof ic.t_stat_nw === 'number' ? ic.t_stat_nw : ic.t_stat, 2)}
+                </div>
               </div>
               <div className="p-3 bg-muted/50 rounded-lg">
                 <div className="text-xs text-muted-foreground">正 IC run 占比</div>
@@ -256,6 +263,11 @@ export function SignalQualityCard() {
                       >
                         t {fmt(summary.t_stat, 2)}
                       </span>
+                      {typeof summary.t_stat_nw === 'number' && (
+                        <span className="text-muted-foreground">
+                          t·NW {fmt(summary.t_stat_nw, 2)}
+                        </span>
+                      )}
                     </span>
                   </div>
                 ))}
@@ -424,7 +436,14 @@ export function SignalQualityCard() {
             </div>
             <div className="flex flex-wrap gap-2">
               {regimeEntries.map(([name, bin]) => {
-                const t = typeof bin.t_stat === 'number' ? bin.t_stat : null
+                // Same NW preference as the aggregate view.
+                const tNw = typeof bin.t_stat_nw === 'number' ? bin.t_stat_nw : null
+                const t =
+                  tNw !== null
+                    ? tNw
+                    : typeof bin.t_stat === 'number'
+                      ? bin.t_stat
+                      : null
                 const cls =
                   t !== null && t >= 2
                     ? 'text-emerald-600 dark:text-emerald-400'
@@ -512,6 +531,22 @@ export function SignalQualityCard() {
                     }
                   >
                     {topk.excess_t_stat.toFixed(2)}
+                  </span>
+                </span>
+              )}
+              {typeof topk.excess_t_stat_nw === 'number' && (
+                <span className="text-muted-foreground">
+                  t·NW{' '}
+                  <span
+                    className={
+                      topk.excess_t_stat_nw >= 2
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : topk.excess_t_stat_nw <= -2
+                          ? 'text-red-500'
+                          : ''
+                    }
+                  >
+                    {topk.excess_t_stat_nw.toFixed(2)}
                   </span>
                 </span>
               )}

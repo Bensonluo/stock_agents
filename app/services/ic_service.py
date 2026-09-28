@@ -44,6 +44,7 @@ from app.analysis.ic import (
     decision_scores,
     ic_summary,
     information_coefficient,
+    newey_west_t_stat,
     regime_trend_of_result,
 )
 from app.storage.database import AnalysisRecord, get_database
@@ -74,7 +75,9 @@ CALIBRATION_CAVEAT = (
 PORTFOLIO_CAVEAT = (
     CAVEAT + " Excess is gross of costs, taxes and slippage, measured on daily "
     "closes against an equal-weight whole-cross-section baseline; it prices "
-    "the ranking, not a tradable strategy."
+    "the ranking, not a tradable strategy. Overlapping daily forward windows "
+    "make i.i.d. t-statistics overstate significance; the Newey-West t "
+    "prices that overlap."
 )
 
 # Replay price fetches are evaluation reads of daily data. The shared
@@ -313,7 +316,12 @@ def _bucket_payload(
     *,
     with_dimensions: bool,
 ) -> dict[str, Any]:
-    summary = ic_summary([run["ic"] for run in bucket["evaluated"]])
+    # Lag bound for the Newey-West overlap correction: consecutive daily runs
+    # share all but one bar of the forward window, so horizon-1 is the
+    # daily-sampling autocorrelation bound (sparse runs shrink the
+    # correction toward zero — they do not overlap).
+    nw_lags = horizon_bars - 1
+    summary = ic_summary([run["ic"] for run in bucket["evaluated"]], nw_lags=nw_lags)
     payload: dict[str, Any] = {
         "method": "spearman_rank_ic",
         "horizon_bars": horizon_bars,
@@ -329,7 +337,7 @@ def _bucket_payload(
     }
     if with_dimensions:
         payload["dimensions"] = {
-            dimension: ic_summary(ics) if ics else None
+            dimension: ic_summary(ics, nw_lags=nw_lags) if ics else None
             for dimension, ics in sorted(bucket["dimension_ics"].items())
         }
     payload["caveat"] = CAVEAT
@@ -457,7 +465,8 @@ async def evaluate_regime_conditional_ic(
     any_ok = False
     for name in REGIME_BINS:
         ics = grouped[name]
-        summary = ic_summary(ics)
+        # Same overlap-corrected lag bound as the aggregate view.
+        summary = ic_summary(ics, nw_lags=horizon_bars - 1)
         entry: dict[str, Any] = {"runs": len(ics)}
         if summary is not None:
             entry.update(summary)
@@ -688,6 +697,10 @@ async def evaluate_topk_portfolio(
         payload["excess_std"] = std
         if std > 0:
             payload["excess_t_stat"] = fmean(excesses) / std * sqrt(len(excesses))
+        # Present-but-possibly-None (the ic_summary contract): the
+        # overlap-corrected t is not estimable below 3 runs — refuse rather
+        # than fall back to the i.i.d. figure the correction exists to fix.
+        payload["excess_t_stat_nw"] = newey_west_t_stat(excesses, horizon_bars - 1)
     payload["status"] = "ok" if len(excesses) >= MIN_IC_RUNS else "insufficient_history"
     return payload
 

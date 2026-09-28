@@ -10,6 +10,7 @@ from app.analysis.ic import (
     decision_scores,
     ic_summary,
     information_coefficient,
+    newey_west_t_stat,
 )
 
 
@@ -134,3 +135,66 @@ class TestICSummary:
 
     def test_empty_returns_none(self) -> None:
         assert ic_summary([]) is None
+
+    def test_nw_lags_adds_adjusted_t(self) -> None:
+        # [0.2, -0.1, 0.5]: mean 0.2, biased autocovs γ0=0.06, γ1=-0.03 ->
+        # V=(0.06-0.03)/3=0.01, NW t = 0.2/0.1 = 2.0 exactly.
+        summary = ic_summary([0.2, -0.1, 0.5], nw_lags=1)
+        assert summary is not None
+        assert summary["t_stat_nw"] == pytest.approx(2.0, abs=1e-6)
+
+    def test_no_nw_lags_keeps_legacy_shape(self) -> None:
+        summary = ic_summary([0.2, -0.1, 0.5])
+        assert summary is not None
+        assert "t_stat_nw" not in summary
+
+    def test_nw_not_estimable_below_three_runs(self) -> None:
+        # The raw t exists at 2 runs, but the overlap correction needs at
+        # least one usable lag (n-2 >= 1) — report None, never a fake 0.
+        summary = ic_summary([0.2, 0.5], nw_lags=19)
+        assert summary is not None
+        assert summary["t_stat"] is not None
+        assert summary["t_stat_nw"] is None
+
+    def test_nw_absent_when_raw_t_absent(self) -> None:
+        summary = ic_summary([0.3], nw_lags=19)
+        assert summary is not None
+        assert summary["t_stat"] is None
+        assert summary["t_stat_nw"] is None
+
+
+class TestNeweyWestTStat:
+    def test_hand_computed_lag1(self) -> None:
+        # [1..5]: mean 3, biased autocovs γ0=2, γ1=0.8 ->
+        # V=(2 + 2*(1/2)*0.8)/5 = 0.56, t = 3/sqrt(0.56).
+        t = newey_west_t_stat([1, 2, 3, 4, 5], lags=1)
+        assert t == pytest.approx(3 / (0.56**0.5), abs=1e-6)
+
+    def test_hand_computed_lag2(self) -> None:
+        # γ2 = -0.2; Bartlett weights 2/3 and 1/3 ->
+        # V=(2 + 4/3*0.8 - 2/3*0.2)/5 = 0.58666..., t = 3/sqrt(V).
+        t = newey_west_t_stat([1, 2, 3, 4, 5], lags=2)
+        assert t == pytest.approx(3 / ((2.9333333333 / 5) ** 0.5), abs=1e-6)
+
+    def test_positive_autocorrelation_shrinks_t(self) -> None:
+        # Monotone ICs -> γ1 > 0 -> Bartlett-weighted SE wider than the iid
+        # SE: overlapping forward windows must not overstate significance.
+        values = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
+        n = len(values)
+        mean = sum(values) / n
+        var = sum((v - mean) ** 2 for v in values) / (n - 1)
+        raw_t = mean / (var**0.5) * n**0.5
+        assert newey_west_t_stat(values, lags=1) < raw_t
+
+    def test_lags_capped_at_n_minus_2(self) -> None:
+        # Asking for more lags than the series supports caps at n-2 —
+        # L = n-1 would lean entirely on a single autocovariance pair.
+        assert newey_west_t_stat([1, 2, 3, 4, 5], lags=99) == newey_west_t_stat(
+            [1, 2, 3, 4, 5], lags=3
+        )
+
+    def test_guards(self) -> None:
+        assert newey_west_t_stat([], lags=1) is None
+        assert newey_west_t_stat([0.2], lags=1) is None
+        assert newey_west_t_stat([0.2, 0.4], lags=1) is None  # cap n-2 = 0
+        assert newey_west_t_stat([0.5, 0.5, 0.5], lags=1) is None  # zero variance

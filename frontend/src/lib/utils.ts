@@ -461,6 +461,9 @@ export interface DimensionSummary {
   ic_std: number | null
   icir: number | null
   t_stat: number | null
+  // Newey-West HAC t: prices the autocorrelation overlapping forward
+  // windows introduce; null when not estimable (or absent pre-correction).
+  t_stat_nw?: number | null
   ic_positive_rate: number
 }
 
@@ -486,6 +489,7 @@ export interface DecisionICResponse {
   ic_std?: number | null
   icir?: number | null
   t_stat?: number | null
+  t_stat_nw?: number | null
   ic_positive_rate?: number
   execution_time?: number
 }
@@ -506,6 +510,7 @@ export interface RegimeBinSummary {
   ic_std?: number | null
   icir?: number | null
   t_stat?: number | null
+  t_stat_nw?: number | null
   ic_positive_rate?: number
   status: 'ok' | 'insufficient_history'
 }
@@ -567,6 +572,8 @@ export interface TopKPortfolioResponse {
   excess_mean?: number
   excess_std?: number | null
   excess_t_stat?: number | null
+  // Newey-West HAC t over the per-run excesses (null below 3 runs).
+  excess_t_stat_nw?: number | null
   hit_rate?: number
   per_run: Array<{
     thread_id: string

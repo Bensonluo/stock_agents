@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 import app.services.ic_service as ic_service_module
-from app.analysis.ic import DECISION_FORMULA_VERSION
+from app.analysis.ic import DECISION_FORMULA_VERSION, newey_west_t_stat
 from app.services.ic_service import (
     REPLAY_SERIES_TTL,
     evaluate_confidence_calibration,
@@ -137,6 +137,38 @@ class TestEvaluateDecisionIC:
         assert result["icir"] == 0.0
         # The full history is fetched once per symbol regardless of run count.
         assert sorted(calls) == ["A", "B", "C", "D"]
+
+    async def test_payload_reports_newey_west_t(self) -> None:
+        # Three runs whose windows straddle the epoch flip asymmetrically
+        # (run2's window sees 15 epoch-1 bars then 5 epoch-2 bars) ->
+        # ics = [+1, +1, -1]. The raw t assumes i.i.d. per-run ICs; the
+        # Newey-West t (lag = horizon-1, capped at n-2) prices the
+        # autocorrelation that overlapping forward windows — exactly what
+        # the daily scheduler will feed this chain — introduce.
+        dates = _bdates(300)
+        idx1, flip, idx3 = 180, 215, 240
+        series = {}
+        for sym, (r1, r2) in zip(
+            "ABCD", ((0.001, 0.004), (0.002, 0.003), (0.003, 0.002), (0.004, 0.001))
+        ):
+            series[sym] = (dates, _two_phase_closes(dates, idx1, r1, flip, r2))
+        scored = dict(zip("ABCD", (20.0, 40.0, 60.0, 80.0)))
+        records = [
+            _record("t1", f"{dates[idx1]}T10:00:00", scored),
+            _record("t2", f"{dates[200]}T10:00:00", scored),
+            _record("t3", f"{dates[idx3]}T10:00:00", scored),
+        ]
+        result = await evaluate_decision_ic(
+            horizon_bars=20, records=records, fetch_history=_fetcher(series)
+        )
+        assert result["status"] == "ok"
+        assert result["runs_evaluated"] == 3
+        ics = [run["ic"] for run in result["per_run"]]
+        assert sorted(ics) == [-1.0, 1.0, 1.0]
+        assert isinstance(result["t_stat_nw"], float)
+        # The service feeds the replay's own IC series (in run order) to the
+        # NW seam with the daily-sampling lag bound.
+        assert result["t_stat_nw"] == pytest.approx(newey_west_t_stat(ics, lags=19), abs=1e-4)
 
     async def test_immature_run_is_pending_not_evaluated(self) -> None:
         dates = _bdates(300)

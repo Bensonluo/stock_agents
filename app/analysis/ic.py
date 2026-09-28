@@ -159,13 +159,60 @@ def information_coefficient(
     return None if pd.isna(rho) else round(float(rho), 6)
 
 
-def ic_summary(per_run_ics: list[float]) -> dict[str, Any] | None:
+def newey_west_t_stat(values: list[float], lags: int) -> float | None:
+    """t-statistic of the mean with Newey–West (Bartlett) HAC variance.
+
+    Overlapping forward windows make per-run ICs autocorrelated — two daily
+    runs share 19 of a 20-bar window — so the i.i.d. ``t = mean / (std /
+    sqrt(n))`` overstates significance exactly when the daily scheduler
+    starts feeding consecutive runs. The Bartlett kernel (Newey & West
+    1987; standard practice for overlapping IC windows) widens the standard
+    error by the weighted autocovariances:
+
+        gamma_l = biased autocovariance at lag l
+        V = (gamma_0 + 2 * sum_{l=1..L} (1 - l/(L+1)) * gamma_l) / n
+        t = mean / sqrt(V)
+
+    ``lags`` is capped at ``n - 2`` — a lag of ``n - 1`` would lean entirely
+    on a single autocovariance pair. Sparse (non-daily) runs make the
+    correction shrink toward zero, which is the correct behaviour: they are
+    not overlapping. ``None`` — never a fabricated number — for fewer than
+    3 observations, no usable lag after the cap, or a non-positive HAC
+    variance.
+    """
+    n = len(values)
+    if n < 3:
+        return None
+    capped = min(lags, n - 2)
+    if capped < 1:
+        return None
+    mean = sum(values) / n
+    deviations = [v - mean for v in values]
+    gamma0 = sum(d * d for d in deviations) / n
+    hac = gamma0
+    for lag in range(1, capped + 1):
+        gamma_l = sum(deviations[i] * deviations[i + lag] for i in range(n - lag)) / n
+        hac += 2 * (1 - lag / (capped + 1)) * gamma_l
+    variance = hac / n
+    if variance <= 0:
+        return None
+    return mean / (variance**0.5)
+
+
+def ic_summary(per_run_ics: list[float], *, nw_lags: int | None = None) -> dict[str, Any] | None:
     """Aggregate per-run ICs into ICIR with a t-statistic.
 
     ``icir = mean/std`` and ``t_stat = icir * sqrt(n)`` — the standard
     signal-quality summary (Grinold & Kahn). A single run still gets its
     mean IC; ICIR/t-stat stay ``None`` until dispersion is estimable
     (``MIN_IC_RUNS``). ``None`` only when there is nothing to aggregate.
+
+    ``nw_lags`` additionally emits ``t_stat_nw`` — the Newey–West HAC
+    t-statistic that prices the autocorrelation overlapping forward windows
+    introduce (callers pass ``horizon_bars - 1``, the daily-sampling bound:
+    consecutive daily runs overlap by all but one bar). The key is emitted
+    only when ``nw_lags`` is given, and stays ``None`` — never a fake 0 —
+    whenever the raw t is absent or the correction is not estimable.
     """
     n = len(per_run_ics)
     if n < 1:
@@ -183,9 +230,14 @@ def ic_summary(per_run_ics: list[float]) -> dict[str, Any] | None:
         icir = mean / std
         summary["icir"] = round(icir, 6)
         summary["t_stat"] = round(icir * (n**0.5), 4)
+        if nw_lags is not None:
+            nw = newey_west_t_stat(per_run_ics, nw_lags)
+            summary["t_stat_nw"] = None if nw is None else round(nw, 4)
     else:
         summary["icir"] = None
         summary["t_stat"] = None
+        if nw_lags is not None:
+            summary["t_stat_nw"] = None
     return summary
 
 
