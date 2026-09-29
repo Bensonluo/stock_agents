@@ -91,19 +91,24 @@ class Settings(BaseSettings):
     batch_llm_model: str = "glm-5.3-flash"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
-    llm_timeout: int = 60
+    # HTTP request ceiling for every LLM client (pipeline, ReAct, judge). The
+    # research enhancement budgets below must stay at/below this — the client
+    # cuts first, making a larger wait_for budget decorative.
+    llm_timeout: int = 90
     # Optional LLM narrative overlay on the pipeline report (bounded, degrades to None)
     report_llm_enabled: bool = False
     report_llm_timeout: float = 60.0
     # Research synthesis LLM enhancement budgets (narrator + analyst panel).
     # Measured glm-5.3-flash latency on the Tencent Cloud deploy (2026-09-25,
-    # single-symbol degraded payload): narrator 33.6s, panel 36.6s — the old
-    # 20s/25s budgets timed out on EVERY production call, silently disabling
-    # both enhancement layers. Narrator stays under panel (sequential calls,
-    # one node); both stay at/below llm_timeout (the client ceiling) and far
-    # below timeout_per_agent.
+    # single-symbol degraded payload): narrator 33.6s, panel 36.6/41.6/47.0/>60s
+    # — the old 20s/25s budgets timed out on EVERY production call, silently
+    # disabling both enhancement layers. Narrator stays under panel (sequential
+    # calls, one node); both stay at/below llm_timeout (the client ceiling —
+    # a wait_for budget above it is decorative, the client cuts first) and far
+    # below timeout_per_agent. Panel gets 90s because a 60s budget cut ~1/4 of
+    # the 09-25 samples, so the client ceiling moved with it.
     narration_timeout_seconds: float = 45.0
-    panel_timeout_seconds: float = 60.0
+    panel_timeout_seconds: float = 90.0
     # LLM semantic per-article news scoring (keyword scorer stays the floor)
     llm_sentiment_enabled: bool = False
     # Jensen's alpha risk-free rate (annualized, cash T-bill level; alpha only)

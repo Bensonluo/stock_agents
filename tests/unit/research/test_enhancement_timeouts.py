@@ -37,10 +37,16 @@ async def test_default_budgets_exceed_measured_latency() -> None:
     """Defaults are pinned against the measured latency — a silent revert to
     the old 20/25s budgets would disable both layers in production again.
     The sequential worst case must also stay inside the synthesis node's
-    budget (timeout_per_agent)."""
+    budget (timeout_per_agent). Panel is 90s because the 2026-09-25
+    production samples ran 36.6/41.6/47.0/>60s — a 60s budget cut ~1/4 of
+    runs — and each wait_for budget must stay at/below llm_timeout, the
+    HTTP client ceiling: a budget above the client ceiling is decorative
+    (the client cuts first and the layer degrades anyway)."""
     settings = get_settings()
     assert settings.narration_timeout_seconds == pytest.approx(45.0)
-    assert settings.panel_timeout_seconds == pytest.approx(60.0)
+    assert settings.panel_timeout_seconds == pytest.approx(90.0)
+    assert settings.llm_timeout >= settings.panel_timeout_seconds
+    assert settings.llm_timeout >= settings.narration_timeout_seconds
     assert (
         settings.narration_timeout_seconds + settings.panel_timeout_seconds
         < settings.timeout_per_agent
