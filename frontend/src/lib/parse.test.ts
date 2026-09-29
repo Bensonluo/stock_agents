@@ -7,6 +7,7 @@ import {
   parseNumberField,
   parseNumberList,
   requireDateField,
+  requireDateOrder,
   requireIntField,
   requireNonEmptyText,
   requireNumberField,
@@ -160,6 +161,27 @@ describe('requireDateField — throwing wrapper for the date fields', () => {
     )
     expect(() => requireDateField('结束日期', '2023-02-30')).toThrowError(
       '参数 结束日期 无效——请输入日期',
+    )
+  })
+})
+
+describe('requireDateOrder — cross-field guard for date pairs', () => {
+  it('passes silently for a well-ordered range', () => {
+    // Adjacent days are the narrowest legal range (same-day is rejected,
+    // mirroring the backend's end <= start rule).
+    expect(() => requireDateOrder('2023-01-01', '2023-01-02')).not.toThrow()
+    expect(() => requireDateOrder('2023-01-01', '2024-01-01')).not.toThrow()
+  })
+
+  it('throws for a same-day range — end <= start, mirroring the backend', () => {
+    expect(() => requireDateOrder('2023-01-01', '2023-01-01')).toThrowError(
+      '日期区间无效——结束日期必须晚于开始日期',
+    )
+  })
+
+  it('throws for a reversed range', () => {
+    expect(() => requireDateOrder('2024-01-01', '2023-01-01')).toThrowError(
+      '日期区间无效——结束日期必须晚于开始日期',
     )
   })
 })

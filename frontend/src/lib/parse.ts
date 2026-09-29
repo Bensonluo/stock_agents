@@ -98,3 +98,15 @@ export function requireDateField(label: string, raw: string): string {
   if (value === null) throw new Error(`参数 ${label} 无效——请输入日期`)
   return value
 }
+
+/**
+ * Cross-field guard for date pairs (start/end). YYYY-MM-DD strings compare
+ * lexicographically in chronological order, so a plain string comparison
+ * mirrors the backend's end <= start rejection exactly (same-day ranges
+ * are rejected there too). Call after both fields pass requireDateField.
+ */
+export function requireDateOrder(start: string, end: string): void {
+  if (end <= start) {
+    throw new Error('日期区间无效——结束日期必须晚于开始日期')
+  }
+}

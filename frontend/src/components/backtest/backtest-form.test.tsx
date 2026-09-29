@@ -65,4 +65,17 @@ describe('BacktestForm input validation (iterations 136-137)', () => {
     expect(await screen.findByText(/开始日期 无效/)).toBeInTheDocument()
     expect(runBacktest).not.toHaveBeenCalled()
   })
+
+  it('blocks submit when the range is reversed — cross-field error, no API call', async () => {
+    render(<BacktestForm />)
+
+    // Defaults are start 2023-01-01 / end 2024-01-01; moving start past end
+    // mirrors the backend's end <= start rejection before the wire.
+    const start = await screen.findByLabelText(/Start Date/i)
+    fireEvent.change(start, { target: { value: '2024-06-15' } })
+    fireEvent.click(screen.getByRole('button', { name: /Run Backtest/i }))
+
+    expect(await screen.findByText(/日期区间无效——结束日期必须晚于开始日期/)).toBeInTheDocument()
+    expect(runBacktest).not.toHaveBeenCalled()
+  })
 })

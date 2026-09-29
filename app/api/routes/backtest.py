@@ -436,6 +436,25 @@ class CalibrateRequest(BaseModel):
             raise ValueError(f"Invalid benchmark symbol: {value}")
         return cleaned
 
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def _validate_calendar_date(cls, value: str) -> str:
+        """Reject strings that match the pattern but are not calendar dates."""
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError("Date must be a valid calendar date in YYYY-MM-DD format") from exc
+        return value
+
+    @model_validator(mode="after")
+    def _dates_in_order(self) -> "CalibrateRequest":
+        start, end = datetime.strptime(self.start_date, "%Y-%m-%d"), datetime.strptime(
+            self.end_date, "%Y-%m-%d"
+        )
+        if end <= start:
+            raise ValueError("End date must be after start date")
+        return self
+
     @field_validator("horizons")
     @classmethod
     def _validate_horizons(cls, value: list[int]) -> list[int]:
