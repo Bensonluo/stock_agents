@@ -67,3 +67,73 @@ export function providerTone(stats: {
   if (stats.ok + stats.fallback === 0) return 'down'
   return 'degraded'
 }
+
+// ── IC t-stat 判读(SignalQualityCard,iteration 127 提取)───────────────
+// Daily runs share most of the forward window, so the i.i.d. t overstates
+// significance exactly there — wherever the Newey-West t is available it
+// is the honest basis for the verdict (same preference as the aggregate
+// view and the regime bins).
+
+// NW 优先的判读 t:Newey-West 为数字就用它,缺席回退原始 t,都缺 → null。
+export function preferredTStat(
+  tNw: number | null | undefined,
+  tRaw: number | null | undefined
+): number | null {
+  if (typeof tNw === 'number') return tNw
+  if (typeof tRaw === 'number') return tRaw
+  return null
+}
+
+export type TStatTier = 'signal' | 'anti' | 'inconclusive'
+
+// |t| ≥ 2 三档;缺席(样本短/离散度不可估)≡ 无法判读,绝不当作 t=0。
+export function tStatTier(t: number | null | undefined): TStatTier {
+  if (typeof t !== 'number') return 'inconclusive'
+  if (t >= 2) return 'signal'
+  if (t <= -2) return 'anti'
+  return 'inconclusive'
+}
+
+export const T_STAT_CLS: Record<TStatTier, string> = {
+  signal: 'text-emerald-600 dark:text-emerald-400',
+  anti: 'text-red-500',
+  inconclusive: '',
+}
+
+// 聚合 IC 头条判读(SignalQualityCard verdict 行)
+export function tStatVerdict(t: number | null | undefined): { text: string; cls: string } {
+  const tier = tStatTier(t)
+  if (tier === 'signal') {
+    return {
+      text: '决策分数的相对排序显著预测了前向收益（t ≥ 2）',
+      cls: T_STAT_CLS.signal,
+    }
+  }
+  if (tier === 'anti') {
+    return {
+      text: '排序显著反向——分数高的标的前向反而跑输',
+      cls: T_STAT_CLS.anti,
+    }
+  }
+  return {
+    text: '尚无法与随机排序区分——需要更多已成熟的多标的 run',
+    cls: 'text-amber-600 dark:text-amber-400',
+  }
+}
+
+// ── 校准 gap 三档(SignalQualityCard,iteration 127 提取)───────────────
+
+export type CalibrationGapTier = 'overconfident' | 'conservative' | 'aligned'
+
+// 平均声称置信度 − 实证正确率:≥ +5pp 过度自信 / ≤ −5pp 保守 / 其间对齐。
+export function calibrationGapTier(gap: number): CalibrationGapTier {
+  if (gap >= 0.05) return 'overconfident'
+  if (gap <= -0.05) return 'conservative'
+  return 'aligned'
+}
+
+export const CALIBRATION_GAP_CLS: Record<CalibrationGapTier, string> = {
+  overconfident: 'text-amber-600 dark:text-amber-400',
+  conservative: 'text-blue-500',
+  aligned: 'text-emerald-600 dark:text-emerald-400',
+}

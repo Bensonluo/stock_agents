@@ -20,6 +20,14 @@ import {
   type RegimeConditionalICResponse,
   type TopKPortfolioResponse,
 } from '@/lib/utils'
+import {
+  CALIBRATION_GAP_CLS,
+  T_STAT_CLS,
+  calibrationGapTier,
+  preferredTStat,
+  tStatTier,
+  tStatVerdict,
+} from '@/lib/verdicts'
 
 const HORIZONS = [
   { value: '10', label: '10 交易日' },
@@ -100,9 +108,7 @@ export function SignalQualityCard() {
 
   // Prefer the Newey-West t for the verdict: daily runs share most of the
   // forward window, and the i.i.d. t overstates significance exactly there.
-  const tForVerdict = typeof ic?.t_stat_nw === 'number' ? ic.t_stat_nw : ic?.t_stat
-  const isSignal = typeof tForVerdict === 'number' && tForVerdict >= 2
-  const isAntiSignal = typeof tForVerdict === 'number' && tForVerdict <= -2
+  const tForVerdict = preferredTStat(ic?.t_stat_nw, ic?.t_stat)
   const dimEntries = Object.entries(ic?.dimensions ?? {}).filter(
     (entry): entry is [string, NonNullable<typeof entry[1]>] => entry[1] !== null
   )
@@ -123,20 +129,16 @@ export function SignalQualityCard() {
       : calibGap >= 0.05
         ? {
             text: `系统性过度自信——平均声称 ${(calib!.avg_confidence! * 100).toFixed(0)}%，实证只对 ${(calib!.base_rate! * 100).toFixed(0)}%`,
-            cls: 'text-amber-600 dark:text-amber-400',
+            cls: CALIBRATION_GAP_CLS[calibrationGapTier(calibGap)],
           }
         : calibGap <= -0.05
           ? {
               text: `系统性保守——实证正确率高出声称 ${(Math.abs(calibGap) * 100).toFixed(0)} 个百分点`,
-              cls: 'text-blue-500',
+              cls: CALIBRATION_GAP_CLS[calibrationGapTier(calibGap)],
             }
-          : { text: '置信度与实证正确率基本对齐（偏差 <5 个百分点）', cls: 'text-emerald-600 dark:text-emerald-400' }
+          : { text: '置信度与实证正确率基本对齐（偏差 <5 个百分点）', cls: CALIBRATION_GAP_CLS[calibrationGapTier(calibGap)] }
   const reliabilityBins = calib?.reliability ?? []
-  const verdict = isSignal
-    ? { text: '决策分数的相对排序显著预测了前向收益（t ≥ 2）', cls: 'text-emerald-600 dark:text-emerald-400' }
-    : isAntiSignal
-      ? { text: '排序显著反向——分数高的标的前向反而跑输', cls: 'text-red-500' }
-      : { text: '尚无法与随机排序区分——需要更多已成熟的多标的 run', cls: 'text-amber-600 dark:text-amber-400' }
+  const verdict = tStatVerdict(tForVerdict)
 
   return (
     <Card className="shadow-lg shadow-slate-900/5">
@@ -253,13 +255,7 @@ export function SignalQualityCard() {
                     <span className="flex items-center gap-3">
                       <span className="text-muted-foreground">IC {fmt(summary.ic_mean)}</span>
                       <span
-                        className={
-                          typeof summary.t_stat === 'number' && summary.t_stat >= 2
-                            ? 'font-semibold text-emerald-600 dark:text-emerald-400'
-                            : typeof summary.t_stat === 'number' && summary.t_stat <= -2
-                              ? 'font-semibold text-red-500'
-                              : 'font-semibold'
-                        }
+                        className={`font-semibold ${T_STAT_CLS[tStatTier(summary.t_stat)]}`}
                       >
                         t {fmt(summary.t_stat, 2)}
                       </span>
@@ -284,12 +280,10 @@ export function SignalQualityCard() {
                 <div className="flex flex-wrap gap-2">
                   {decayPoints.map((point) => {
                     const active = String(point.horizon_bars) === horizon
-                    const cls =
-                      typeof point.t_stat === 'number' && point.t_stat >= 2
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : typeof point.t_stat === 'number' && point.t_stat <= -2
-                          ? 'text-red-500'
-                          : ''
+                    // The decay backend does not emit t_stat_nw (iteration
+                    // 123 covered aggregate/dimensions/regime/topk only), so
+                    // the raw t is the only basis available here.
+                    const cls = T_STAT_CLS[tStatTier(point.t_stat)]
                     return (
                       <Button
                         key={point.horizon_bars}
@@ -390,13 +384,7 @@ export function SignalQualityCard() {
                         <span>声称 {(bin.avg_confidence * 100).toFixed(0)}%</span>
                         <span>实证 {(bin.empirical_rate * 100).toFixed(0)}%</span>
                         <span
-                          className={
-                            gap >= 0.05
-                              ? 'font-semibold text-amber-600 dark:text-amber-400'
-                              : gap <= -0.05
-                                ? 'font-semibold text-blue-500'
-                                : 'font-semibold text-emerald-600 dark:text-emerald-400'
-                          }
+                          className={`font-semibold ${CALIBRATION_GAP_CLS[calibrationGapTier(gap)]}`}
                         >
                           {gap >= 0 ? '+' : ''}
                           {(gap * 100).toFixed(0)}pp
@@ -437,19 +425,8 @@ export function SignalQualityCard() {
             <div className="flex flex-wrap gap-2">
               {regimeEntries.map(([name, bin]) => {
                 // Same NW preference as the aggregate view.
-                const tNw = typeof bin.t_stat_nw === 'number' ? bin.t_stat_nw : null
-                const t =
-                  tNw !== null
-                    ? tNw
-                    : typeof bin.t_stat === 'number'
-                      ? bin.t_stat
-                      : null
-                const cls =
-                  t !== null && t >= 2
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : t !== null && t <= -2
-                      ? 'text-red-500'
-                      : ''
+                const t = preferredTStat(bin.t_stat_nw, bin.t_stat)
+                const cls = T_STAT_CLS[tStatTier(t)]
                 return (
                   <div key={name} className="px-2 py-1 rounded-md bg-muted/50 text-xs">
                     <span className="text-muted-foreground">

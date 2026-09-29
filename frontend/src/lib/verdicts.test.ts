@@ -10,6 +10,12 @@ import {
   deflatedSharpeVerdict,
   calibrationVerdict,
   providerTone,
+  preferredTStat,
+  tStatTier,
+  tStatVerdict,
+  calibrationGapTier,
+  T_STAT_CLS,
+  CALIBRATION_GAP_CLS,
 } from '@/lib/verdicts'
 
 const EMERALD = 'text-emerald-600 dark:text-emerald-400'
@@ -83,5 +89,78 @@ describe('providerTone', () => {
     expect(providerTone({ ok: 2, fallback: 0, fail: 1 })).toBe('degraded')
     // fallback counts as survival — the fallback chain caught the failures.
     expect(providerTone({ ok: 0, fallback: 2, fail: 3 })).toBe('degraded')
+  })
+})
+
+describe('preferredTStat', () => {
+  it('prefers the Newey-West t whenever it is a number', () => {
+    expect(preferredTStat(0.31, 2.5)).toBe(0.31)
+  })
+  it('falls back to the raw t when NW is absent', () => {
+    expect(preferredTStat(null, 2.5)).toBe(2.5)
+    expect(preferredTStat(undefined, 2.5)).toBe(2.5)
+  })
+  it('returns null when neither is a number', () => {
+    expect(preferredTStat(null, null)).toBeNull()
+    expect(preferredTStat(undefined, undefined)).toBeNull()
+  })
+})
+
+describe('tStatTier', () => {
+  it('labels |t| ≥ 2 signal/anti with inclusive boundaries', () => {
+    expect(tStatTier(2)).toBe('signal')
+    expect(tStatTier(2.5)).toBe('signal')
+    expect(tStatTier(-2)).toBe('anti')
+    expect(tStatTier(-2.5)).toBe('anti')
+  })
+  it('keeps the ±2 interior inconclusive', () => {
+    expect(tStatTier(1.9)).toBe('inconclusive')
+    expect(tStatTier(-1.9)).toBe('inconclusive')
+    expect(tStatTier(0)).toBe('inconclusive')
+  })
+  it('treats absent t as inconclusive, not zero evidence', () => {
+    expect(tStatTier(null)).toBe('inconclusive')
+    expect(tStatTier(undefined)).toBe('inconclusive')
+  })
+})
+
+describe('tStatVerdict', () => {
+  it('renders the headline IC verdicts with the shared colors', () => {
+    expect(tStatVerdict(2.1)).toEqual({
+      text: '决策分数的相对排序显著预测了前向收益（t ≥ 2）',
+      cls: EMERALD,
+    })
+    expect(tStatVerdict(-2.1).cls).toBe(RED)
+    expect(tStatVerdict(1).cls).toBe(AMBER)
+  })
+})
+
+describe('calibrationGapTier', () => {
+  it('labels gap ≥ +5pp as systematic overconfidence (boundary inclusive)', () => {
+    expect(calibrationGapTier(0.05)).toBe('overconfident')
+    expect(calibrationGapTier(0.06)).toBe('overconfident')
+  })
+  it('labels gap ≤ -5pp as systematic conservatism (boundary inclusive)', () => {
+    expect(calibrationGapTier(-0.05)).toBe('conservative')
+    expect(calibrationGapTier(-0.06)).toBe('conservative')
+  })
+  it('keeps sub-5pp gaps aligned', () => {
+    expect(calibrationGapTier(0.049)).toBe('aligned')
+    expect(calibrationGapTier(0)).toBe('aligned')
+    expect(calibrationGapTier(-0.049)).toBe('aligned')
+  })
+})
+
+describe('tier color maps', () => {
+  it('maps t-stat tiers to the shared verdict colors', () => {
+    expect(T_STAT_CLS.signal).toBe(EMERALD)
+    expect(T_STAT_CLS.anti).toBe(RED)
+    // Inconclusive carries no color — the surrounding context decides.
+    expect(T_STAT_CLS.inconclusive).toBe('')
+  })
+  it('maps calibration gaps: overconfident amber / conservative blue / aligned emerald', () => {
+    expect(CALIBRATION_GAP_CLS.overconfident).toBe(AMBER)
+    expect(CALIBRATION_GAP_CLS.conservative).toBe('text-blue-500')
+    expect(CALIBRATION_GAP_CLS.aligned).toBe(EMERALD)
   })
 })
