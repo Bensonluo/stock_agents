@@ -18,16 +18,29 @@ import {
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') + '/api'
 
+// 与结果页 AGENT_NAMES 同词表——同一 agent 在两个页面必须同名
 const AGENTS = [
-  { key: 'data_collection', name: 'Data Collection', icon: Database },
-  { key: 'technical_analysis', name: 'Technical Analysis', icon: TrendingUp },
-  { key: 'fundamental_analysis', name: 'Fundamental Analysis', icon: BarChart3 },
-  { key: 'sentiment_analysis', name: 'Sentiment Analysis', icon: MessageSquare },
-  { key: 'risk_assessment', name: 'Risk Assessment', icon: Shield },
-  { key: 'research_synthesis', name: 'Research Synthesis', icon: Zap },
-  { key: 'decision_making', name: 'Decision Making', icon: Brain },
-  { key: 'report_generation', name: 'Report Generation', icon: FileText },
+  { key: 'data_collection', name: '数据采集', icon: Database },
+  { key: 'technical_analysis', name: '技术分析', icon: TrendingUp },
+  { key: 'fundamental_analysis', name: '基本面分析', icon: BarChart3 },
+  { key: 'sentiment_analysis', name: '情绪分析', icon: MessageSquare },
+  { key: 'risk_assessment', name: '风险评估', icon: Shield },
+  { key: 'research_synthesis', name: '研究综合', icon: Zap },
+  { key: 'decision_making', name: '决策制定', icon: Brain },
+  { key: 'report_generation', name: '报告生成', icon: FileText },
 ]
+
+const STATUS_ZH: Record<string, string> = {
+  pending: '等待中',
+  running: '运行中',
+  completed: '已完成',
+  failed: '失败',
+  degraded: '已降级',
+  loading: '加载中',
+}
+
+const statusZh = (status: string | undefined) =>
+  STATUS_ZH[(status || 'loading').toLowerCase()] || status || '加载中'
 
 export function PipelineMonitor({ threadId }: { threadId: string }) {
   const router = useRouter()
@@ -42,7 +55,7 @@ export function PipelineMonitor({ threadId }: { threadId: string }) {
     try {
       const res = await fetch(`${API_BASE}/monitor/workflow/${threadId}`)
       if (!res.ok) {
-        if (res.status === 404) { setError('Workflow not found'); return }
+        if (res.status === 404) { setError('未找到工作流'); return }
         throw new Error(`HTTP ${res.status}`)
       }
       const data = await res.json()
@@ -50,7 +63,7 @@ export function PipelineMonitor({ threadId }: { threadId: string }) {
       setError(null)
       if (data.status === 'completed' || data.status === 'failed') setPolling(false)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unknown error')
+      setError(e instanceof Error ? e.message : '未知错误')
     }
   }, [threadId])
 
@@ -101,21 +114,21 @@ export function PipelineMonitor({ threadId }: { threadId: string }) {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h1 className="text-2xl font-bold">Workflow Monitor</h1>
-            <p className="text-sm text-muted-foreground">Thread: {threadId.slice(0, 20)}...</p>
+            <h1 className="text-2xl font-bold">工作流监控</h1>
+            <p className="text-sm text-muted-foreground font-mono">线程 {threadId.slice(0, 20)}...</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {polling && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
           <Badge variant={workflow?.status === 'completed' ? 'success' : workflow?.status === 'failed' ? 'destructive' : 'default'}>
-            {workflow?.status || 'loading'}
+            {statusZh(workflow?.status)}
           </Badge>
         </div>
       </div>
 
       {error && (
         <Card className="border-red-500">
-          <CardContent className="p-4 text-red-500">Error: {error}</CardContent>
+          <CardContent className="p-4 text-red-500">错误：{error}</CardContent>
         </Card>
       )}
 
@@ -123,8 +136,8 @@ export function PipelineMonitor({ threadId }: { threadId: string }) {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex justify-between">
-              <span>Progress</span>
-              <span>{Math.round(workflow.progress)}%</span>
+              <span>整体进度</span>
+              <span className="tabular-nums">{Math.round(workflow.progress)}%</span>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -177,7 +190,7 @@ export function PipelineMonitor({ threadId }: { threadId: string }) {
                   </div>
                   <div className="flex-1">
                     <p className="font-medium text-sm">{agent.name}</p>
-                    <p className="text-xs text-muted-foreground capitalize">{status}</p>
+                    <p className="text-xs text-muted-foreground">{statusZh(status)}</p>
                   </div>
                   {getStatusIcon(status)}
                 </div>
@@ -195,14 +208,14 @@ export function PipelineMonitor({ threadId }: { threadId: string }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center justify-between">
-            <span>Execution Logs</span>
-            <span className="text-muted-foreground font-normal">{logs.length} entries</span>
+            <span>执行日志</span>
+            <span className="text-muted-foreground font-normal">{logs.length} 条</span>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-1 max-h-64 overflow-y-auto font-mono text-xs bg-muted/30 p-3 rounded">
             {logs.length === 0 ? (
-              <p className="text-muted-foreground text-center py-4">No logs yet</p>
+              <p className="text-muted-foreground text-center py-4">暂无日志</p>
             ) : (
               logs.map((log, i) => (
                 <div key={i} className={cn(
@@ -223,9 +236,9 @@ export function PipelineMonitor({ threadId }: { threadId: string }) {
       </Card>
 
       <div className="flex justify-center gap-4">
-        <Button variant="outline" onClick={() => router.push('/')}>New Analysis</Button>
+        <Button variant="outline" onClick={() => router.push('/')}>新建分析</Button>
         {workflow?.status === 'completed' && (
-          <Button onClick={() => router.push(`/result?thread_id=${threadId}`)}>View Results</Button>
+          <Button onClick={() => router.push(`/result?thread_id=${threadId}`)}>查看结果</Button>
         )}
       </div>
     </div>

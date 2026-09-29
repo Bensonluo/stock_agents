@@ -25,9 +25,9 @@ export function NoWorkflowSelected() {
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       <Card>
         <CardContent className="p-8 text-center">
-          <p className="text-muted-foreground">No workflow selected</p>
+          <p className="text-muted-foreground">未选择工作流</p>
           <Button className="mt-4" onClick={() => router.push('/')}>
-            Start New Analysis
+            开始新分析
           </Button>
         </CardContent>
       </Card>

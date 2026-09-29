@@ -53,7 +53,7 @@ export function ReactMonitor({ threadId }: { threadId: string }) {
         setPolling(false)
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unknown error')
+      setError(e instanceof Error ? e.message : '未知错误')
     }
   }, [threadId])
 
@@ -116,8 +116,8 @@ export function ReactMonitor({ threadId }: { threadId: string }) {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h1 className="text-2xl font-bold">ReAct Agent Monitor</h1>
-            <p className="text-sm text-muted-foreground">Thread: {threadId.slice(0, 24)}...</p>
+            <h1 className="text-2xl font-bold">ReAct 智能体监控</h1>
+            <p className="text-sm text-muted-foreground font-mono">线程 {threadId.slice(0, 24)}...</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -130,7 +130,7 @@ export function ReactMonitor({ threadId }: { threadId: string }) {
 
       {error && (
         <Card className="border-red-500">
-          <CardContent className="p-4 text-red-500">Error: {error}</CardContent>
+          <CardContent className="p-4 text-red-500">错误：{error}</CardContent>
         </Card>
       )}
 
@@ -188,7 +188,7 @@ export function ReactMonitor({ threadId }: { threadId: string }) {
               </div>
             </div>
             <div className="flex items-center justify-between text-sm text-muted-foreground">
-              <span>Iteration {progress.iteration} / {progress.max_iterations}</span>
+              <span>迭代 {progress.iteration} / {progress.max_iterations}</span>
               <span className="tabular-nums">
                 {elapsedMs !== null ? `已运行 ${formatElapsed(elapsedMs)}` : '计时不可用'}
                 {' · '}{iterPct}%
