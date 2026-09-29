@@ -191,6 +191,14 @@ class TestSectorBenchmarkAttach:
 
         monkeypatch.setattr(module, "fetch_benchmark_history", fake_benchmark)
 
+        async def no_cn_fetch(symbol, current_price=None):
+            return None
+
+        # CN legs must be stubbed, not left to the real fetchers: the pass
+        # would otherwise depend on the host failing to reach East Money.
+        monkeypatch.setattr(module, "fetch_cn_sector_benchmark", no_cn_fetch)
+        monkeypatch.setattr(module, "fetch_cn_consensus", no_cn_fetch)
+
         result = await agent.execute({"symbols": ["AAPL", "MSFT", "600000"]})
 
         # Market index once per market + the sector ETF once, never per symbol.

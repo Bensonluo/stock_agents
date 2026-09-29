@@ -6,6 +6,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -115,6 +116,51 @@ def test_agent_uses_decimal_ratio_thresholds_for_profitability() -> None:
 
     assert result["score"] == 100
     assert result["status"] == "available"
+
+
+def _strip_wallclock(node: Any) -> Any:
+    """Drop timestamp/as_of stamps recursively — provenance, not signal."""
+    if isinstance(node, dict):
+        return {
+            k: _strip_wallclock(v)
+            for k, v in node.items()
+            if k not in ("timestamp", "as_of", "generated_at")
+        }
+    if isinstance(node, list):
+        return [_strip_wallclock(item) for item in node]
+    return node
+
+
+@pytest.mark.asyncio
+async def test_consensus_sibling_key_is_pure_annotation() -> None:
+    """The data agent parks the CN analyst-consensus block BESIDE ``metrics``
+    in financial_data[symbol]; the fundamental scoring path must not read it —
+    identical analysis output with the key present vs absent (wall-clock
+    stamps stripped: they are provenance, not signal)."""
+    agent = _fundamental_agent()
+    fin_data = {
+        "metrics": {
+            "roe": 0.20,
+            "roa": 0.10,
+            "profit_margin": 0.20,
+            "operating_margin": 0.15,
+            "pe_ratio": 5.2,
+            "revenue_growth": 0.08,
+        }
+    }
+    mkt_data = {"symbol": "600000", "current_price": 9.16}
+    consensus_block = {
+        "status": "ok",
+        "eps_forecast": {"year1": 2026, "eps_mean": 2.15, "org_count": 12},
+        "ratings": {"counts": {"买入": 4}, "dominant": "买入", "total": 4},
+    }
+
+    with_consensus = await agent._analyze_fundamentals(
+        "600000", {**fin_data, "consensus": consensus_block}, mkt_data
+    )
+    without = await agent._analyze_fundamentals("600000", dict(fin_data), mkt_data)
+
+    assert _strip_wallclock(with_consensus) == _strip_wallclock(without)
 
 
 def test_missing_growth_is_not_replaced_with_a_neutral_score() -> None:

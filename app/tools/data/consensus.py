@@ -1,0 +1,260 @@
+"""Analyst-consensus annotation layer for CN symbols (iteration 163).
+
+Two akshare endpoints (shapes verified live 2026-09-30, akshare 1.18.96):
+    stock_profit_forecast_ths(symbol, indicator='预测年报每股收益')
+        [年度, 预测机构数, 最小值, 均值, 最大值, 行业平均数]
+    stock_institute_recommend_detail(symbol)
+        [股票代码, 股票名称, 目标价, 最新评级, 评级机构, 分析师, 行业, 评级日期]
+
+Layered like option_signals (iteration 155):
+    fetch layer  — never-raise akshare seam, lazy import, raw frames only
+    cache layer  — raw (forecast_df, ratings_df) tuple under consensus_raw:{symbol},
+                   30-min TTL; total failure is never cached (retried), an empty
+                   frame IS cached (no coverage is a valid provider answer)
+    pure layer   — consensus_annotation builds eps_forecast / target_price /
+                   ratings blocks from the raw frames plus the caller's price
+    health layer — record_provider_outcome per endpoint seam ("ths-forecast" /
+                   "sina-ratings"), empty frame = ok (data absence, not failure)
+
+The annotation is PURE: nothing in the scoring, risk or decision paths may
+read it (the liquidity/sector_relative/option_implied convention). Caching
+the RAW frames (price-independent) means the annotation is recomputed fresh
+on every call, so implied_upside always tracks the caller's current price.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import math
+import statistics
+from datetime import date, timedelta
+from typing import Any
+
+import pandas as pd
+
+from app.tools.data.fetcher_common import _cache_get, _cache_set
+from app.tools.data.provider_health import record_provider_outcome
+
+# Ratings older than this are not observations — analysts re-rate, and a
+# 2-year-old target price says nothing about today's consensus. 180 days is
+# roughly two earnings seasons of coverage.
+CONSENSUS_RATING_WINDOW_DAYS = 180
+
+# A mean/median over fewer observations is noise dressed up as consensus.
+MIN_TARGET_OBSERVATIONS = 3
+
+# Canonical bullish→bearish scale. Order is load-bearing: max() keeps the
+# first maximum, so a count tie resolves to the more bullish label.
+_RATING_LABELS = ("买入", "增持", "中性", "减持", "卖出")
+
+_RAW_CACHE_PREFIX = "consensus_raw:"
+
+
+def _to_float(value: Any) -> float | None:
+    """Finite native float or None — np.float64/nan/inf/garbage all handled.
+
+    The JSON boundary never accepts numpy types, and NaN poisons every
+    downstream round(); refuse them at the door.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(number) or math.isinf(number):
+        return None
+    return number
+
+
+def _to_int(value: Any) -> int | None:
+    number = _to_float(value)
+    return None if number is None else int(number)
+
+
+def _parse_date(value: Any) -> date | None:
+    if value is None:
+        return None
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.date()
+
+
+def _recent_rows(ratings_df: pd.DataFrame | None) -> list[dict[str, Any]]:
+    """Rows whose 评级日期 parses and falls inside the rating window.
+
+    Exactly window_days old is IN (the cutoff is inclusive), one day older
+    is OUT; unparseable dates are excluded rather than guessed.
+    """
+    if ratings_df is None or ratings_df.empty:
+        return []
+    cutoff = date.today() - timedelta(days=CONSENSUS_RATING_WINDOW_DAYS)
+    recent = []
+    for row in ratings_df.to_dict("records"):
+        parsed = _parse_date(row.get("评级日期"))
+        if parsed is not None and parsed >= cutoff:
+            recent.append(row)
+    return recent
+
+
+def _eps_forecast_block(forecast_df: pd.DataFrame | None) -> dict[str, Any] | None:
+    """THS annual EPS consensus: nearest year always, next year when adjacent.
+
+    year2 is strictly year1+1 — a gap year (2026+2028) is not a growth
+    signal, it is missing coverage. implied_growth needs a positive base:
+    growth over a zero/negative mean is numerically meaningless.
+    """
+    if forecast_df is None or forecast_df.empty:
+        return None
+    rows: list[tuple[int, float, int | None, float | None]] = []
+    for row in forecast_df.to_dict("records"):
+        year = _to_int(row.get("年度"))
+        mean = _to_float(row.get("均值"))
+        if year is None or mean is None:
+            continue
+        rows.append((year, mean, _to_int(row.get("预测机构数")), _to_float(row.get("行业平均数"))))
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r[0])
+    year1, mean1, org1, ind1 = rows[0]
+    block: dict[str, Any] = {
+        "year1": year1,
+        "eps_mean": round(mean1, 4),
+        "org_count": org1,
+        "industry_avg": round(ind1, 4) if ind1 is not None else None,
+    }
+    for year, mean, _org, _ind in rows[1:]:
+        if year == year1 + 1:
+            block["year2"] = year
+            block["eps_mean_year2"] = round(mean, 4)
+            if mean1 > 0:
+                block["implied_growth"] = round(mean / mean1 - 1, 4)
+            break
+    return block
+
+
+def _target_price_block(
+    recent_rows: list[dict[str, Any]], current_price: Any
+) -> dict[str, Any] | None:
+    """Consensus target stats over the rating window; None below the floor.
+
+    Non-positive and unparseable 目标价 values are not observations. The
+    implied upside rides on the caller's price — the cache stores raw frames
+    precisely so this stays fresh per call.
+    """
+    targets = []
+    for row in recent_rows:
+        value = _to_float(row.get("目标价"))
+        if value is not None and value > 0:
+            targets.append(value)
+    if len(targets) < MIN_TARGET_OBSERVATIONS:
+        return None
+    mean = sum(targets) / len(targets)
+    block: dict[str, Any] = {
+        "count": len(targets),
+        "mean": round(mean, 4),
+        "median": round(float(statistics.median(targets)), 4),
+        "window_days": CONSENSUS_RATING_WINDOW_DAYS,
+    }
+    price = _to_float(current_price)
+    if price is not None and price > 0:
+        block["implied_upside"] = round(mean / price - 1, 4)
+    return block
+
+
+def _ratings_block(recent_rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Label counts over the canonical scale; off-scale labels are ignored.
+
+    A feed with zero known-label rows yields no block — "only 推荐 ratings"
+    is absence of consensus on this scale, not a neutral consensus.
+    """
+    counts = {label: 0 for label in _RATING_LABELS}
+    total = 0
+    for row in recent_rows:
+        label = row.get("最新评级")
+        if label in counts:
+            counts[label] += 1
+            total += 1
+    if total < 1:
+        return None
+    dominant = max(_RATING_LABELS, key=lambda label: counts[label])
+    return {"counts": counts, "dominant": dominant, "total": total}
+
+
+def consensus_annotation(
+    forecast_df: pd.DataFrame | None,
+    ratings_df: pd.DataFrame | None,
+    current_price: Any = None,
+) -> dict[str, Any] | None:
+    """Build the pure consensus block; None when no block has any content.
+
+    status is "ok" when the hard-number evidence (EPS forecast or target
+    prices) exists; a ratings-only block is "insufficient_data" — counts
+    alone don't justify the stronger claim.
+    """
+    eps = _eps_forecast_block(forecast_df)
+    recent_rows = _recent_rows(ratings_df)
+    target = _target_price_block(recent_rows, current_price)
+    ratings = _ratings_block(recent_rows)
+    if eps is None and target is None and ratings is None:
+        return None
+    block: dict[str, Any] = {
+        "status": "ok" if (eps is not None or target is not None) else "insufficient_data"
+    }
+    if eps is not None:
+        block["eps_forecast"] = eps
+    if target is not None:
+        block["target_price"] = target
+    if ratings is not None:
+        block["ratings"] = ratings
+    return block
+
+
+def _sync_fetch_raw(symbol: str) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+    """Fetch both endpoints; each leg degrades alone, never raises.
+
+    An empty frame is a provider "ok" (no coverage for this symbol); an
+    exception is a "fail". Both legs dead → (None, None), which the async
+    wrapper refuses to cache so the next call retries.
+    """
+    try:
+        import akshare as ak
+    except ImportError:
+        return None, None
+
+    forecast_df = None
+    try:
+        forecast_df = ak.stock_profit_forecast_ths(symbol=symbol, indicator="预测年报每股收益")
+        record_provider_outcome("ths-forecast", "ok")
+    except Exception as e:
+        record_provider_outcome("ths-forecast", "fail", f"{type(e).__name__}: {e}")
+
+    ratings_df = None
+    try:
+        ratings_df = ak.stock_institute_recommend_detail(symbol=symbol)
+        record_provider_outcome("sina-ratings", "ok")
+    except Exception as e:
+        record_provider_outcome("sina-ratings", "fail", f"{type(e).__name__}: {e}")
+
+    return forecast_df, ratings_df
+
+
+async def fetch_cn_consensus(
+    symbol: str, current_price: float | None = None
+) -> dict[str, Any] | None:
+    """Cached consensus annotation for a 6-digit CN symbol; never raises.
+
+    Raw frames are cached for 30 minutes (price-independent); the annotation
+    is recomputed on every call so implied_upside tracks the caller's price.
+    """
+    cache_key = f"{_RAW_CACHE_PREFIX}{symbol}"
+    raw = _cache_get(cache_key)
+    if raw is None:
+        raw = await asyncio.to_thread(_sync_fetch_raw, symbol)
+        forecast_df, ratings_df = raw
+        if forecast_df is None and ratings_df is None:
+            return None  # total failure — retried next call, never cached
+        _cache_set(cache_key, raw)
+    forecast_df, ratings_df = raw
+    return consensus_annotation(forecast_df, ratings_df, current_price)

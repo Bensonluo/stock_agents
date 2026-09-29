@@ -30,6 +30,7 @@ _akshare_semaphore = asyncio.Semaphore(5)
 # provider chain emits the same metrics); the three pure re-exports
 # (F401-suppressed) keep this module the single import point for the
 # agent's call sites and its existing tests.
+from app.tools.data.consensus import fetch_cn_consensus  # noqa: E402
 from app.tools.data.fetcher import (  # noqa: E402
     BENCHMARK_TICKERS,
     DEFAULT_HISTORY_DAYS,
@@ -67,6 +68,11 @@ def _yfinance_debt_to_equity_ratio(value: Any) -> float | None:
 async def _no_option_snapshot() -> None:
     """Stand-in awaitable so the disabled option leg joins the tail gather."""
     return None
+
+
+async def _no_consensus_blocks() -> list[None]:
+    """Stand-in awaitable so the disabled consensus leg joins the tail gather."""
+    return []
 
 
 def convert_to_yahoo_symbol(symbol: str) -> str:
@@ -422,19 +428,21 @@ class DataCollectionAgent(BaseAgent):
         # Merge duplicate articles (same link/title) across symbol fetches
         news_data = _dedup_news(news_data)
 
-        # The four tail fetches — per-market benchmark series (one per
+        # The five tail fetches — per-market benchmark series (one per
         # represented market, feeding the risk stage's beta/alpha/R²
-        # regression), SPDR sector benchmarks, CN industry benchmarks and
-        # the CN option snapshot (SSE per-contract IV/Greeks + volume PCR +
+        # regression), SPDR sector benchmarks, CN industry benchmarks, the
+        # CN option snapshot (SSE per-contract IV/Greeks + volume PCR +
         # QVIX, iteration 155: market-level PURE ANNOTATION, the risk stage
-        # labels 恐慌/中性/自满 and nothing scores it) — read only `symbols`
-        # and the already-collected `market_data`, never each other's
-        # results, so they run in ONE gather: worst-case wall time is the
-        # slowest leg, not the sum. Writes stay disjoint: the market loop
-        # owns benchmark_historical_data; the SPDR sector map excludes CN
-        # symbols so the CN industry loop keeps its unconditional write of
-        # sector_benchmark_historical_data (CN blocks carry no sector field
-        # today — the exclusion makes that guarantee structural, not
+        # labels 恐慌/中性/自满 and nothing scores it) and the CN analyst
+        # consensus (iteration 163: THS EPS forecasts + Sina ratings under
+        # financial_data[symbol]["consensus"], equally pure) — read only
+        # `symbols` and the already-collected `market_data`, never each
+        # other's results, so they run in ONE gather: worst-case wall time
+        # is the slowest leg, not the sum. Writes stay disjoint: the market
+        # loop owns benchmark_historical_data; the SPDR sector map excludes
+        # CN symbols so the CN industry loop keeps its unconditional write
+        # of sector_benchmark_historical_data (CN blocks carry no sector
+        # field today — the exclusion makes that guarantee structural, not
         # incidental); a failed fetch on any leg just leaves its key
         # absent, exactly as before the gather existed.
         cn_symbols = [s for s in market_data if benchmark_ticker_for(s) == BENCHMARK_TICKERS["cn"]]
@@ -446,11 +454,24 @@ class DataCollectionAgent(BaseAgent):
         }
         wanted = sorted({t for t in sector_tickers.values() if t})
         want_options = bool(get_settings().option_signals_enabled and cn_symbols)
-        fetched, sector_fetched, cn_benchmarks, option_snapshot = await asyncio.gather(
-            asyncio.gather(*(fetch_benchmark_history(t) for t in tickers)),
-            asyncio.gather(*(fetch_benchmark_history(t) for t in wanted)),
-            asyncio.gather(*(fetch_cn_sector_benchmark(s) for s in cn_symbols)),
-            self._fetch_option_snapshot() if want_options else _no_option_snapshot(),
+        want_consensus = bool(get_settings().consensus_enabled and cn_symbols)
+        fetched, sector_fetched, cn_benchmarks, option_snapshot, consensus_blocks = (
+            await asyncio.gather(
+                asyncio.gather(*(fetch_benchmark_history(t) for t in tickers)),
+                asyncio.gather(*(fetch_benchmark_history(t) for t in wanted)),
+                asyncio.gather(*(fetch_cn_sector_benchmark(s) for s in cn_symbols)),
+                self._fetch_option_snapshot() if want_options else _no_option_snapshot(),
+                (
+                    asyncio.gather(
+                        *(
+                            fetch_cn_consensus(s, (market_data.get(s) or {}).get("current_price"))
+                            for s in cn_symbols
+                        )
+                    )
+                    if want_consensus
+                    else _no_consensus_blocks()
+                ),
+            )
         )
 
         # One benchmark series per represented market (max two extra
@@ -481,6 +502,14 @@ class DataCollectionAgent(BaseAgent):
         for s, bench in zip(cn_symbols, cn_benchmarks):
             if bench and market_data[s]:
                 market_data[s]["sector_benchmark_historical_data"] = bench
+
+        # CN analyst consensus: rides the same financial_data map the
+        # AkShare merge fills (per-key merge keeps the consensus sibling
+        # alive); a None block (no coverage / total fetch failure) leaves
+        # the key absent — the option/benchmark absence convention.
+        for s, block in zip(cn_symbols, consensus_blocks):
+            if block is not None:
+                financial_data[s] = {**(financial_data.get(s) or {}), "consensus": block}
 
         logger.info(
             f"Collected data for {len(market_data)} symbols, " f"{len(news_data)} news items"

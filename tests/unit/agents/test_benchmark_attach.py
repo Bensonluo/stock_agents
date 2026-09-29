@@ -101,6 +101,11 @@ class TestBenchmarkAttach:
             "fetch_cn_sector_benchmark",
             AsyncMock(return_value=None),
         )
+        monkeypatch.setattr(
+            data_agent_module,
+            "fetch_cn_consensus",
+            AsyncMock(return_value=None),
+        )
 
     @pytest.mark.asyncio
     async def test_one_benchmark_per_market_attached_to_symbols(

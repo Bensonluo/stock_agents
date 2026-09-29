@@ -38,6 +38,7 @@ from app.tools.analysis.technical import (
     _generate_signals,
     _to_dataframe,
 )
+from app.tools.data.consensus import fetch_cn_consensus
 from app.tools.data.fetcher import (
     BENCHMARK_TICKERS,
     benchmark_ticker_for,
@@ -144,6 +145,25 @@ async def _attach_benchmark(market: dict[str, Any], symbol: str) -> dict[str, An
     return market
 
 
+async def _attach_consensus(
+    symbol: str, financial: dict[str, Any], current_price: Any
+) -> dict[str, Any]:
+    """CN analyst-consensus twin of the pipeline's fifth tail leg.
+
+    Same contract as the data agent: 6-digit symbol + enabled toggle -> the
+    consensus block rides financial_data[symbol]["consensus"]; disabled
+    toggle, no coverage, or total fetch failure -> financial unchanged (key
+    absent, the option/benchmark convention). fetch_cn_consensus is a
+    never-raise seam, so there is no outer try — same as _attach_benchmark.
+    """
+    if not (get_settings().consensus_enabled and symbol.isdigit() and len(symbol) == 6):
+        return financial
+    block = await fetch_cn_consensus(symbol, current_price)
+    if block is not None:
+        return {**financial, "consensus": block}
+    return financial
+
+
 async def _augment_news(symbol: str, articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """ReAct news seam: East Money feed for A-shares + cross-source dedup.
 
@@ -222,7 +242,7 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
             )
             return {
                 "market_data": {symbol: await _attach_benchmark(market, symbol)},
-                "financial_data": {symbol: {}},
+                "financial_data": {symbol: await _attach_consensus(symbol, {}, last_close)},
                 "news_data": await _augment_news(symbol, []),
             }
         return None
@@ -251,7 +271,11 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
 
     return {
         "market_data": {symbol: await _attach_benchmark(market, symbol)},
-        "financial_data": {symbol: data.get("financial_data", {})},
+        "financial_data": {
+            symbol: await _attach_consensus(
+                symbol, data.get("financial_data", {}), market.get("current_price")
+            )
+        },
         "news_data": await _augment_news(symbol, data.get("news_data", [])),
     }
 

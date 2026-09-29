@@ -269,6 +269,13 @@ class ReportService:
                 "valuation_scenarios": compact_valuation_view(analysis.get("valuation_scenarios")),
                 "quality": compact_quality_view(analysis.get("quality")),
             }
+            # CN analyst consensus rides the raw financial_data map (the data
+            # agent attaches it there per symbol); the fundamental score never
+            # reads it — the same annotation-only passthrough as the risk
+            # section's liquidity/sector_relative blocks. Absent → key omitted.
+            consensus = (c["financial_data"].get(symbol) or {}).get("consensus")
+            if isinstance(consensus, dict):
+                by_symbol[symbol]["consensus"] = consensus
 
         overall_rating = "hold"
         if numeric_scores:

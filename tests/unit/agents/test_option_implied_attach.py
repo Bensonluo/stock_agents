@@ -118,6 +118,7 @@ def _patch_collection(monkeypatch: pytest.MonkeyPatch, symbols: list[str]) -> No
     monkeypatch.setattr(data_agent_mod.DataCollectionAgent, "_collect_symbol_data", fake_collect)
     monkeypatch.setattr(data_agent_mod, "fetch_benchmark_history", _no_benchmarks)
     monkeypatch.setattr(data_agent_mod, "fetch_cn_sector_benchmark", _no_benchmarks)
+    monkeypatch.setattr(data_agent_mod, "fetch_cn_consensus", _no_benchmarks)
     monkeypatch.setattr(data_agent_mod, "sector_benchmark_ticker", lambda sector: None)
 
 

@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     # trio + QVIX, attached as a market-level annotation for CN runs — pure
     # label, no scoring path reads it.
     option_signals_enabled: bool = True
+    # CN analyst-consensus annotation layer (iteration 163): THS annual EPS
+    # forecasts + Sina institute ratings for 6-digit symbols, attached under
+    # financial_data[symbol]["consensus"] — pure annotation, no scoring reads it.
+    consensus_enabled: bool = True
 
     # Agent Settings (ReAct)
     agent_max_iterations: int = 15
