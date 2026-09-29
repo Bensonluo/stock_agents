@@ -36,9 +36,9 @@ describe('BacktestForm input validation (iterations 136-137)', () => {
   it('blocks submit when initial cash is cleared — field-named error, no API call', async () => {
     render(<BacktestForm />)
 
-    const cash = await screen.findByLabelText(/Initial Cash/i)
+    const cash = await screen.findByLabelText(/初始资金/)
     fireEvent.change(cash, { target: { value: '' } })
-    fireEvent.click(screen.getByRole('button', { name: /Run Backtest/i }))
+    fireEvent.click(screen.getByRole('button', { name: /开始回测/ }))
 
     expect(await screen.findByText(/初始资金 无效/)).toBeInTheDocument()
     expect(runBacktest).not.toHaveBeenCalled()
@@ -47,9 +47,9 @@ describe('BacktestForm input validation (iterations 136-137)', () => {
   it('blocks submit when the symbol is cleared — named error, no API call', async () => {
     render(<BacktestForm />)
 
-    const symbol = await screen.findByLabelText(/Stock Symbol/i)
+    const symbol = await screen.findByLabelText(/股票代码/)
     fireEvent.change(symbol, { target: { value: '' } })
-    fireEvent.click(screen.getByRole('button', { name: /Run Backtest/i }))
+    fireEvent.click(screen.getByRole('button', { name: /开始回测/ }))
 
     expect(await screen.findByText(/股票代码 不能为空/)).toBeInTheDocument()
     expect(runBacktest).not.toHaveBeenCalled()
@@ -58,9 +58,9 @@ describe('BacktestForm input validation (iterations 136-137)', () => {
   it('blocks submit when a date is cleared — named error, no API call', async () => {
     render(<BacktestForm />)
 
-    const start = await screen.findByLabelText(/Start Date/i)
+    const start = await screen.findByLabelText(/开始日期/)
     fireEvent.change(start, { target: { value: '' } })
-    fireEvent.click(screen.getByRole('button', { name: /Run Backtest/i }))
+    fireEvent.click(screen.getByRole('button', { name: /开始回测/ }))
 
     expect(await screen.findByText(/开始日期 无效/)).toBeInTheDocument()
     expect(runBacktest).not.toHaveBeenCalled()
@@ -71,9 +71,9 @@ describe('BacktestForm input validation (iterations 136-137)', () => {
 
     // Defaults are start 2023-01-01 / end 2024-01-01; moving start past end
     // mirrors the backend's end <= start rejection before the wire.
-    const start = await screen.findByLabelText(/Start Date/i)
+    const start = await screen.findByLabelText(/开始日期/)
     fireEvent.change(start, { target: { value: '2024-06-15' } })
-    fireEvent.click(screen.getByRole('button', { name: /Run Backtest/i }))
+    fireEvent.click(screen.getByRole('button', { name: /开始回测/ }))
 
     expect(await screen.findByText(/日期区间无效——结束日期必须晚于开始日期/)).toBeInTheDocument()
     expect(runBacktest).not.toHaveBeenCalled()
@@ -85,9 +85,9 @@ describe('BacktestForm input validation (iterations 136-137)', () => {
     // Default strategy is sma_crossover (short 20 / long 50); flipping the
     // short period past the long one mirrors the backend's sma_short >=
     // sma_long rejection before the wire.
-    const short = await screen.findByLabelText(/Short Period/i)
+    const short = await screen.findByLabelText(/短周期/)
     fireEvent.change(short, { target: { value: '50' } })
-    fireEvent.click(screen.getByRole('button', { name: /Run Backtest/i }))
+    fireEvent.click(screen.getByRole('button', { name: /开始回测/ }))
 
     expect(await screen.findByText(/参数 sma_short 必须小于 sma_long/)).toBeInTheDocument()
     expect(runBacktest).not.toHaveBeenCalled()

@@ -95,7 +95,7 @@ export function BacktestForm() {
       const response = await API.runBacktest(request)
       setResult(response)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Backtest failed')
+      setError(err instanceof Error ? err.message : '回测失败')
     } finally {
       setLoading(false)
     }
@@ -117,7 +117,7 @@ export function BacktestForm() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="symbol">Stock Symbol</Label>
+                <Label htmlFor="symbol">股票代码</Label>
                 <Input
                   id="symbol"
                   value={symbol}
@@ -128,10 +128,10 @@ export function BacktestForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="strategy">Strategy</Label>
+                <Label htmlFor="strategy">策略</Label>
                 <Select value={strategy} onValueChange={setStrategy} disabled={loading}>
                   <SelectTrigger id="strategy">
-                    <SelectValue placeholder="Select strategy" />
+                    <SelectValue placeholder="选择策略" />
                   </SelectTrigger>
                   <SelectContent>
                     {strategies?.strategies.map((s) => (
@@ -144,7 +144,7 @@ export function BacktestForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="start_date">Start Date</Label>
+                <Label htmlFor="start_date">开始日期</Label>
                 <Input
                   id="start_date"
                   type="date"
@@ -155,7 +155,7 @@ export function BacktestForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="end_date">End Date</Label>
+                <Label htmlFor="end_date">结束日期</Label>
                 <Input
                   id="end_date"
                   type="date"
@@ -166,7 +166,7 @@ export function BacktestForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="initial_cash">Initial Cash ($)</Label>
+                <Label htmlFor="initial_cash">初始资金（美元）</Label>
                 <Input
                   id="initial_cash"
                   type="number"
@@ -181,7 +181,7 @@ export function BacktestForm() {
               {strategy === 'sma_crossover' && (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="sma_short">Short Period</Label>
+                    <Label htmlFor="sma_short">短周期</Label>
                     <Input
                       id="sma_short"
                       type="number"
@@ -193,7 +193,7 @@ export function BacktestForm() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="sma_long">Long Period</Label>
+                    <Label htmlFor="sma_long">长周期</Label>
                     <Input
                       id="sma_long"
                       type="number"
@@ -210,15 +210,15 @@ export function BacktestForm() {
               {strategy === 'rsi_strategy' && (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="rsi_period">RSI Period</Label>
+                    <Label htmlFor="rsi_period">RSI 周期</Label>
                     <Input id="rsi_period" type="number" value={rsiPeriod} onChange={(e) => setRsiPeriod(e.target.value)} disabled={loading} min="5" max="50" />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="rsi_overbought">Overbought</Label>
+                    <Label htmlFor="rsi_overbought">超买阈值</Label>
                     <Input id="rsi_overbought" type="number" value={rsiOverbought} onChange={(e) => setRsiOverbought(e.target.value)} disabled={loading} min="50" max="100" />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="rsi_oversold">Oversold</Label>
+                    <Label htmlFor="rsi_oversold">超卖阈值</Label>
                     <Input id="rsi_oversold" type="number" value={rsiOversold} onChange={(e) => setRsiOversold(e.target.value)} disabled={loading} min="0" max="50" />
                   </div>
                 </>
@@ -227,15 +227,15 @@ export function BacktestForm() {
               {strategy === 'macd_strategy' && (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="fast_period">Fast EMA</Label>
+                    <Label htmlFor="fast_period">快线 EMA</Label>
                     <Input id="fast_period" type="number" value={fastPeriod} onChange={(e) => setFastPeriod(e.target.value)} disabled={loading} min="2" max="100" />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="slow_period">Slow EMA</Label>
+                    <Label htmlFor="slow_period">慢线 EMA</Label>
                     <Input id="slow_period" type="number" value={slowPeriod} onChange={(e) => setSlowPeriod(e.target.value)} disabled={loading} min="3" max="200" />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="signal_period">Signal EMA</Label>
+                    <Label htmlFor="signal_period">信号线 EMA</Label>
                     <Input id="signal_period" type="number" value={signalPeriod} onChange={(e) => setSignalPeriod(e.target.value)} disabled={loading} min="2" max="100" />
                   </div>
                 </>
@@ -243,7 +243,7 @@ export function BacktestForm() {
 
               {strategy === 'technical_score' && (
                 <div className="space-y-2">
-                  <Label htmlFor="score_threshold">Score Threshold</Label>
+                  <Label htmlFor="score_threshold">信号分数阈值</Label>
                   <Input id="score_threshold" type="number" value={scoreThreshold} onChange={(e) => setScoreThreshold(e.target.value)} disabled={loading} min="-100" max="100" />
                   <p className="text-xs text-muted-foreground">
                     决策层技术面分的买入阈值（−100..100）；10 = 线上管线的 moderate_buy 档线
@@ -262,12 +262,12 @@ export function BacktestForm() {
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Running Backtest...
+                  正在运行回测...
                 </>
               ) : (
                 <>
                   <Play className="mr-2 h-4 w-4" />
-                  Run Backtest
+                  开始回测
                 </>
               )}
             </Button>
@@ -292,7 +292,7 @@ function BacktestResult({ result }: BacktestResultProps) {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
-            <span>Backtest Results</span>
+            <span>回测结果</span>
             <span className={`text-sm font-normal ${isProfitable ? 'text-green-500' : 'text-red-500'}`}>
               {isProfitable ? '+' : ''}{result.total_return_pct.toFixed(2)}%
             </span>
@@ -305,41 +305,41 @@ function BacktestResult({ result }: BacktestResultProps) {
           {/* Stats Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="p-4 bg-muted/50 rounded-lg">
-              <div className="text-sm text-muted-foreground">Initial Cash</div>
+              <div className="text-sm text-muted-foreground">初始资金</div>
               <div className="text-xl font-bold">${result.initial_cash.toLocaleString()}</div>
             </div>
             <div className="p-4 bg-muted/50 rounded-lg">
-              <div className="text-sm text-muted-foreground">Final Value</div>
+              <div className="text-sm text-muted-foreground">期末总值</div>
               <div className={`text-xl font-bold ${isProfitable ? 'text-green-500' : 'text-red-500'}`}>
                 ${result.final_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
             <div className="p-4 bg-muted/50 rounded-lg">
-              <div className="text-sm text-muted-foreground">Total Return</div>
+              <div className="text-sm text-muted-foreground">总收益</div>
               <div className={`text-xl font-bold ${isProfitable ? 'text-green-500' : 'text-red-500'}`}>
                 {isProfitable ? '+' : ''}${result.total_return.toFixed(2)}
               </div>
             </div>
             <div className="p-4 bg-muted/50 rounded-lg">
-              <div className="text-sm text-muted-foreground">Annual Return</div>
+              <div className="text-sm text-muted-foreground">年化收益</div>
               <div className={`text-xl font-bold ${result.annual_return >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                 {result.annual_return >= 0 ? '+' : ''}{result.annual_return.toFixed(2)}%
               </div>
             </div>
             <div className="p-4 bg-muted/50 rounded-lg">
-              <div className="text-sm text-muted-foreground">Sharpe Ratio</div>
+              <div className="text-sm text-muted-foreground">夏普比率</div>
               <div className="text-xl font-bold">{result.sharpe_ratio.toFixed(2)}</div>
             </div>
             <div className="p-4 bg-muted/50 rounded-lg">
-              <div className="text-sm text-muted-foreground">Max Drawdown</div>
+              <div className="text-sm text-muted-foreground">最大回撤</div>
               <div className="text-xl font-bold text-red-500">-{result.max_drawdown.toFixed(2)}%</div>
             </div>
             <div className="p-4 bg-muted/50 rounded-lg">
-              <div className="text-sm text-muted-foreground">Win Rate</div>
+              <div className="text-sm text-muted-foreground">胜率</div>
               <div className="text-xl font-bold">{result.win_rate.toFixed(1)}%</div>
             </div>
             <div className="p-4 bg-muted/50 rounded-lg">
-              <div className="text-sm text-muted-foreground">Total Trades</div>
+              <div className="text-sm text-muted-foreground">总交易次数</div>
               <div className="text-xl font-bold">{result.total_trades}</div>
             </div>
           </div>

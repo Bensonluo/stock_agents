@@ -95,7 +95,7 @@ export function CalibrationForm() {
 
       setResult(await API.calibrateSignals(request))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Calibration failed')
+      setError(err instanceof Error ? err.message : '校准失败')
     } finally {
       setLoading(false)
     }
@@ -117,7 +117,7 @@ export function CalibrationForm() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="cal-symbol">Stock Symbol</Label>
+                <Label htmlFor="cal-symbol">股票代码</Label>
                 <Input
                   id="cal-symbol"
                   value={symbol}
@@ -128,10 +128,10 @@ export function CalibrationForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="cal-strategy">Strategy</Label>
+                <Label htmlFor="cal-strategy">策略</Label>
                 <Select value={strategy} onValueChange={setStrategy} disabled={loading}>
                   <SelectTrigger id="cal-strategy">
-                    <SelectValue placeholder="Select strategy" />
+                    <SelectValue placeholder="选择策略" />
                   </SelectTrigger>
                   <SelectContent>
                     {strategies?.strategies
@@ -146,7 +146,7 @@ export function CalibrationForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="cal-start">Start Date</Label>
+                <Label htmlFor="cal-start">开始日期</Label>
                 <Input
                   id="cal-start"
                   type="date"
@@ -157,7 +157,7 @@ export function CalibrationForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="cal-end">End Date</Label>
+                <Label htmlFor="cal-end">结束日期</Label>
                 <Input
                   id="cal-end"
                   type="date"
@@ -192,7 +192,7 @@ export function CalibrationForm() {
               {strategy === 'sma_crossover' && (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="cal-sma-short">Short Period</Label>
+                    <Label htmlFor="cal-sma-short">短周期</Label>
                     <Input
                       id="cal-sma-short"
                       type="number"
@@ -202,7 +202,7 @@ export function CalibrationForm() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="cal-sma-long">Long Period</Label>
+                    <Label htmlFor="cal-sma-long">长周期</Label>
                     <Input
                       id="cal-sma-long"
                       type="number"
@@ -217,7 +217,7 @@ export function CalibrationForm() {
               {strategy === 'rsi_strategy' && (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="cal-rsi-period">RSI Period</Label>
+                    <Label htmlFor="cal-rsi-period">RSI 周期</Label>
                     <Input
                       id="cal-rsi-period"
                       type="number"
@@ -227,7 +227,7 @@ export function CalibrationForm() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="cal-rsi-ob">Overbought</Label>
+                    <Label htmlFor="cal-rsi-ob">超买阈值</Label>
                     <Input
                       id="cal-rsi-ob"
                       type="number"
@@ -237,7 +237,7 @@ export function CalibrationForm() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="cal-rsi-os">Oversold</Label>
+                    <Label htmlFor="cal-rsi-os">超卖阈值</Label>
                     <Input
                       id="cal-rsi-os"
                       type="number"
@@ -252,7 +252,7 @@ export function CalibrationForm() {
               {strategy === 'macd_strategy' && (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="cal-fast">Fast EMA</Label>
+                    <Label htmlFor="cal-fast">快线 EMA</Label>
                     <Input
                       id="cal-fast"
                       type="number"
@@ -262,7 +262,7 @@ export function CalibrationForm() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="cal-slow">Slow EMA</Label>
+                    <Label htmlFor="cal-slow">慢线 EMA</Label>
                     <Input
                       id="cal-slow"
                       type="number"
@@ -272,7 +272,7 @@ export function CalibrationForm() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="cal-signal">Signal EMA</Label>
+                    <Label htmlFor="cal-signal">信号线 EMA</Label>
                     <Input
                       id="cal-signal"
                       type="number"
@@ -286,7 +286,7 @@ export function CalibrationForm() {
 
               {strategy === 'technical_score' && (
                 <div className="space-y-2">
-                  <Label htmlFor="cal-score-threshold">Score Threshold</Label>
+                  <Label htmlFor="cal-score-threshold">信号分数阈值</Label>
                   <Input
                     id="cal-score-threshold"
                     type="number"
@@ -311,12 +311,12 @@ export function CalibrationForm() {
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Calibrating...
+                  正在校准...
                 </>
               ) : (
                 <>
                   <Target className="mr-2 h-4 w-4" />
-                  Run Calibration
+                  开始校准
                 </>
               )}
             </Button>

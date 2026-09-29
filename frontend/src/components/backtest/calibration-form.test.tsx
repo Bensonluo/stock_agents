@@ -37,9 +37,9 @@ describe('CalibrationForm input validation', () => {
   it('blocks submit when the symbol is cleared — named error, no API call', async () => {
     render(<CalibrationForm />)
 
-    const symbol = await screen.findByLabelText(/Stock Symbol/i)
+    const symbol = await screen.findByLabelText(/股票代码/)
     fireEvent.change(symbol, { target: { value: '' } })
-    fireEvent.click(screen.getByRole('button', { name: /Run Calibration/i }))
+    fireEvent.click(screen.getByRole('button', { name: /开始校准/ }))
 
     expect(await screen.findByText(/股票代码 不能为空/)).toBeInTheDocument()
     expect(calibrateSignals).not.toHaveBeenCalled()
@@ -50,9 +50,9 @@ describe('CalibrationForm input validation', () => {
 
     // Defaults are start 2021-01-01 / end 2024-01-01; moving start past end
     // mirrors the backend's end <= start rejection before the wire.
-    const start = await screen.findByLabelText(/Start Date/i)
+    const start = await screen.findByLabelText(/开始日期/)
     fireEvent.change(start, { target: { value: '2024-06-15' } })
-    fireEvent.click(screen.getByRole('button', { name: /Run Calibration/i }))
+    fireEvent.click(screen.getByRole('button', { name: /开始校准/ }))
 
     expect(await screen.findByText(/日期区间无效——结束日期必须晚于开始日期/)).toBeInTheDocument()
     expect(calibrateSignals).not.toHaveBeenCalled()

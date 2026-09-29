@@ -99,7 +99,7 @@ export function WalkForwardForm() {
 
       setResult(await API.runWalkForward(request))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Walk-forward failed')
+      setError(err instanceof Error ? err.message : '选参失败')
     } finally {
       setLoading(false)
     }
@@ -121,7 +121,7 @@ export function WalkForwardForm() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="wf-symbol">Stock Symbol</Label>
+                <Label htmlFor="wf-symbol">股票代码</Label>
                 <Input
                   id="wf-symbol"
                   value={symbol}
@@ -132,10 +132,10 @@ export function WalkForwardForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="wf-strategy">Strategy</Label>
+                <Label htmlFor="wf-strategy">策略</Label>
                 <Select value={strategy} onValueChange={setStrategy} disabled={loading}>
                   <SelectTrigger id="wf-strategy">
-                    <SelectValue placeholder="Select strategy" />
+                    <SelectValue placeholder="选择策略" />
                   </SelectTrigger>
                   <SelectContent>
                     {strategies?.strategies
@@ -150,14 +150,14 @@ export function WalkForwardForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="wf-market">Market</Label>
+                <Label htmlFor="wf-market">市场</Label>
                 <Select
                   value={market}
                   onValueChange={(v) => setMarket(v as 'us' | 'cn')}
                   disabled={loading}
                 >
                   <SelectTrigger id="wf-market">
-                    <SelectValue placeholder="Select market" />
+                    <SelectValue placeholder="选择市场" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="us">美股 (US)</SelectItem>
@@ -174,7 +174,7 @@ export function WalkForwardForm() {
                   disabled={loading}
                 >
                   <SelectTrigger id="wf-metric">
-                    <SelectValue placeholder="Select metric" />
+                    <SelectValue placeholder="选择指标" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="sharpe">Sharpe</SelectItem>
@@ -184,7 +184,7 @@ export function WalkForwardForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="wf-start">Start Date</Label>
+                <Label htmlFor="wf-start">开始日期</Label>
                 <Input
                   id="wf-start"
                   type="date"
@@ -195,7 +195,7 @@ export function WalkForwardForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="wf-end">End Date</Label>
+                <Label htmlFor="wf-end">结束日期</Label>
                 <Input
                   id="wf-end"
                   type="date"
@@ -232,7 +232,7 @@ export function WalkForwardForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="wf-cash">Initial Cash</Label>
+                <Label htmlFor="wf-cash">初始资金</Label>
                 <Input
                   id="wf-cash"
                   type="number"
@@ -247,7 +247,7 @@ export function WalkForwardForm() {
               {strategy === 'sma_crossover' && (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="wf-sma-short">Short Period 候选</Label>
+                    <Label htmlFor="wf-sma-short">短周期候选</Label>
                     <Input
                       id="wf-sma-short"
                       value={smaShort}
@@ -257,7 +257,7 @@ export function WalkForwardForm() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="wf-sma-long">Long Period 候选</Label>
+                    <Label htmlFor="wf-sma-long">长周期候选</Label>
                     <Input
                       id="wf-sma-long"
                       value={smaLong}
@@ -272,7 +272,7 @@ export function WalkForwardForm() {
               {strategy === 'rsi_strategy' && (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="wf-rsi-period">RSI Period 候选</Label>
+                    <Label htmlFor="wf-rsi-period">RSI 周期候选</Label>
                     <Input
                       id="wf-rsi-period"
                       value={rsiPeriod}
@@ -282,7 +282,7 @@ export function WalkForwardForm() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="wf-rsi-ob">Overbought 候选</Label>
+                    <Label htmlFor="wf-rsi-ob">超买阈值候选</Label>
                     <Input
                       id="wf-rsi-ob"
                       value={rsiOverbought}
@@ -292,7 +292,7 @@ export function WalkForwardForm() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="wf-rsi-os">Oversold 候选</Label>
+                    <Label htmlFor="wf-rsi-os">超卖阈值候选</Label>
                     <Input
                       id="wf-rsi-os"
                       value={rsiOversold}
@@ -307,7 +307,7 @@ export function WalkForwardForm() {
               {strategy === 'macd_strategy' && (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="wf-fast">Fast EMA 候选</Label>
+                    <Label htmlFor="wf-fast">快线 EMA 候选</Label>
                     <Input
                       id="wf-fast"
                       value={fastPeriod}
@@ -317,7 +317,7 @@ export function WalkForwardForm() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="wf-slow">Slow EMA 候选</Label>
+                    <Label htmlFor="wf-slow">慢线 EMA 候选</Label>
                     <Input
                       id="wf-slow"
                       value={slowPeriod}
@@ -327,7 +327,7 @@ export function WalkForwardForm() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="wf-signal">Signal EMA 候选</Label>
+                    <Label htmlFor="wf-signal">信号线 EMA 候选</Label>
                     <Input
                       id="wf-signal"
                       value={signalPeriod}
@@ -341,7 +341,7 @@ export function WalkForwardForm() {
 
               {strategy === 'technical_score' && (
                 <div className="space-y-2">
-                  <Label htmlFor="wf-score-threshold">Score Threshold 候选</Label>
+                  <Label htmlFor="wf-score-threshold">信号分数阈值候选</Label>
                   <Input
                     id="wf-score-threshold"
                     value={scoreThreshold}
@@ -366,12 +366,12 @@ export function WalkForwardForm() {
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Running Walk-forward...
+                  正在选参...
                 </>
               ) : (
                 <>
                   <Play className="mr-2 h-4 w-4" />
-                  Run Walk-forward
+                  开始选参
                 </>
               )}
             </Button>
