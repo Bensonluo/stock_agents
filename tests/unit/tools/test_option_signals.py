@@ -264,7 +264,9 @@ class TestComputeIvMetrics:
         assert metrics["n_filtered"] == 15
 
     def test_single_expiry_has_no_term_structure(self) -> None:
-        metrics = compute_iv_metrics([c for c in _two_expiry_contracts() if c["expire_date"] == NEAR])
+        metrics = compute_iv_metrics(
+            [c for c in _two_expiry_contracts() if c["expire_date"] == NEAR]
+        )
 
         assert metrics is not None
         assert metrics["atm_iv_near"] == pytest.approx(0.185)
@@ -290,14 +292,17 @@ class TestComputeIvMetrics:
         assert compute_iv_metrics(contracts) is None
 
     def test_atm_tie_prefers_lower_strike(self) -> None:
-        rows = [
-            _contract(2.95, 0.48, 0.100),
-            _contract(3.05, 0.52, 0.300),
-        ] + [
-            _contract(3.20 + i * 0.10, 0.12 + 0.01 * i, 0.150 + 0.001 * i) for i in range(4)
-        ] + [
-            _contract(2.70 - i * 0.10, -0.12 - 0.01 * i, 0.160 + 0.001 * i, cp="P") for i in range(4)
-        ]
+        rows = (
+            [
+                _contract(2.95, 0.48, 0.100),
+                _contract(3.05, 0.52, 0.300),
+            ]
+            + [_contract(3.20 + i * 0.10, 0.12 + 0.01 * i, 0.150 + 0.001 * i) for i in range(4)]
+            + [
+                _contract(2.70 - i * 0.10, -0.12 - 0.01 * i, 0.160 + 0.001 * i, cp="P")
+                for i in range(4)
+            ]
+        )
 
         metrics = compute_iv_metrics(rows)
 
@@ -374,7 +379,9 @@ class TestBuildOptionImplied:
         ("percentile", "expected_regime"),
         [(0.80, "恐慌"), (0.95, "恐慌"), (0.20, "自满"), (0.05, "自满"), (0.45, "中性")],
     )
-    def test_regime_labels_from_qvix_percentile(self, percentile: float, expected_regime: str) -> None:
+    def test_regime_labels_from_qvix_percentile(
+        self, percentile: float, expected_regime: str
+    ) -> None:
         qvix = {"current": 25.0, "as_of": "2026-09-29", "percentile_1y": percentile}
 
         block = build_option_implied(None, None, qvix)
@@ -606,9 +613,7 @@ class TestFetchQvixContext:
 
     def test_fetch_failure_serves_populated_store_as_fallback(self, monkeypatch, store) -> None:
         start = date(2025, 1, 1)
-        store.upsert_many(
-            [((start + timedelta(days=i)).isoformat(), 20.0) for i in range(300)]
-        )
+        store.upsert_many([((start + timedelta(days=i)).isoformat(), 20.0) for i in range(300)])
         _install_fake_akshare(monkeypatch, [], qvix=ConnectionError("optbbs down"))
 
         context = fetch_qvix_context(store)
@@ -646,7 +651,9 @@ class TestQvixStore:
     def test_trailing_closes_descending_with_limit(self, tmp_path) -> None:
         store = QvixStore(db_path=tmp_path / "qvix.db")
         start = date(2026, 1, 1)
-        store.upsert_many([((start + timedelta(days=i)).isoformat(), float(i + 1)) for i in range(10)])
+        store.upsert_many(
+            [((start + timedelta(days=i)).isoformat(), float(i + 1)) for i in range(10)]
+        )
 
         assert store.trailing_closes(3) == [10.0, 9.0, 8.0]
         assert store.trailing_closes(100) == [float(10 - i) for i in range(10)]

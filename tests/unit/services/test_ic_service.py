@@ -339,9 +339,7 @@ class TestEvaluateDecisionIC:
             scored = dict(zip("ABCD", (20.0, 40.0, 60.0, 80.0)))
             if k == 2:  # one flipped run keeps mean and dispersion both nonzero
                 scored = dict(zip("ABCD", (80.0, 60.0, 40.0, 20.0)))
-            records.append(
-                _record(f"t-d{k}", f"{dates[run_idx]}T10:00:00", scored)
-            )
+            records.append(_record(f"t-d{k}", f"{dates[run_idx]}T10:00:00", scored))
         result = await evaluate_ic_decay(
             horizons=[5, 10, 20], records=records, fetch_history=_fetcher(series)
         )
@@ -350,9 +348,7 @@ class TestEvaluateDecisionIC:
         ics = [run["ic"] for run in points[10]["per_run"]]
         assert len(ics) == 4
         assert points[10]["t_stat"] is not None
-        assert points[10]["t_stat_nw"] == pytest.approx(
-            newey_west_t_stat(ics, lags=9), abs=1e-4
-        )
+        assert points[10]["t_stat_nw"] == pytest.approx(newey_west_t_stat(ics, lags=9), abs=1e-4)
         # The two bases genuinely differ on overlapping windows — pinning the
         # difference keeps the frontend's NW preference honest, not cosmetic.
         assert points[10]["t_stat_nw"] != pytest.approx(points[10]["t_stat"], abs=1e-6)

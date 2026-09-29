@@ -15,7 +15,6 @@ from typing import Any
 
 import pytest
 
-import app.tools.data.fetcher as fetcher_mod
 import app.tools.data.fetcher_finnhub as fetcher_finnhub_mod
 from app.agents.data_agent import DataCollectionAgent, _dedup_news
 from app.agents.sentiment_agent import SentimentAnalysisAgent

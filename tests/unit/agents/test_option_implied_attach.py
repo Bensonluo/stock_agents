@@ -218,7 +218,11 @@ def _market_data() -> dict[str, Any]:
 
 
 def _state_with_snapshot() -> dict[str, Any]:
-    return {"symbols": ["600000"], "market_data": _market_data(), "option_snapshot": _snapshot_stub()}
+    return {
+        "symbols": ["600000"],
+        "market_data": _market_data(),
+        "option_snapshot": _snapshot_stub(),
+    }
 
 
 class TestRiskAgentOptionImplied:
@@ -253,9 +257,7 @@ class TestRiskAgentOptionImplied:
     async def test_process_without_snapshot_follows_regime_none_convention(self) -> None:
         agent = RiskAssessmentAgent()
 
-        result = await agent.process(
-            {"symbols": ["600000"], "market_data": _market_data()}
-        )
+        result = await agent.process({"symbols": ["600000"], "market_data": _market_data()})
 
         # market_regime's None convention: key present, value None.
         assert result["market_regime"] is None or isinstance(result["market_regime"], dict)
