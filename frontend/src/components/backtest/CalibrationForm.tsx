@@ -21,7 +21,7 @@ import {
   type StrategiesResponse,
 } from '@/lib/utils'
 import { formatSignedPercent } from '@/lib/format'
-import { parseNumberList, requireNumberField } from '@/lib/parse'
+import { parseNumberList, requireNonEmptyText, requireNumberField } from '@/lib/parse'
 import { calibrationVerdict } from '@/lib/verdicts'
 
 // Same filter as the walk-forward tab: buy-and-hold has no entry signal to
@@ -81,7 +81,7 @@ export function CalibrationForm() {
 
       const trimmedBenchmark = benchmark.trim().toUpperCase()
       const request: CalibrateRequest = {
-        symbol: symbol.toUpperCase(),
+        symbol: requireNonEmptyText('股票代码', symbol).toUpperCase(),
         strategy: strategy as CalibrateRequest['strategy'],
         start_date: startDate,
         end_date: endDate,

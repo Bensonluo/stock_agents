@@ -43,6 +43,16 @@ export function parseNumberField(raw: string): number | null {
   return Number.isFinite(value) ? value : null
 }
 
+/**
+ * Parse a text field (symbol). Returns the trimmed value; null for a
+ * cleared or whitespace-only field. Whitespace-only symbols previously
+ * shipped verbatim (" " is truthy) and died server-side.
+ */
+export function parseNonEmptyText(raw: string): string | null {
+  const trimmed = raw.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
 /** Throwing wrapper for submit handlers — names the field in the error. */
 export function requireIntField(label: string, raw: string): number {
   const value = parseIntField(raw)
@@ -54,5 +64,12 @@ export function requireIntField(label: string, raw: string): number {
 export function requireNumberField(label: string, raw: string): number {
   const value = parseNumberField(raw)
   if (value === null) throw new Error(`参数 ${label} 无效——请输入数字`)
+  return value
+}
+
+/** Throwing wrapper for submit handlers — names the field in the error. */
+export function requireNonEmptyText(label: string, raw: string): string {
+  const value = parseNonEmptyText(raw)
+  if (value === null) throw new Error(`参数 ${label} 不能为空`)
   return value
 }

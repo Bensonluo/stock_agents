@@ -21,7 +21,7 @@ import {
   type WalkForwardResponse,
 } from '@/lib/utils'
 import { formatSignedPercent } from '@/lib/format'
-import { parseNumberList, requireIntField, requireNumberField } from '@/lib/parse'
+import { parseNumberList, requireIntField, requireNonEmptyText, requireNumberField } from '@/lib/parse'
 import { deflatedSharpeVerdict } from '@/lib/verdicts'
 
 // buy_and_hold has no tunable parameters: a single-configuration "search"
@@ -82,7 +82,7 @@ export function WalkForwardForm() {
       }
 
       const request: WalkForwardRequest = {
-        symbol: symbol.toUpperCase(),
+        symbol: requireNonEmptyText('股票代码', symbol).toUpperCase(),
         strategy: strategy as WalkForwardRequest['strategy'],
         start_date: startDate,
         end_date: endDate,

@@ -15,7 +15,7 @@ import {
 import { Loader2, Play } from 'lucide-react'
 import { API, type BacktestRequest, type BacktestResponse, type StrategiesResponse } from '@/lib/utils'
 import { formatSignedPercent } from '@/lib/format'
-import { requireIntField, requireNumberField } from '@/lib/parse'
+import { requireIntField, requireNonEmptyText, requireNumberField } from '@/lib/parse'
 import { nullBenchmarkVerdict } from '@/lib/verdicts'
 import { BacktestChart } from './BacktestChart'
 
@@ -52,7 +52,7 @@ export function BacktestForm() {
     try {
       const selectedStrategy = strategy as BacktestRequest['strategy']
       const request: BacktestRequest = {
-        symbol: symbol.toUpperCase(),
+        symbol: requireNonEmptyText('股票代码', symbol).toUpperCase(),
         strategy: selectedStrategy,
         start_date: startDate,
         end_date: endDate,

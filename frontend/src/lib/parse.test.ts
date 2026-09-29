@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import {
   parseIntField,
+  parseNonEmptyText,
   parseNumberField,
   parseNumberList,
   requireIntField,
+  requireNonEmptyText,
   requireNumberField,
 } from './parse'
 
@@ -75,6 +77,28 @@ describe('parseNumberField — single numeric fields (cash, thresholds)', () => 
   it('returns null for non-numeric input', () => {
     expect(parseNumberField('abc')).toBeNull()
     expect(parseNumberField('1.2.3')).toBeNull()
+  })
+})
+
+describe('parseNonEmptyText — text fields (symbol)', () => {
+  it('returns the trimmed value for clean and padded input', () => {
+    expect(parseNonEmptyText('AAPL')).toBe('AAPL')
+    expect(parseNonEmptyText('  600000 ')).toBe('600000')
+  })
+
+  it('returns null for cleared or whitespace-only input', () => {
+    // Before this guard all three backtest forms sent bare
+    // symbol.toUpperCase() — a cleared field shipped "" and the failure
+    // surfaced as pydantic's English 422, bypassing the form's error box.
+    expect(parseNonEmptyText('')).toBeNull()
+    expect(parseNonEmptyText('   ')).toBeNull()
+  })
+})
+
+describe('requireNonEmptyText — throwing wrapper for the symbol field', () => {
+  it('returns the trimmed value and names the field on error', () => {
+    expect(requireNonEmptyText('股票代码', ' 600519 ')).toBe('600519')
+    expect(() => requireNonEmptyText('股票代码', '  ')).toThrowError('参数 股票代码 不能为空')
   })
 })
 

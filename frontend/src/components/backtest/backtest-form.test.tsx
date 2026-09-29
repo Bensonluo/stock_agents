@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-// Component-level lock for the iteration-136 input validation wiring: a
-// cleared numeric field must block submit with the form's field-named
+// Component-level lock for the input-validation wiring (iterations 136-137):
+// a cleared numeric field must block submit with the form's field-named
 // Chinese error instead of sending NaN (rendered as null on the wire and
-// answered by pydantic's English 422).
+// answered by pydantic's English 422); a cleared symbol must likewise be
+// caught client-side instead of shipping "".
 //
 // Mock convention (established in signal-quality-card.test.tsx): @/lib/utils
 // is a dual-purpose module (API client + shadcn cn()) — an integral module
@@ -30,7 +31,7 @@ vi.mock('@/lib/utils', async (importOriginal) => {
 
 import { BacktestForm } from './BacktestForm'
 
-describe('BacktestForm input validation (iteration 136)', () => {
+describe('BacktestForm input validation (iterations 136-137)', () => {
   it('blocks submit when initial cash is cleared — field-named error, no API call', async () => {
     render(<BacktestForm />)
 
@@ -39,6 +40,17 @@ describe('BacktestForm input validation (iteration 136)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Run Backtest/i }))
 
     expect(await screen.findByText(/初始资金 无效/)).toBeInTheDocument()
+    expect(runBacktest).not.toHaveBeenCalled()
+  })
+
+  it('blocks submit when the symbol is cleared — named error, no API call', async () => {
+    render(<BacktestForm />)
+
+    const symbol = await screen.findByLabelText(/Stock Symbol/i)
+    fireEvent.change(symbol, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: /Run Backtest/i }))
+
+    expect(await screen.findByText(/股票代码 不能为空/)).toBeInTheDocument()
     expect(runBacktest).not.toHaveBeenCalled()
   })
 })
