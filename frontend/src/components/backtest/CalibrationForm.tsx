@@ -21,6 +21,7 @@ import {
   type StrategiesResponse,
 } from '@/lib/utils'
 import { formatSignedPercent } from '@/lib/format'
+import { parseNumberList, requireNumberField } from '@/lib/parse'
 import { calibrationVerdict } from '@/lib/verdicts'
 
 // Same filter as the walk-forward tab: buy-and-hold has no entry signal to
@@ -59,12 +60,8 @@ export function CalibrationForm() {
     setResult(null)
 
     try {
-      const parsedHorizons = horizons
-        .split(',')
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0)
-        .map(Number)
-      if (parsedHorizons.length === 0 || parsedHorizons.some((v) => !Number.isFinite(v) || v < 1)) {
+      const parsedHorizons = parseNumberList(horizons)
+      if (parsedHorizons === null || parsedHorizons.some((v) => v < 1)) {
         throw new Error('持有视野列表无效——请输入逗号分隔的正整数（如 20, 60，单位为交易日）')
       }
 
@@ -79,11 +76,7 @@ export function CalibrationForm() {
 
       const strategy_params: Record<string, number> = {}
       for (const [name, raw] of Object.entries(rawParams)) {
-        const value = Number(raw)
-        if (!Number.isFinite(value)) {
-          throw new Error(`参数 ${name} 无效——请输入数字`)
-        }
-        strategy_params[name] = value
+        strategy_params[name] = requireNumberField(name, raw)
       }
 
       const trimmedBenchmark = benchmark.trim().toUpperCase()

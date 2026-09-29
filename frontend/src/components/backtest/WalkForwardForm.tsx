@@ -21,6 +21,7 @@ import {
   type WalkForwardResponse,
 } from '@/lib/utils'
 import { formatSignedPercent } from '@/lib/format'
+import { parseNumberList, requireIntField, requireNumberField } from '@/lib/parse'
 import { deflatedSharpeVerdict } from '@/lib/verdicts'
 
 // buy_and_hold has no tunable parameters: a single-configuration "search"
@@ -73,12 +74,8 @@ export function WalkForwardForm() {
 
       const param_grid: Record<string, number[]> = {}
       for (const [name, raw] of Object.entries(rawGrid)) {
-        const values = raw
-          .split(',')
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0)
-          .map(Number)
-        if (values.length === 0 || values.some((v) => !Number.isFinite(v))) {
+        const values = parseNumberList(raw)
+        if (values === null) {
           throw new Error(`参数 ${name} 的候选列表无效——请输入逗号分隔的数字（如 5, 10, 20）`)
         }
         param_grid[name] = values
@@ -90,9 +87,9 @@ export function WalkForwardForm() {
         start_date: startDate,
         end_date: endDate,
         param_grid,
-        train_bars: parseInt(trainBars, 10),
-        test_bars: parseInt(testBars, 10),
-        initial_cash: parseFloat(initialCash),
+        train_bars: requireIntField('train_bars', trainBars),
+        test_bars: requireIntField('test_bars', testBars),
+        initial_cash: requireNumberField('initial_cash', initialCash),
         market,
         selection_metric: selectionMetric,
       }

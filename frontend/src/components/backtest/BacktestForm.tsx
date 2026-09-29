@@ -15,6 +15,7 @@ import {
 import { Loader2, Play } from 'lucide-react'
 import { API, type BacktestRequest, type BacktestResponse, type StrategiesResponse } from '@/lib/utils'
 import { formatSignedPercent } from '@/lib/format'
+import { requireIntField, requireNumberField } from '@/lib/parse'
 import { nullBenchmarkVerdict } from '@/lib/verdicts'
 import { BacktestChart } from './BacktestChart'
 
@@ -55,21 +56,21 @@ export function BacktestForm() {
         strategy: selectedStrategy,
         start_date: startDate,
         end_date: endDate,
-        initial_cash: parseFloat(initialCash),
+        initial_cash: requireNumberField('初始资金', initialCash),
       }
       if (selectedStrategy === 'sma_crossover') {
-        request.sma_short = parseInt(smaShort)
-        request.sma_long = parseInt(smaLong)
+        request.sma_short = requireIntField('sma_short', smaShort)
+        request.sma_long = requireIntField('sma_long', smaLong)
       } else if (selectedStrategy === 'rsi_strategy') {
-        request.rsi_period = parseInt(rsiPeriod)
-        request.rsi_overbought = parseFloat(rsiOverbought)
-        request.rsi_oversold = parseFloat(rsiOversold)
+        request.rsi_period = requireIntField('rsi_period', rsiPeriod)
+        request.rsi_overbought = requireNumberField('rsi_overbought', rsiOverbought)
+        request.rsi_oversold = requireNumberField('rsi_oversold', rsiOversold)
       } else if (selectedStrategy === 'macd_strategy') {
-        request.fast_period = parseInt(fastPeriod)
-        request.slow_period = parseInt(slowPeriod)
-        request.signal_period = parseInt(signalPeriod)
+        request.fast_period = requireIntField('fast_period', fastPeriod)
+        request.slow_period = requireIntField('slow_period', slowPeriod)
+        request.signal_period = requireIntField('signal_period', signalPeriod)
       } else if (selectedStrategy === 'technical_score') {
-        request.score_threshold = parseFloat(scoreThreshold)
+        request.score_threshold = requireNumberField('score_threshold', scoreThreshold)
       }
 
       const response = await API.runBacktest(request)
