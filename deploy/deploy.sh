@@ -89,7 +89,14 @@ echo -e "${GREEN}✓ 服务器目录准备完成${NC}"
 # 4. 上传文件到服务器
 echo -e "${YELLOW}[4/6] 上传文件到服务器...${NC}"
 # 排除不需要的文件(注意:.venv/.omc/.worktrees 等本地环境绝不进服务器)
-rsync -avz -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no" \
+# --delete:清除服务器上本地已删除的僵尸源码(2026-09-29 部署事故根因:
+# 服务器残留迭代 53 已删除的旧组件,迭代 124 重写 SystemHealth 类型后
+# 服务器端 tsc 报错而本地全绿)。
+# rsync 语义:--exclude 匹配到的接收端文件同时免于删除(除非 --delete-excluded),
+# 故 .env、data/、logs/ 等运行时状态整体受保护。data/ 必须整目录排除——
+# 'data/*.db' 不匹配 checkpoints.db-wal/-shm 边车文件,--delete 会误删
+# 运行中 SQLite 的 WAL(提交未 checkpoint 的事务丢失)。
+rsync -avz --delete -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no" \
     --exclude '.env' \
     --exclude '.env.*' \
     --exclude 'node_modules' \
@@ -110,8 +117,9 @@ rsync -avz -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no" \
     --exclude 'frontend/node_modules' \
     --exclude 'frontend/.next' \
     --exclude 'frontend/.omc' \
-    --exclude 'data/*.db' \
-    --exclude 'logs/*' \
+    --exclude 'frontend/tsconfig.tsbuildinfo' \
+    --exclude 'data/' \
+    --exclude 'logs/' \
     --exclude '.idea' \
     --exclude '.DS_Store' \
     "$PROJECT_ROOT"/ ${SERVER_USER}@${SERVER_IP}:${SERVER_DIR}/
