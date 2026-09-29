@@ -64,6 +64,11 @@ def _yfinance_debt_to_equity_ratio(value: Any) -> float | None:
     return float(value) / 100.0
 
 
+async def _no_option_snapshot() -> None:
+    """Stand-in awaitable so the disabled option leg joins the tail gather."""
+    return None
+
+
 def convert_to_yahoo_symbol(symbol: str) -> str:
     """Convert local symbol format to Yahoo Finance format.
 
@@ -417,12 +422,41 @@ class DataCollectionAgent(BaseAgent):
         # Merge duplicate articles (same link/title) across symbol fetches
         news_data = _dedup_news(news_data)
 
+        # The four tail fetches — per-market benchmark series (one per
+        # represented market, feeding the risk stage's beta/alpha/R²
+        # regression), SPDR sector benchmarks, CN industry benchmarks and
+        # the CN option snapshot (SSE per-contract IV/Greeks + volume PCR +
+        # QVIX, iteration 155: market-level PURE ANNOTATION, the risk stage
+        # labels 恐慌/中性/自满 and nothing scores it) — read only `symbols`
+        # and the already-collected `market_data`, never each other's
+        # results, so they run in ONE gather: worst-case wall time is the
+        # slowest leg, not the sum. Writes stay disjoint: the market loop
+        # owns benchmark_historical_data; the SPDR sector map excludes CN
+        # symbols so the CN industry loop keeps its unconditional write of
+        # sector_benchmark_historical_data (CN blocks carry no sector field
+        # today — the exclusion makes that guarantee structural, not
+        # incidental); a failed fetch on any leg just leaves its key
+        # absent, exactly as before the gather existed.
+        cn_symbols = [s for s in market_data if benchmark_ticker_for(s) == BENCHMARK_TICKERS["cn"]]
+        tickers = sorted({benchmark_ticker_for(s) for s in symbols})
+        sector_tickers = {
+            s: sector_benchmark_ticker((data or {}).get("sector"))
+            for s, data in market_data.items()
+            if benchmark_ticker_for(s) != BENCHMARK_TICKERS["cn"]
+        }
+        wanted = sorted({t for t in sector_tickers.values() if t})
+        want_options = bool(get_settings().option_signals_enabled and cn_symbols)
+        fetched, sector_fetched, cn_benchmarks, option_snapshot = await asyncio.gather(
+            asyncio.gather(*(fetch_benchmark_history(t) for t in tickers)),
+            asyncio.gather(*(fetch_benchmark_history(t) for t in wanted)),
+            asyncio.gather(*(fetch_cn_sector_benchmark(s) for s in cn_symbols)),
+            self._fetch_option_snapshot() if want_options else _no_option_snapshot(),
+        )
+
         # One benchmark series per represented market (max two extra
         # round-trips per run) so the risk stage can regress beta/alpha/R².
         # A failed fetch just leaves the key absent — beta degrades exactly
         # as it did before benchmarks existed.
-        tickers = sorted({benchmark_ticker_for(s) for s in symbols})
-        fetched = await asyncio.gather(*(fetch_benchmark_history(t) for t in tickers))
         benchmarks = dict(zip(tickers, fetched))
         for symbol, data in market_data.items():
             bench = benchmarks.get(benchmark_ticker_for(symbol))
@@ -431,16 +465,9 @@ class DataCollectionAgent(BaseAgent):
 
         # Sector-relative annotation: one extra series per mapped sector
         # (11 SPDR ETFs cover yfinance's sector vocabulary, shared 30-min
-        # cache dedups across runs). The sector field is US-path-only
-        # today — CN names carry no sector and stay on the market
-        # benchmark; unmapped or failed fetches leave the key absent
-        # exactly like the market benchmark above.
-        sector_tickers = {
-            s: sector_benchmark_ticker((data or {}).get("sector"))
-            for s, data in market_data.items()
-        }
-        wanted = sorted({t for t in sector_tickers.values() if t})
-        sector_fetched = await asyncio.gather(*(fetch_benchmark_history(t) for t in wanted))
+        # cache dedups across runs). CN names are excluded from the map —
+        # they get the industry benchmark below; unmapped or failed
+        # fetches leave the key absent exactly like the market benchmark.
         sector_benchmarks = dict(zip(wanted, sector_fetched))
         for symbol, ticker in sector_tickers.items():
             bench = sector_benchmarks.get(ticker) if ticker else None
@@ -451,21 +478,9 @@ class DataCollectionAgent(BaseAgent):
         # so A-shares get the East Money industry-board index instead — same
         # dates/close shape the sector regression consumes. Failure leaves
         # the key absent, exactly like the market benchmark above.
-        cn_symbols = [s for s in market_data if benchmark_ticker_for(s) == BENCHMARK_TICKERS["cn"]]
-        cn_benchmarks = await asyncio.gather(*(fetch_cn_sector_benchmark(s) for s in cn_symbols))
         for s, bench in zip(cn_symbols, cn_benchmarks):
             if bench and market_data[s]:
                 market_data[s]["sector_benchmark_historical_data"] = bench
-
-        # CN options implied-signal layer (iteration 155): SSE official
-        # per-contract IV/Greeks + volume PCR + QVIX — market-level (China
-        # lists only ETF/index options), one snapshot per run, gated on the
-        # same CN presence that drives cn_benchmarks. PURE ANNOTATION: the
-        # risk stage labels 恐慌/中性/自满, nothing scores it. Failure
-        # leaves the key absent, exactly like the benchmark fetches above.
-        option_snapshot = None
-        if get_settings().option_signals_enabled and cn_symbols:
-            option_snapshot = await self._fetch_option_snapshot()
 
         logger.info(
             f"Collected data for {len(market_data)} symbols, " f"{len(news_data)} news items"
