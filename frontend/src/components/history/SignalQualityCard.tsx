@@ -278,10 +278,11 @@ export function SignalQualityCard() {
                 <div className="flex flex-wrap gap-2">
                   {decayPoints.map((point) => {
                     const active = String(point.horizon_bars) === horizon
-                    // The decay backend does not emit t_stat_nw (iteration
-                    // 123 covered aggregate/dimensions/regime/topk only), so
-                    // the raw t is the only basis available here.
-                    const cls = T_STAT_CLS[tStatTier(point.t_stat)]
+                    // Same NW preference as the aggregate view: the decay wire
+                    // carries t_stat_nw (lag = horizon - 1) wherever dispersion
+                    // is estimable, and the longest horizons — where overlap
+                    // inflates the raw t most — are exactly these chips.
+                    const cls = T_STAT_CLS[tStatTier(preferredTStat(point.t_stat_nw, point.t_stat))]
                     return (
                       <Button
                         key={point.horizon_bars}

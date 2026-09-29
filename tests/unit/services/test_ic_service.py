@@ -322,6 +322,41 @@ class TestEvaluateDecisionIC:
         # One pass, one fetch per unique symbol — regardless of horizon count.
         assert sorted(calls) == ["A", "B", "C", "D"]
 
+    async def test_decay_points_carry_newey_west_t(self) -> None:
+        # Four daily-spaced runs inside one growth epoch, three with ascending
+        # scores and one flipped — dispersion is real (±1 ICs), so both the
+        # raw and the Newey-West t are estimable. The pin locks the wire
+        # contract the decay chips color by: each horizon's point carries
+        # t_stat_nw computed from that window's own per-run IC sequence with
+        # lags = horizon - 1 (the daily-sampling overlap bound).
+        dates = _bdates(300)
+        series = {
+            sym: (dates, _two_phase_closes(dates, 0, rate))
+            for sym, rate in zip("ABCD", (0.001, 0.002, 0.003, 0.004))
+        }
+        records = []
+        for k, run_idx in enumerate((218, 225, 232, 239)):
+            scored = dict(zip("ABCD", (20.0, 40.0, 60.0, 80.0)))
+            if k == 2:  # one flipped run keeps mean and dispersion both nonzero
+                scored = dict(zip("ABCD", (80.0, 60.0, 40.0, 20.0)))
+            records.append(
+                _record(f"t-d{k}", f"{dates[run_idx]}T10:00:00", scored)
+            )
+        result = await evaluate_ic_decay(
+            horizons=[5, 10, 20], records=records, fetch_history=_fetcher(series)
+        )
+        points = {p["horizon_bars"]: p for p in result["horizons"]}
+        assert points[10]["status"] == "ok"
+        ics = [run["ic"] for run in points[10]["per_run"]]
+        assert len(ics) == 4
+        assert points[10]["t_stat"] is not None
+        assert points[10]["t_stat_nw"] == pytest.approx(
+            newey_west_t_stat(ics, lags=9), abs=1e-4
+        )
+        # The two bases genuinely differ on overlapping windows — pinning the
+        # difference keeps the frontend's NW preference honest, not cosmetic.
+        assert points[10]["t_stat_nw"] != pytest.approx(points[10]["t_stat"], abs=1e-6)
+
     async def test_decay_rejects_invalid_horizons(self) -> None:
         with pytest.raises(ValueError, match="horizons"):
             await evaluate_ic_decay(horizons=[], records=[], fetch_history=_fetcher({}))
