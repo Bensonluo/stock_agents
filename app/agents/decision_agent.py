@@ -451,7 +451,14 @@ class DecisionMakingAgent(StatelessAgent):
                 )
                 if line
             ]
-            context_block = f"{'; '.join(context_parts)}\n\n" if context_parts else ""
+            if context_parts:
+                # _market_context_line ends with its own period; the
+                # semicolon join supersedes it. Only non-final parts are
+                # stripped, so a single-line block stays byte-identical.
+                head = [p[:-1] if p.endswith(".") else p for p in context_parts[:-1]]
+                context_block = f"{'; '.join(head + [context_parts[-1]])}\n\n"
+            else:
+                context_block = ""
 
             prompt = f"""Synthesize these investment decisions into a brief portfolio summary:
 

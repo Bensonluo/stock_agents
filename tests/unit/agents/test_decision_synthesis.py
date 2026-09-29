@@ -220,6 +220,21 @@ class TestOptionAwareSynthesis:
         assert stub_none.prompts[0] == stub_plain.prompts[0]
         assert "options market" not in stub_none.prompts[0]
 
+    async def test_synthesis_prompt_joins_both_context_lines_cleanly(self) -> None:
+        agent, stub = _agent_with_stub()
+
+        await agent._llm_decision_synthesis(
+            {"AAA": {"action": "buy", "confidence": 0.7, "score": 72.0}},
+            _REGIME,
+            option_implied=_OPTION_COMPLACENT,
+        )
+
+        # _market_context_line ends with its own period; the semicolon join
+        # must supersede it instead of rendering ".;" mid-prompt.
+        prompt = stub.prompts[0]
+        assert "; the options market implies complacency" in prompt
+        assert ".;" not in prompt
+
     async def test_process_extracts_option_context_from_risk_state(self) -> None:
         agent, stub = _agent_with_stub()
         agent.llm = stub  # make the synthesis branch fire
