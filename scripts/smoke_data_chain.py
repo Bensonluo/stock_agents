@@ -37,6 +37,11 @@ Design notes:
   there reads "EM primary path still down", NOT "deployment broken" --
   weigh it against the fallback checks passing. It still counts toward the
   exit code, so a fully green run means EM recovered too.
+- Option-signal FAIL semantics: the SSE/QVIX checks carry the same
+  informational weighting as EM spot -- a dark CN option feed degrades the
+  annotation honestly (insufficient_data) rather than breaking anything,
+  so their FAIL reads "feature degraded", not "deployment broken". Both
+  checks SKIP pre-deploy (option_signals.py arrived with the options layer).
 - Exit codes: 0 = no FAIL, 1 = at least one FAIL. SKIPs never count.
 """
 
@@ -208,6 +213,95 @@ def check_em_sector_chain() -> tuple[str, str]:
     return "PASS", f"{len(df)} info rows -- EM push2 reachable again"
 
 
+def check_sse_option_snapshot() -> tuple[str, str]:
+    """SSE official option trio -- the option-signal layer's primary source.
+
+    Exercises fetch_sse_option_snapshot end to end (risk table + directory
+    join + official PCR, with trade-date walkback). None means the CN option
+    feed is dark, in which case the annotation degrades honestly to
+    insufficient_data -- same informational-FAIL semantics as the EM spot
+    check, not a deploy blocker. Pre-deploy SKIP: the module arrived with
+    the options layer."""
+    try:
+        from app.tools.data.option_signals import fetch_sse_option_snapshot
+    except ImportError:
+        return "SKIP", "module absent (pre-deploy image)"
+    try:
+        snapshot = fetch_sse_option_snapshot()
+    except Exception as e:
+        return "FAIL", f"unexpected {type(e).__name__}: {e}"
+    if snapshot is None:
+        return (
+            "FAIL",
+            "SSE option risk table unreachable -- option_implied degrades to "
+            "insufficient_data; informational, not a deploy blocker",
+        )
+    status = snapshot.get("status")
+    contracts = snapshot.get("contracts") or []
+    pcr = snapshot.get("pcr_by_underlying") or {}
+    detail = (
+        f"status {status}, trade_date {snapshot.get('as_of')}, "
+        f"{len(contracts)} contracts, pcr underlyings {len(pcr)}, "
+        f"unmatched {snapshot.get('n_unmatched')}"
+    )
+    if status != "ok" or len(contracts) < 50:
+        return "FAIL", f"degraded snapshot -- {detail} (informational, not a deploy blocker)"
+    return "PASS", detail
+
+
+def check_option_implied_annotation() -> tuple[str, str]:
+    """Option-implied annotation chain end to end (QVIX regime + IV metrics).
+
+    Re-fetches the snapshot (30-min shared TTL cache -- free after the SSE
+    check) and the QVIX context (third-party host with local-store
+    fallback), then runs the exact pure pipeline the risk layer uses:
+    compute_iv_metrics -> compute_pcr -> build_option_implied. The regime
+    label comes only from the QVIX 1-year percentile; a dark QVIX with an
+    empty store yields insufficient_data (honest absence), which FAILs here
+    informationally."""
+    try:
+        from app.tools.data.option_signals import (
+            build_option_implied,
+            compute_iv_metrics,
+            compute_pcr,
+            fetch_qvix_context,
+            fetch_sse_option_snapshot,
+        )
+        from app.tools.data.qvix_store import get_qvix_store
+    except ImportError:
+        return "SKIP", "module absent (pre-deploy image)"
+    try:
+        snapshot = fetch_sse_option_snapshot()
+        qvix = fetch_qvix_context(get_qvix_store())
+        annotation = build_option_implied(
+            compute_iv_metrics(snapshot.get("contracts") if snapshot else None),
+            compute_pcr(snapshot.get("pcr_by_underlying") if snapshot else None),
+            qvix,
+        )
+    except Exception as e:
+        return "FAIL", f"unexpected {type(e).__name__}: {e}"
+    expected_keys = {"status", "regime", "qvix", "iv", "pcr", "generated_at"}
+    if set(annotation) != expected_keys:
+        return "FAIL", f"annotation shape drift: {sorted(annotation)}"
+    if annotation["status"] != "ok" or annotation["regime"] not in {"恐慌", "自满", "中性"}:
+        missing = [name for name, part in (("sse snapshot", snapshot), ("qvix", qvix)) if not part]
+        why = ", ".join(missing) if missing else "qvix percentile unavailable"
+        return (
+            "FAIL",
+            f"regime unavailable ({why}) -- annotation degrades honestly to "
+            "insufficient_data; informational, not a deploy blocker",
+        )
+    qvix_block = annotation.get("qvix") or {}
+    iv = annotation.get("iv") or {}
+    return (
+        "PASS",
+        f"regime {annotation['regime']}, qvix {qvix_block.get('current')} "
+        f"(pct {qvix_block.get('percentile_1y')}), atm_iv_near {iv.get('atm_iv_near')} "
+        f"({iv.get('near_expiry')}), term {iv.get('term_structure')}, "
+        f"skew {iv.get('skew_25d')}, {iv.get('n_filtered', 0)}/{iv.get('n_contracts', 0)} rows",
+    )
+
+
 def check_full_analysis() -> tuple[str, str]:
     """End-to-end analyze/sync pipeline call (--full gated)."""
     started = time.monotonic()
@@ -227,7 +321,17 @@ def check_full_analysis() -> tuple[str, str]:
         return "FAIL", f"HTTP {resp.status_code} after {elapsed:.0f}s"
     if "decisions" not in payload:
         return "FAIL", f"HTTP 200 but no decisions key after {elapsed:.0f}s"
-    return "PASS", f"HTTP 200 with decisions after {elapsed:.0f}s"
+    # Informational suffix: the option-implied annotation rides the CN
+    # pipeline run (risk agent attaches it from state.option_snapshot). Key
+    # presence -- even an insufficient_data value -- means the wiring fired;
+    # honest absence when sources are dark or the toggle is off.
+    annotation = (payload.get("risk_assessment") or {}).get("option_implied")
+    if annotation is not None:
+        regime = annotation.get("regime") if isinstance(annotation, dict) else None
+        suffix = f"option_implied present (regime {regime or 'insufficient_data'})"
+    else:
+        suffix = "option_implied absent (sources dark or OPTION_SIGNALS_ENABLED off)"
+    return "PASS", f"HTTP 200 with decisions after {elapsed:.0f}s; {suffix}"
 
 
 def check_provider_health_endpoint() -> tuple[str, str]:
@@ -273,6 +377,8 @@ def main() -> int:
         ("EM financial indicator (600000)", check_em_financial_indicator),
         ("EM full-market spot table", check_em_spot_table),
         ("EM sector-benchmark chain", check_em_sector_chain),
+        ("SSE option snapshot", check_sse_option_snapshot),
+        ("option-implied annotation chain", check_option_implied_annotation),
     ]
     if "--full" in sys.argv:
         checks.append(("full analysis chain (--full)", check_full_analysis))
