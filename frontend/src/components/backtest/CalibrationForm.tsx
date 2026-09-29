@@ -20,6 +20,8 @@ import {
   type CalibrationHorizon,
   type StrategiesResponse,
 } from '@/lib/utils'
+import { formatSignedPercent } from '@/lib/format'
+import { calibrationVerdict } from '@/lib/verdicts'
 
 // Same filter as the walk-forward tab: buy-and-hold has no entry signal to
 // calibrate (its single "entry" is bar zero — time itself, not a signal).
@@ -364,7 +366,7 @@ function CalibrationResult({ result }: CalibrationResultProps) {
 }
 
 function HorizonBlock({ horizon, block }: { horizon: number; block: CalibrationHorizon }) {
-  const verdict = horizonVerdict(block)
+  const verdict = calibrationVerdict(block.hit_rate, block.wilson_lower)
   const years = Object.keys(block.by_year).sort()
 
   return (
@@ -402,7 +404,7 @@ function HorizonBlock({ horizon, block }: { horizon: number; block: CalibrationH
               >
                 {block.avg_forward_return === undefined
                   ? '—'
-                  : pct(block.avg_forward_return)}
+                  : formatSignedPercent(block.avg_forward_return)}
               </div>
             </div>
           </div>
@@ -439,33 +441,10 @@ function HorizonBlock({ horizon, block }: { horizon: number; block: CalibrationH
   )
 }
 
-function horizonVerdict(block: CalibrationHorizon): { text: string; cls: string } {
-  if (block.hit_rate === null) {
-    return { text: '无成熟事件', cls: 'text-amber-600 dark:text-amber-400' }
-  }
-  if (block.wilson_lower !== null && block.wilson_lower > 0.5) {
-    return {
-      text: '保守下界仍在 50% 之上——命中率经得起样本量折减',
-      cls: 'text-emerald-600 dark:text-emerald-400',
-    }
-  }
-  if (block.hit_rate < 0.5) {
-    return { text: '历史命中率不足一半——入场信号更常错误', cls: 'text-red-500' }
-  }
-  return {
-    text: '命中率过半但保守下界未过半——样本量还不足以确证优势',
-    cls: 'text-amber-600 dark:text-amber-400',
-  }
-}
-
 function hitRateColor(rate: number): string {
   if (rate > 0.5) return 'text-emerald-600 dark:text-emerald-400'
   if (rate < 0.5) return 'text-red-500'
   return ''
-}
-
-function pct(value: number, digits = 1): string {
-  return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(digits)}%`
 }
 
 function formatParams(params: Record<string, number>): string {

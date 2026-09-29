@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/select'
 import { Loader2, Play } from 'lucide-react'
 import { API, type BacktestRequest, type BacktestResponse, type StrategiesResponse } from '@/lib/utils'
+import { formatSignedPercent } from '@/lib/format'
+import { nullBenchmarkVerdict } from '@/lib/verdicts'
 import { BacktestChart } from './BacktestChart'
 
 export function BacktestForm() {
@@ -329,19 +331,8 @@ function BacktestResult({ result }: BacktestResultProps) {
   )
 }
 
-function pct(value: number, digits = 1): string {
-  return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(digits)}%`
-}
-
 function NullBenchmarkCard({ nb }: { nb: NonNullable<BacktestResponse['null_benchmark']> }) {
-  // One-sided p: probability that random timing does at least as well.
-  const isSignal = nb.p_value <= 0.05
-  const isAntiSignal = nb.p_value >= 0.95
-  const verdict = isSignal
-    ? { text: '信号显著优于随机入场（p ≤ 0.05）', cls: 'text-emerald-600 dark:text-emerald-400' }
-    : isAntiSignal
-      ? { text: '显著差于随机入场——择时在帮倒忙', cls: 'text-red-500' }
-      : { text: '与随机入场不可区分——收益更可能来自行情而非择时', cls: 'text-amber-600 dark:text-amber-400' }
+  const verdict = nullBenchmarkVerdict(nb.p_value)
 
   return (
     <div className="space-y-3 pt-2 border-t">
@@ -355,16 +346,16 @@ function NullBenchmarkCard({ nb }: { nb: NonNullable<BacktestResponse['null_benc
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="p-3 bg-muted/50 rounded-lg">
           <div className="text-xs text-muted-foreground">策略收益</div>
-          <div className="text-lg font-bold">{pct(nb.strategy_return)}</div>
+          <div className="text-lg font-bold">{formatSignedPercent(nb.strategy_return)}</div>
         </div>
         <div className="p-3 bg-muted/50 rounded-lg">
           <div className="text-xs text-muted-foreground">随机入场中位数</div>
-          <div className="text-lg font-bold">{pct(nb.null_return_p50)}</div>
+          <div className="text-lg font-bold">{formatSignedPercent(nb.null_return_p50)}</div>
         </div>
         <div className="p-3 bg-muted/50 rounded-lg">
           <div className="text-xs text-muted-foreground">随机区间 (P5–P95)</div>
           <div className="text-lg font-bold">
-            {pct(nb.null_return_p05)} ~ {pct(nb.null_return_p95)}
+            {formatSignedPercent(nb.null_return_p05)} ~ {formatSignedPercent(nb.null_return_p95)}
           </div>
         </div>
         <div className="p-3 bg-muted/50 rounded-lg">

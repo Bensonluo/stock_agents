@@ -52,3 +52,20 @@ export function sparkColor(trend: string | undefined): string {
   if (trend === 'bearish' || trend === 'strong_bearish') return '#ef4444'
   return '#94a3b8'
 }
+
+// 带符号百分比（回测三表单共用：+31.2% / -5.6%；0 按 + 计——pinned as-is）
+export function formatSignedPercent(value: number, digits = 1): string {
+  return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(digits)}%`
+}
+
+// 相对时间（monitoring 页：秒/分钟/小时三档；未来时间戳钳到 0 秒，无效输入 → null）
+export function relativeTime(iso: string | null): string | null {
+  if (!iso) return null
+  const ms = Date.now() - new Date(iso).getTime()
+  if (Number.isNaN(ms)) return null
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  if (seconds < 60) return `${seconds} 秒前`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} 分钟前`
+  return `${Math.floor(minutes / 60)} 小时前`
+}

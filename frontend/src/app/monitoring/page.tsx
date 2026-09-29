@@ -7,8 +7,10 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { cn, API } from '@/lib/utils'
+import { relativeTime } from '@/lib/format'
+import { providerTone, type ProviderTone } from '@/lib/verdicts'
 import type {
-  ReactProgressResponse, DataSourceHealthResponse, ProviderHealthStats,
+  ReactProgressResponse, DataSourceHealthResponse,
   SystemHealth, CircuitBreakersResponse, RetryStatsResponse, TimeoutStatsResponse,
 } from '@/lib/utils'
 import {
@@ -244,29 +246,10 @@ function ReactMonitor({ threadId }: { threadId: string }) {
 
 /* ── Data-source health panel ──────────────────────────────────── */
 
-type ProviderTone = 'healthy' | 'degraded' | 'down'
-
-function providerTone(stats: ProviderHealthStats): ProviderTone {
-  if (stats.fail === 0) return 'healthy'
-  if (stats.ok + stats.fallback === 0) return 'down'
-  return 'degraded'
-}
-
 const TONE_DOT: Record<ProviderTone, string> = {
   healthy: 'bg-green-500',
   degraded: 'bg-amber-500',
   down: 'bg-red-500',
-}
-
-function relativeTime(iso: string | null): string | null {
-  if (!iso) return null
-  const ms = Date.now() - new Date(iso).getTime()
-  if (Number.isNaN(ms)) return null
-  const seconds = Math.max(0, Math.floor(ms / 1000))
-  if (seconds < 60) return `${seconds} 秒前`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} 分钟前`
-  return `${Math.floor(minutes / 60)} 小时前`
 }
 
 function useDataSourceHealth() {

@@ -20,6 +20,8 @@ import {
   type WalkForwardRequest,
   type WalkForwardResponse,
 } from '@/lib/utils'
+import { formatSignedPercent } from '@/lib/format'
+import { deflatedSharpeVerdict } from '@/lib/verdicts'
 
 // buy_and_hold has no tunable parameters: a single-configuration "search"
 // carries no selection pressure, so the DSR (and this panel) excludes it.
@@ -424,7 +426,7 @@ function WalkForwardResult({ result }: WalkForwardResultProps) {
             <div
               className={`text-xl font-bold ${(aggregate.oos_return_mean ?? 0) >= 0 ? 'text-green-500' : 'text-red-500'}`}
             >
-              {aggregate.oos_return_mean === null ? '—' : pct(aggregate.oos_return_mean)}
+              {aggregate.oos_return_mean === null ? '—' : formatSignedPercent(aggregate.oos_return_mean)}
             </div>
           </div>
           <div className="p-4 bg-muted/50 rounded-lg">
@@ -452,7 +454,7 @@ function WalkForwardResult({ result }: WalkForwardResultProps) {
             <div
               className={`text-xl font-bold ${aggregate.worst_window && aggregate.worst_window.test_return < 0 ? 'text-red-500' : 'text-green-500'}`}
             >
-              {aggregate.worst_window === null ? '—' : pct(aggregate.worst_window.test_return)}
+              {aggregate.worst_window === null ? '—' : formatSignedPercent(aggregate.worst_window.test_return)}
             </div>
           </div>
         </div>
@@ -482,7 +484,7 @@ function WalkForwardResult({ result }: WalkForwardResultProps) {
                     <td
                       className={`py-2 pr-4 font-medium ${w.test_return !== null && w.test_return < 0 ? 'text-red-500' : 'text-emerald-600 dark:text-emerald-400'}`}
                     >
-                      {w.test_return === null ? '—' : pct(w.test_return)}
+                      {w.test_return === null ? '—' : formatSignedPercent(w.test_return)}
                     </td>
                   </tr>
                 ))}
@@ -512,16 +514,7 @@ function DeflatedSharpeCard({ dsr }: { dsr: WalkForwardAggregate['deflated_sharp
     )
   }
 
-  const isSignificant = dsr.dsr >= 0.95
-  const isDeflated = dsr.dsr <= 0.05
-  const verdict = isSignificant
-    ? {
-        text: '折减选参偏差后 Sharpe 仍显著为正——选参结果可信',
-        cls: 'text-emerald-600 dark:text-emerald-400',
-      }
-    : isDeflated
-      ? { text: '选参优势在折减后消失——大概率是搜索幸存者', cls: 'text-red-500' }
-      : { text: '尚不能把该 Sharpe 与选参噪音区分开', cls: 'text-amber-600 dark:text-amber-400' }
+  const verdict = deflatedSharpeVerdict(dsr.dsr)
 
   return (
     <div className="space-y-3 pt-2 border-t">
@@ -556,10 +549,6 @@ function DeflatedSharpeCard({ dsr }: { dsr: WalkForwardAggregate['deflated_sharp
       </div>
     </div>
   )
-}
-
-function pct(value: number, digits = 1): string {
-  return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(digits)}%`
 }
 
 function formatParams(params: Record<string, number>): string {
