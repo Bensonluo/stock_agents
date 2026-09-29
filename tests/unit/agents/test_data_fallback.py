@@ -99,3 +99,77 @@ class TestProviderFallback:
         from app.tools.data.fetcher import DEFAULT_HISTORY_DAYS
 
         assert data_agent_module.DEFAULT_HISTORY_DAYS is DEFAULT_HISTORY_DAYS
+
+
+class TestFinancialFallback:
+    @pytest.mark.asyncio
+    async def test_empty_yfinance_financials_fall_back_to_shared_chain(
+        self, data_agent_module, monkeypatch
+    ) -> None:
+        agent = data_agent_module.DataCollectionAgent()
+        # Same flat boundary contract as the market leg: financial_data IS
+        # the block (metrics + metric_units), never symbol-keyed.
+        fallback_payload = {
+            "financial_data": {
+                "metrics": {"pe_ratio": 28.4, "roe": 0.31},
+                "metric_units": {"roe": "ratio"},
+            }
+        }
+        monkeypatch.setattr(
+            data_agent_module, "fetch_stock_data", AsyncMock(return_value=fallback_payload)
+        )
+        monkeypatch.setattr(
+            data_agent_module,
+            "_sync_fetch_financial_data",
+            lambda *args, **kwargs: {},  # primary path returns nothing
+        )
+
+        result = await agent._fetch_financial_data("TEST")
+
+        assert result["metrics"]["pe_ratio"] == 28.4
+        assert result["metrics"]["roe"] == 0.31
+        assert result["symbol"] == "TEST"  # injected, mirrors the market leg
+        assert result["metric_units"] == {"roe": "ratio"}
+
+    @pytest.mark.asyncio
+    async def test_primary_financials_short_circuit_the_chain(
+        self, data_agent_module, monkeypatch
+    ) -> None:
+        agent = data_agent_module.DataCollectionAgent()
+        fetch_mock = AsyncMock()
+        monkeypatch.setattr(data_agent_module, "fetch_stock_data", fetch_mock)
+        monkeypatch.setattr(
+            data_agent_module,
+            "_sync_fetch_financial_data",
+            lambda *args, **kwargs: {
+                "symbol": "TEST",
+                "metrics": {"pe_ratio": 12.0},
+            },
+        )
+
+        result = await agent._fetch_financial_data("TEST")
+
+        assert result["metrics"]["pe_ratio"] == 12.0
+        fetch_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_metricless_chain_result_degrades_to_empty(
+        self, data_agent_module, monkeypatch
+    ) -> None:
+        """A chain snapshot without metrics (e.g. a market-only provider)
+        must not fabricate financial data — the pre-fallback degradation."""
+        agent = data_agent_module.DataCollectionAgent()
+        monkeypatch.setattr(
+            data_agent_module,
+            "fetch_stock_data",
+            AsyncMock(return_value={"market_data": {"symbol": "TEST"}, "financial_data": {}}),
+        )
+        monkeypatch.setattr(
+            data_agent_module,
+            "_sync_fetch_financial_data",
+            lambda *args, **kwargs: {},
+        )
+
+        result = await agent._fetch_financial_data("TEST")
+
+        assert result == {}

@@ -633,6 +633,20 @@ class DataCollectionAgent(BaseAgent):
                     symbol,
                     self._financial_statement_to_dict,
                 )
+
+            if not result or not result.get("metrics"):
+                fallback = await fetch_stock_data(symbol)
+                # Same flat boundary contract as the market leg: the
+                # snapshot's financial_data IS the block — read it flat and
+                # stamp the symbol, never symbol-key it.
+                financials = (fallback or {}).get("financial_data") or {}
+                if financials.get("metrics"):
+                    logger.info(
+                        f"[data_agent] provider-chain fallback supplied financial data "
+                        f"for {symbol}"
+                    )
+                    return {**financials, "symbol": symbol}
+
             return result
 
         except Exception as e:
