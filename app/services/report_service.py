@@ -18,7 +18,7 @@ from app.analysis.events import next_earnings_window
 from app.analysis.fundamental import compact_quality_view
 from app.analysis.ic import STATIC_DIMENSION_WEIGHTS
 from app.analysis.portfolio import suggest_weights
-from app.analysis.regime import decision_warnings, regime_warnings
+from app.analysis.regime import decision_warnings, option_regime_warnings, regime_warnings
 from app.analysis.technical import compact_weekly_view
 from app.analysis.valuation import compact_valuation_view
 
@@ -554,9 +554,11 @@ class ReportService:
             # Same decision-layer warnings the pipeline decision agent emits
             # (shared generators in app/analysis/regime.py) so both paths
             # speak with one voice. Warning-free recs omit the key.
-            warnings = decision_warnings(
-                rec["action"], risk, rec.get("confidence") or 0
-            ) + regime_warnings(rec["action"], c["market_regime"])
+            warnings = (
+                decision_warnings(rec["action"], risk, rec.get("confidence") or 0)
+                + regime_warnings(rec["action"], c["market_regime"])
+                + option_regime_warnings(rec["action"], c.get("option_implied"))
+            )
             if warnings:
                 rec["warnings"] = warnings
             by_symbol[symbol] = rec

@@ -5,7 +5,12 @@ from typing import Any
 
 from app.agents.base import StatelessAgent
 from app.analysis.ic import DECISION_FORMULA_VERSION
-from app.analysis.regime import decision_warnings, regime_warnings
+from app.analysis.regime import (
+    decision_warnings,
+    option_context_line,
+    option_regime_warnings,
+    regime_warnings,
+)
 from app.analysis.sizing import RISK_BUDGET_PCT, STOP_MULTIPLE, atr_position_size
 from app.orchestration.state import AgentState
 from app.services.report_service import derive_recommendation
@@ -51,9 +56,11 @@ class DecisionMakingAgent(StatelessAgent):
         if risk_assessment and isinstance(risk_assessment, dict):
             risk = risk_assessment.get("risk_by_symbol", risk_assessment)
             market_regime = risk_assessment.get("market_regime")
+            option_implied = risk_assessment.get("option_implied")
         else:
             risk = {}
             market_regime = None
+            option_implied = None
 
         if not symbols:
             logger.warning("No symbols for decision making")
@@ -84,6 +91,7 @@ class DecisionMakingAgent(StatelessAgent):
                     sentiment.get(symbol, {}) if isinstance(sentiment, dict) else sentiment,
                     risk.get(symbol, {}) if isinstance(risk, dict) else risk,
                     market_regime=market_regime,
+                    option_implied=option_implied,
                     dimension_weights=dimension_weights,
                 )
                 if decision:
@@ -111,7 +119,7 @@ class DecisionMakingAgent(StatelessAgent):
         # Use LLM for final decision synthesis if available
         llm_summary = None
         if self.llm and results:
-            llm_summary = await self._llm_decision_synthesis(results, market_regime)
+            llm_summary = await self._llm_decision_synthesis(results, market_regime, option_implied)
 
         return {
             "decisions": results,
@@ -135,6 +143,7 @@ class DecisionMakingAgent(StatelessAgent):
         risk: dict,
         *,
         market_regime: dict | None = None,
+        option_implied: dict | None = None,
         dimension_weights: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         """Make investment decision for a single symbol.
@@ -207,7 +216,8 @@ class DecisionMakingAgent(StatelessAgent):
             # recommendations emit the same warnings, so both decision
             # surfaces speak with one voice.
             "warnings": decision_warnings(action, risk, confidence)
-            + regime_warnings(action, market_regime),
+            + regime_warnings(action, market_regime)
+            + option_regime_warnings(action, option_implied),
         }
 
     def _extract_technical_score(self, technical: dict) -> float | None:
@@ -402,7 +412,10 @@ class DecisionMakingAgent(StatelessAgent):
         }
 
     async def _llm_decision_synthesis(
-        self, decisions: dict, market_regime: dict | None = None
+        self,
+        decisions: dict,
+        market_regime: dict | None = None,
+        option_implied: dict | None = None,
     ) -> dict[str, str]:
         """Use LLM to synthesize decisions.
 
@@ -410,6 +423,8 @@ class DecisionMakingAgent(StatelessAgent):
             decisions: Decisions by symbol
             market_regime: Benchmark regime block (iteration 76) — context
                 for the narrative, never an input to any score
+            option_implied: Option-implied regime block (iteration 155) —
+                same annotation-only context contract
 
         Returns:
             LLM synthesis
@@ -428,8 +443,15 @@ class DecisionMakingAgent(StatelessAgent):
                     f"score: {score_str})"
                 )
 
-            context = _market_context_line(market_regime)
-            context_block = f"{context}\n\n" if context else ""
+            context_parts = [
+                line
+                for line in (
+                    _market_context_line(market_regime),
+                    option_context_line(option_implied),
+                )
+                if line
+            ]
+            context_block = f"{'; '.join(context_parts)}\n\n" if context_parts else ""
 
             prompt = f"""Synthesize these investment decisions into a brief portfolio summary:
 

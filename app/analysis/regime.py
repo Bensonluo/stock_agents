@@ -11,10 +11,11 @@ regime block describes context and never touches risk scores, weights,
 or position sizes. Policy decisions built on it are separate, explicit
 changes.
 
-The ``decision_warnings`` / ``regime_warnings`` generators live here so
-both decision surfaces — the pipeline decision agent and the ReAct
-derived recommendations — import the SAME functions from a leaf module
-(the report service cannot import the decision agent: circular).
+The ``decision_warnings`` / ``regime_warnings`` /
+``option_regime_warnings`` / ``option_context_line`` generators live
+here so both decision surfaces — the pipeline decision agent and the
+ReAct derived recommendations — import the SAME functions from a leaf
+module (the report service cannot import the decision agent: circular).
 
 Pure functions only — no network, no storage.
 """
@@ -178,3 +179,55 @@ def regime_warnings(action: str, regime: dict | None) -> list[str]:
             "falling-knife risk; prefer scaling in over a single entry."
         )
     return warnings
+
+
+_OPTION_REGIME_WORDS = {"恐慌": "panic", "自满": "complacency", "中性": "a neutral state"}
+
+
+def option_regime_warnings(action: str, option_implied: dict | None) -> list[str]:
+    """Buy-side risk warnings from the option-implied regime (iteration 155 block).
+
+    Same annotation-only contract as regime_warnings: appends strings, never
+    an input to the action, score, confidence, or position size. Sells/holds
+    get nothing — the edge case is adding risk when options price the tail
+    cheaply (自满) or while realized panic is destabilizing fills (恐慌).
+    """
+    if (
+        not isinstance(option_implied, dict)
+        or option_implied.get("status") != "ok"
+        or "buy" not in action
+    ):
+        return []
+    qvix = option_implied.get("qvix")
+    pct = qvix.get("percentile_1y") if isinstance(qvix, dict) else None
+    where = f" (QVIX at the {pct:.0%} 1-year percentile)" if isinstance(pct, int | float) else ""
+    regime = option_implied.get("regime")
+    if regime == "恐慌":
+        return [
+            f"Options market is pricing panic{where} — entries during panic face "
+            "wide swings and unstable fills; prefer scaling in over a single entry."
+        ]
+    if regime == "自满":
+        return [
+            f"Options market is complacent{where} — downside insurance is cheap and "
+            "tail risk may be underpriced; a volatility repricing can hit new entries."
+        ]
+    return []
+
+
+def option_context_line(option_implied: dict | None) -> str | None:
+    """One-line option-implied context for the synthesis prompt; None when unknown.
+
+    Narrative context for the LLM only (mirrors _market_context_line's
+    contract): never an input to any score, weight, or position size.
+    """
+    if not isinstance(option_implied, dict) or option_implied.get("status") != "ok":
+        return None
+    qvix = option_implied.get("qvix")
+    current = qvix.get("current") if isinstance(qvix, dict) else None
+    label = _OPTION_REGIME_WORDS.get(option_implied.get("regime"))
+    if not isinstance(current, int | float) or label is None:
+        return None
+    pct = qvix.get("percentile_1y") if isinstance(qvix, dict) else None
+    detail = f" at the {pct:.0%} 1-year percentile" if isinstance(pct, int | float) else ""
+    return f"the options market implies {label} (QVIX {current}{detail})"

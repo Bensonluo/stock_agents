@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.agents.decision_agent import DecisionMakingAgent, _market_context_line
+from app.analysis.regime import option_context_line
 
 pytestmark = pytest.mark.asyncio
 
@@ -156,6 +157,101 @@ class TestRegimeAwareSynthesis:
 
         assert result["llm_summary"]["synthesis"] == "Balanced portfolio summary."
         assert "Market context:" in stub.prompts[0]
+
+
+_OPTION_COMPLACENT = {
+    "status": "ok",
+    "regime": "自满",
+    "qvix": {"current": 14.85, "as_of": "2026-09-29", "percentile_1y": 0.1389},
+    "iv": {},
+    "pcr": {},
+    "generated_at": "2026-09-30T10:00:00",
+}
+
+_OPTION_PANIC = {
+    "status": "ok",
+    "regime": "恐慌",
+    "qvix": {"current": 32.1, "as_of": "2026-09-29", "percentile_1y": 0.802},
+    "iv": {},
+    "pcr": {},
+    "generated_at": "2026-09-30T10:00:00",
+}
+
+
+class TestOptionAwareSynthesis:
+    """Iteration 155's option-implied block joins the synthesis context —
+    narrative for the LLM only, mirroring _market_context_line's contract."""
+
+    def test_option_context_line_renders_complacency_exactly(self) -> None:
+        assert option_context_line(_OPTION_COMPLACENT) == (
+            "the options market implies complacency (QVIX 14.85 at the 14% 1-year percentile)"
+        )
+
+    def test_option_context_line_renders_panic_and_neutral(self) -> None:
+        assert "panic" in option_context_line(_OPTION_PANIC)
+        neutral = {**_OPTION_PANIC, "regime": "中性"}
+        assert "a neutral state" in option_context_line(neutral)
+
+    def test_option_context_refuses_unknown_blocks(self) -> None:
+        assert option_context_line(None) is None
+        assert option_context_line({"status": "insufficient_data"}) is None
+        # ok block whose qvix carries no current reading
+        assert option_context_line({"status": "ok", "regime": "自满", "qvix": {}}) is None
+
+    async def test_synthesis_prompt_carries_option_context(self) -> None:
+        agent, stub = _agent_with_stub()
+
+        await agent._llm_decision_synthesis(
+            {"AAA": {"action": "buy", "confidence": 0.7, "score": 72.0}},
+            option_implied=_OPTION_COMPLACENT,
+        )
+
+        assert "options market implies complacency" in stub.prompts[0]
+        assert "QVIX 14.85" in stub.prompts[0]
+
+    async def test_synthesis_prompt_without_option_is_byte_identical(self) -> None:
+        decisions = {"AAA": {"action": "buy", "confidence": 0.7, "score": 72.0}}
+        agent_plain, stub_plain = _agent_with_stub()
+        await agent_plain._llm_decision_synthesis(decisions, _REGIME)
+
+        agent_none, stub_none = _agent_with_stub()
+        await agent_none._llm_decision_synthesis(decisions, _REGIME, option_implied=None)
+
+        assert stub_none.prompts[0] == stub_plain.prompts[0]
+        assert "options market" not in stub_none.prompts[0]
+
+    async def test_process_extracts_option_context_from_risk_state(self) -> None:
+        agent, stub = _agent_with_stub()
+        agent.llm = stub  # make the synthesis branch fire
+        agent._make_decision = AsyncMock(
+            return_value={  # type: ignore[method-assign]
+                "symbol": "AAA",
+                "action": "buy",
+                "confidence": 0.7,
+                "score": 72.0,
+                "component_scores": {},
+                "position_size": {},
+                "price_targets": {},
+                "rationale": "",
+                "warnings": [],
+            }
+        )
+
+        result = await agent.process(
+            {
+                "symbols": ["AAA"],
+                "technical_analysis": {},
+                "fundamental_analysis": {},
+                "sentiment_analysis": {},
+                "risk_assessment": {
+                    "risk_by_symbol": {"AAA": {}},
+                    "option_implied": _OPTION_COMPLACENT,
+                },
+            }
+        )
+
+        assert result["llm_summary"]["synthesis"] == "Balanced portfolio summary."
+        assert "options market implies complacency" in stub.prompts[0]
 
 
 class TestNullScoreExtractors:

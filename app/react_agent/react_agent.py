@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 
-from app.analysis.regime import decision_warnings, regime_warnings
+from app.analysis.regime import decision_warnings, option_regime_warnings, regime_warnings
 from app.config import settings
 from app.react_agent.prompts import REASONING_SYSTEM_PROMPT
 from app.react_agent.state import ReActState, create_initial_react_state
@@ -292,6 +292,7 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
     # Namespaced regime block the risk tool attaches beside the per-symbol
     # entries (iteration 115) — one regime per run, read once here.
     market_regime = risk_bucket.get("market_regime") if isinstance(risk_bucket, dict) else None
+    option_implied = risk_bucket.get("option_implied") if isinstance(risk_bucket, dict) else None
     decisions: dict[str, dict] = {}
 
     for sym in symbols:
@@ -342,8 +343,10 @@ def _build_report_data(state: dict[str, Any]) -> dict[str, Any]:
         # decision agent emits (app/analysis/regime.py), computed on the
         # gated action/confidence: a vetoed buy no longer exists, so its
         # counter-trend risk is not narrated. Warning-free recs omit the key.
-        warnings = decision_warnings(action, risk, confidence) + regime_warnings(
-            action, market_regime
+        warnings = (
+            decision_warnings(action, risk, confidence)
+            + regime_warnings(action, market_regime)
+            + option_regime_warnings(action, option_implied)
         )
         if warnings:
             decisions[sym]["warnings"] = warnings

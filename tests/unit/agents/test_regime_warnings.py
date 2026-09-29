@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from app.agents.decision_agent import DecisionMakingAgent
+from app.analysis.regime import option_regime_warnings as _option_regime_warnings
 from app.analysis.regime import regime_warnings as _regime_warnings
 
 _BEAR = {
@@ -129,3 +130,104 @@ class TestDecisionLevelAnnotation:
 
         warnings = result["decisions"]["AAA"]["warnings"]
         assert any("Counter-trend" in w for w in warnings)
+
+
+# --- Option-implied regime (iteration 155 block): same annotation-only
+# contract as the benchmark regime above, one market-level block per run.
+_OPTION_PANIC = {
+    "status": "ok",
+    "regime": "恐慌",
+    "qvix": {
+        "current": 32.1,
+        "as_of": "2026-09-29",
+        "percentile_1y": 0.802,
+        "history_days": 2821,
+    },
+    "iv": {},
+    "pcr": {},
+    "generated_at": "2026-09-30T10:00:00",
+}
+
+_OPTION_COMPLACENT = {
+    "status": "ok",
+    "regime": "自满",
+    "qvix": {
+        "current": 14.85,
+        "as_of": "2026-09-29",
+        "percentile_1y": 0.1389,
+        "history_days": 500,
+    },
+    "iv": {},
+    "pcr": {},
+    "generated_at": "2026-09-30T10:00:00",
+}
+
+
+class TestOptionRegimeWarningsPure:
+    def test_panic_moderate_buy_gets_single_warning_with_percentile(self) -> None:
+        warnings = _option_regime_warnings("moderate_buy", _OPTION_PANIC)
+
+        assert len(warnings) == 1
+        assert "panic" in warnings[0]
+        assert "80%" in warnings[0]
+
+    def test_complacent_buy_gets_single_warning(self) -> None:
+        warnings = _option_regime_warnings("buy", _OPTION_COMPLACENT)
+
+        assert len(warnings) == 1
+        assert "complacent" in warnings[0]
+
+    def test_neutral_buy_and_panic_hold_get_nothing(self) -> None:
+        neutral = {**_OPTION_PANIC, "regime": "中性"}
+        assert _option_regime_warnings("buy", neutral) == []
+        assert _option_regime_warnings("hold", _OPTION_PANIC) == []
+
+    def test_insufficient_or_missing_block_gets_nothing(self) -> None:
+        assert _option_regime_warnings("buy", None) == []
+        insufficient = {**_OPTION_PANIC, "status": "insufficient_data"}
+        assert _option_regime_warnings("buy", insufficient) == []
+
+    def test_missing_percentile_still_warns_without_parenthetical(self) -> None:
+        degraded = {**_OPTION_PANIC, "qvix": {"current": 32.1}}
+        warnings = _option_regime_warnings("buy", degraded)
+
+        assert len(warnings) == 1
+        assert "(" not in warnings[0]
+
+
+@pytest.mark.asyncio
+class TestOptionDecisionAnnotation:
+    async def test_option_annotation_leaves_decision_numbers_identical(self) -> None:
+        agent = DecisionMakingAgent("test-decision")
+
+        plain = await agent._make_decision("AAA", _BUY_TECH, _BUY_FUND, _BUY_SENT, {})
+        panicked = await agent._make_decision(
+            "AAA", _BUY_TECH, _BUY_FUND, _BUY_SENT, {}, option_implied=_OPTION_PANIC
+        )
+
+        # Pure annotation: the option block can add warnings, nothing else —
+        # every non-warnings key must be identical between the two runs.
+        assert {k: v for k, v in panicked.items() if k != "warnings"} == {
+            k: v for k, v in plain.items() if k != "warnings"
+        }
+        assert set(plain["warnings"]) < set(panicked["warnings"])
+        assert any("panic" in w for w in panicked["warnings"])
+
+    async def test_process_routes_option_implied_into_decision_warnings(self) -> None:
+        agent = DecisionMakingAgent("test-decision")
+
+        result = await agent.process(
+            {
+                "symbols": ["AAA"],
+                "technical_analysis": {"AAA": _BUY_TECH},
+                "fundamental_analysis": {"AAA": _BUY_FUND},
+                "sentiment_analysis": {"AAA": _BUY_SENT},
+                "risk_assessment": {
+                    "risk_by_symbol": {"AAA": {}},
+                    "option_implied": _OPTION_PANIC,
+                },
+            }
+        )
+
+        warnings = result["decisions"]["AAA"]["warnings"]
+        assert any("panic" in w for w in warnings)

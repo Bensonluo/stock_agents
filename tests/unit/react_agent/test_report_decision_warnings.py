@@ -37,7 +37,11 @@ def _synthesis(verdict: str) -> dict:
     }
 
 
-def _state(regime: dict | None = None, stale_technical: bool = False) -> dict:
+def _state(
+    regime: dict | None = None,
+    stale_technical: bool = False,
+    option_implied: dict | None = None,
+) -> dict:
     technical: dict = {"signals": {"trend": "bullish"}, "sentiment": {"score": 80}}
     if stale_technical:
         technical["freshness"] = {"as_of": "2026-09-01", "age_days": 25, "stale": True}
@@ -47,6 +51,9 @@ def _state(regime: dict | None = None, stale_technical: bool = False) -> dict:
     if regime is not None:
         # Namespaced key exactly as assess_risk attaches it (iteration 115).
         assess_risk["market_regime"] = regime
+    if option_implied is not None:
+        # Namespaced key exactly as assess_risk attaches it (iteration 156).
+        assess_risk["option_implied"] = option_implied
     return {
         "symbols": ["TEST"],
         "tool_results": {
@@ -101,3 +108,28 @@ class TestLowConfidence:
         assert decision["warnings"] == [
             "Low confidence in this recommendation. Consider waiting for clearer signals."
         ]
+
+
+OPTION_COMPLACENT = {
+    "status": "ok",
+    "regime": "自满",
+    "qvix": {"current": 14.85, "as_of": "2026-09-29", "percentile_1y": 0.1389},
+    "iv": {},
+    "pcr": {},
+    "generated_at": "2026-09-30T10:00:00",
+}
+
+
+class TestOptionRegimeWarnings:
+    """Iteration 155's option-implied block appends the same buy-side
+    warnings on the ReAct path — annotation-only, post-gate, same shared
+    generator as the pipeline decision agent."""
+
+    def test_approved_buy_under_complacent_options_carries_warning(self, monkeypatch) -> None:
+        decision = _decision(
+            monkeypatch, "approve", _state(regime=None, option_implied=OPTION_COMPLACENT)
+        )
+
+        assert decision["action"] == "buy"
+        assert len(decision["warnings"]) == 1
+        assert "complacent" in decision["warnings"][0]
