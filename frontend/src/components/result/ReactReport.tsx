@@ -14,7 +14,7 @@ import {
 import { ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts'
 import {
   actionZh, actionStyle, trendZh, trendColor, riskZh, riskStyle,
-  sentimentZh, scoreOf, SectionCard, OptionImpliedBlock,
+  sentimentZh, scoreOf, SectionCard, OptionImpliedBlock, ConsensusBlock,
 } from './report-shared'
 import { BarChart3, Brain, Database, Hash, Newspaper, PieChart, Shield } from 'lucide-react'
 
@@ -416,6 +416,7 @@ export function ReactReport({ answer, report: structuredReport }: {
                         </div>
                       </div>
                     )}
+                    {f.consensus && <ConsensusBlock symbol={sym} consensus={f.consensus} />}
                     {flags.length > 0 && (
                       <div className="space-y-1">
                         {flags.map((flag, i) => (

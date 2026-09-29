@@ -16,6 +16,7 @@ import { AnalysisDetail } from './AnalysisDetail'
 import { SentimentAnalysis } from './SentimentAnalysis'
 import { RiskAssessment } from './RiskAssessment'
 import { ReportSkeleton } from './ReportSkeleton'
+import { ConsensusBlock } from './report-shared'
 import { BackToTop } from '@/components/layout/BackToTop'
 import {
   ArrowLeft, CheckCircle2, AlertCircle, TrendingUp, TrendingDown,
@@ -515,6 +516,13 @@ export function PipelineResultPage({ threadId }: { threadId: string | null }) {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
+                  {Object.entries(result.report?.sections?.fundamental_analysis?.by_symbol || {})
+                    .filter(([, f]: any) => f?.consensus)
+                    .map(([sym, f]: [string, any]) => (
+                      <div key={sym} className="mb-3">
+                        <ConsensusBlock symbol={sym} consensus={f.consensus} />
+                      </div>
+                    ))}
                   <AnalysisDetail
                     data={result.fundamental_analysis}
                     expanded={expandedSection === 'fundamental'}

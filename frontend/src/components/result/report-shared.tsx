@@ -3,8 +3,8 @@
 import type { ReactNode } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import { formatNumber, formatPercent, formatSignedPercent } from '@/lib/format'
-import type { OptionImplied } from './types'
+import { formatNumber, formatPercent, formatSignedPercent, formatCurrency, currencyForSymbol } from '@/lib/format'
+import type { Consensus, OptionImplied } from './types'
 
 /* ReactReport 的共享格式化器与 SectionCard —— 从组件内提取的纯函数
  * （不闭包组件状态；filterEntries 因闭包 activeSymbol 留在组件内）。 */
@@ -163,6 +163,95 @@ export const OptionImpliedBlock = ({ block }: { block: OptionImplied }) => {
         </div>
       )}
       <p className="text-slate-400">{iv?.n_filtered ? `${iv.n_filtered} 份筛选后合约 · ` : ''}纯标注，不影响评分</p>
+    </div>
+  )
+}
+
+/* CN 分析师一致预期标注块 —— pipeline / ReAct 两个报告视图共用（镜像
+ * OptionImpliedBlock 的定位）。纯标注：只读 wire 上的 fundamental
+ * by_symbol[symbol].consensus 块（THS EPS 预测 / 新浪评级，迭代 163）；
+ * 全部子块缺席时整块不渲染。US-only run 无此键，渲染面零扰动。 */
+
+// status → 徽章样式/文案；ratings-only（insufficient_data）→ amber「数据不足」
+// ——评级计数仍是真实可显示数据，照常渲染在徽章下方
+export const consensusBadge = (block: Consensus): { bg: string; color: string; label: string } => {
+  if (block.status === 'ok') return { bg: 'bg-slate-100', color: 'text-slate-600', label: '机构预期' }
+  return { bg: 'bg-amber-100', color: 'text-amber-700', label: '数据不足' }
+}
+
+// 整块渲染门：任一子块存在才渲染（降级 run 整键缺席，由调用方守卫兜底）
+export const hasConsensusContent = (block: Consensus): boolean =>
+  block.eps_forecast != null || block.target_price != null || block.ratings != null
+
+export const ConsensusBlock = ({ symbol, consensus: c }: { symbol: string; consensus: Consensus }) => {
+  if (!hasConsensusContent(c)) return null
+  const badge = consensusBadge(c)
+  const currency = currencyForSymbol(symbol)
+  const eps = c.eps_forecast
+  const tp = c.target_price
+  const ratings = c.ratings
+  return (
+    <div className="p-3 border border-slate-200 rounded-lg space-y-1 text-xs">
+      <div className="flex items-center justify-between">
+        <span className="text-slate-500">分析师一致预期（CN）</span>
+        <span className={cn('px-2 py-0.5 rounded text-xs font-semibold', badge.bg, badge.color)}>{badge.label}</span>
+      </div>
+      {eps != null && (
+        <div className="flex justify-between">
+          <span className="text-slate-500">{`EPS 预测（${eps.year1} 年）`}</span>
+          <span className="font-medium">
+            {formatCurrency(eps.eps_mean, currency)}
+            {eps.org_count != null && (
+              <span className="ml-1 font-normal text-slate-400">{`· ${eps.org_count} 家机构`}</span>
+            )}
+            {eps.industry_avg != null && (
+              <span className="ml-1 font-normal text-slate-400">{`· 行业 ${formatCurrency(eps.industry_avg, currency)}`}</span>
+            )}
+          </span>
+        </div>
+      )}
+      {eps?.year2 != null && eps.eps_mean_year2 != null && (
+        <div className="flex justify-between">
+          <span className="text-slate-500">{`EPS 预测（${eps.year2} 年）`}</span>
+          <span className="font-medium">
+            {formatCurrency(eps.eps_mean_year2, currency)}
+            {eps.implied_growth != null && (
+              <span className={cn('ml-1 font-normal', eps.implied_growth >= 0 ? 'text-green-600' : 'text-red-600')}>
+                {`同比 ${formatSignedPercent(eps.implied_growth)}`}
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+      {tp != null && (
+        <div className="flex justify-between">
+          <span className="text-slate-500">{`目标价（${tp.count} 家 · 近${tp.window_days}天）`}</span>
+          <span className="font-medium">
+            {formatCurrency(tp.mean, currency)}
+            <span className="ml-1 font-normal text-slate-400">{`· 中位 ${formatCurrency(tp.median, currency)}`}</span>
+            {tp.implied_upside != null && (
+              <span className={cn('ml-1 font-normal', tp.implied_upside >= 0 ? 'text-green-600' : 'text-red-600')}>
+                {`· ${formatSignedPercent(tp.implied_upside)}`}
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+      {ratings != null && (
+        <div className="flex justify-between">
+          <span className="text-slate-500">机构评级</span>
+          <span className="font-medium">
+            {['买入', '增持', '中性', '减持', '卖出']
+              .filter((l) => (ratings.counts[l] ?? 0) > 0)
+              .map((l) => `${l} ${ratings.counts[l] ?? 0}`)
+              .join(' · ')}
+            <span className="ml-1 font-normal text-slate-400">{`· 主导 ${ratings.dominant}`}</span>
+          </span>
+        </div>
+      )}
+      <p className="text-slate-400">
+        {ratings ? `${ratings.total} 条评级 · ` : ''}纯标注，不影响评分
+      </p>
     </div>
   )
 }

@@ -100,3 +100,39 @@ export interface OptionImplied {
   pcr: OptionImpliedPcr | null
   generated_at: string
 }
+
+// CN 分析师一致预期标注 —— wire 上的 report.sections.fundamental_analysis.
+// by_symbol[symbol].consensus（ReAct 与 pipeline 双视图同源）。镜像
+// app/tools/data/consensus.py 的发射契约：仅 CN symbol 且至少一条腿
+// （THS EPS 预测 / 新浪评级）有产出时存在，降级 run 整键缺席
+// （optional-key 约定）。纯标注，不参与评分。
+export interface ConsensusEpsForecast {
+  year1: number
+  eps_mean: number
+  org_count: number | null // 覆盖机构数：键恒在、无覆盖为 null
+  industry_avg: number | null // 同业均值：同上
+  year2?: number // 严格 year1+1 才发射
+  eps_mean_year2?: number
+  implied_growth?: number // mean2/mean1 − 1，仅 eps_mean > 0 时发射
+}
+
+export interface ConsensusTargetPrice {
+  count: number // ≥ MIN_TARGET_OBSERVATIONS(3) 才有本块
+  mean: number
+  median: number
+  window_days: number // = CONSENSUS_RATING_WINDOW_DAYS (180)
+  implied_upside?: number // mean/price − 1，仅现价 > 0 时发射
+}
+
+export interface ConsensusRatings {
+  counts: Record<string, number> // 五档全键：买入/增持/中性/减持/卖出
+  dominant: string // 平票偏多头档（max 保首）
+  total: number
+}
+
+export interface Consensus {
+  status: 'ok' | 'insufficient_data' // ok = eps_forecast 或 target_price 在场；仅评级 → insufficient_data
+  eps_forecast?: ConsensusEpsForecast
+  target_price?: ConsensusTargetPrice
+  ratings?: ConsensusRatings
+}
