@@ -30,7 +30,10 @@ import {
   tStatVerdict,
 } from '@/lib/verdicts'
 
+// 5 交易日是衰减曲线的最短点（后端默认窗口 5/10/20/60）——点 5d 衰减 chip
+// 会把主窗口切到 5，选择器必须能显示这个值，否则 trigger 空白。
 const HORIZONS = [
+  { value: '5', label: '5 交易日' },
   { value: '10', label: '10 交易日' },
   { value: '20', label: '20 交易日' },
   { value: '60', label: '60 交易日' },
@@ -203,7 +206,9 @@ export function SignalQualityCard() {
             </div>
             <div className="text-xs text-muted-foreground">
               {ic.runs_evaluated} 个 run 已评估 · {ic.runs_pending_maturity} 个待窗口成熟 ·{' '}
-              {ic.runs_skipped} 个跳过 · {ic.horizon_bars} 交易日窗口
+              {ic.runs_skipped} 个跳过
+              {ic.runs_duplicate > 0 ? ` · ${ic.runs_duplicate} 条重复已剔除` : ''} ·{' '}
+              {ic.horizon_bars} 交易日窗口
               {ic.icir === null && ic.runs_evaluated === 1 ? '（单 run 有均值，ICIR 待积累）' : ''}
             </div>
             {ic.per_run.length > 0 && (

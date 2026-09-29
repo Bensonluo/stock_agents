@@ -474,6 +474,9 @@ export interface DecisionICResponse {
   runs_evaluated: number
   runs_pending_maturity: number
   runs_skipped: number
+  // Emitted unconditionally by _bucket_payload (ok and insufficient alike) —
+  // same-replay dedup transparency the calib/topk sections already render.
+  runs_duplicate: number
   per_run: Array<{
     thread_id: string
     date: string
