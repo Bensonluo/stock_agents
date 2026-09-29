@@ -355,6 +355,9 @@ def _warnings(
 # Public entry point shared by the pipeline agent and ReAct tools.
 assess_symbol = _assess_symbol
 
+# Public entry shared by the ReAct single-symbol tool (run-level regime).
+market_regime_from = _market_regime
+
 
 def _minimal_risk(data: dict, symbol: str = "") -> dict:
     return {

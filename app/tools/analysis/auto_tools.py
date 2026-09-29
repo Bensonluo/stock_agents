@@ -22,6 +22,7 @@ from app.analysis.sentiment import (
 )
 from app.analysis.technical import weekly_sma_summary
 from app.analysis.valuation import scenario_valuation
+from app.config import get_settings
 from app.tools.analysis.fundamental import (
     _analyze_financial_health,
     _analyze_growth,
@@ -48,6 +49,14 @@ from app.tools.data.fetcher import (
     fetch_stock_data,
     sector_benchmark_ticker,
 )
+from app.tools.data.option_signals import (
+    build_option_implied,
+    compute_iv_metrics,
+    compute_pcr,
+    fetch_qvix_context,
+    fetch_sse_option_snapshot,
+)
+from app.tools.data.qvix_store import get_qvix_store
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -245,6 +254,25 @@ async def _fetch_and_split(symbol: str) -> dict[str, Any] | None:
         "financial_data": {symbol: data.get("financial_data", {})},
         "news_data": await _augment_news(symbol, data.get("news_data", [])),
     }
+
+
+async def _fetch_option_snapshot() -> dict[str, Any] | None:
+    """SSE option snapshot + QVIX context merged (data_agent._fetch_option_snapshot twin).
+
+    Each seam degrades alone; both None -> None (key omitted, the same
+    never-fail convention as the benchmark fetches).
+    """
+    try:
+        snapshot = await asyncio.to_thread(fetch_sse_option_snapshot)
+        qvix = await asyncio.to_thread(fetch_qvix_context, get_qvix_store())
+    except Exception as e:
+        logger.warning(f"[auto_tools] options implied-signal fetch failed: {e}")
+        return None
+    if snapshot is None and qvix is None:
+        return None
+    merged = dict(snapshot) if snapshot else {}
+    merged["qvix_context"] = qvix
+    return merged
 
 
 def _weekly_sma(symbol: str, hist: dict[str, Any]) -> dict[str, Any]:
@@ -449,7 +477,7 @@ async def assess_risk(symbol: str) -> dict[str, Any]:
     """Calculate risk metrics (volatility, VaR/CVaR, beta, max drawdown, risk score).
     Automatically fetches the latest market data.
     """
-    from app.tools.risk.assessment import assess_symbol
+    from app.tools.risk.assessment import assess_symbol, market_regime_from
 
     data = await _fetch_and_split(symbol)
     if not data:
@@ -461,7 +489,24 @@ async def assess_risk(symbol: str) -> dict[str, Any]:
     # Its previous inline copy had drifted from the engine: unguarded
     # percentile VaR (no >=20-return guard) and no CVaR at all.
     market = data["market_data"].get(symbol, {})
-    return assess_symbol(symbol, market)
+
+    # Flat multi-symbol shape (no top-level "symbol" key) so the executor's
+    # dict-merge branch parks the run-level annotations beside the per-symbol
+    # entry in the risk bucket — the iteration-115 transport, now wired to
+    # the production tool. Degraded paths omit the keys (never fabricate).
+    result: dict[str, Any] = {symbol: assess_symbol(symbol, market)}
+    regime = market_regime_from(data["market_data"])
+    if regime:
+        result["market_regime"] = regime
+    if get_settings().option_signals_enabled and symbol.isdigit() and len(symbol) == 6:
+        snapshot = await _fetch_option_snapshot()
+        if snapshot is not None:
+            result["option_implied"] = build_option_implied(
+                compute_iv_metrics(snapshot.get("contracts")),
+                compute_pcr(snapshot.get("pcr_by_underlying")),
+                snapshot.get("qvix_context"),
+            )
+    return result
 
 
 class GetStockOverviewInput(BaseModel):
