@@ -158,6 +158,36 @@ export const API = {
     return response.json() as Promise<TopKPortfolioResponse>
   },
 
+  // History endpoints —— SQLite 持久化的历次分析记录
+  getHistory: async (page = 1, pageSize = 20) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      page_size: String(pageSize),
+    })
+    const response = await fetch(`${API_BASE_URL}/api/history?${params}`)
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, '获取历史记录失败'))
+    }
+    return response.json() as Promise<HistoryListResponse>
+  },
+
+  searchHistory: async (keyword: string, limit = 20) => {
+    const params = new URLSearchParams({ keyword, limit: String(limit) })
+    const response = await fetch(`${API_BASE_URL}/api/history/search?${params}`)
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, '搜索历史记录失败'))
+    }
+    return response.json() as Promise<HistorySearchResponse>
+  },
+
+  getHistoryStats: async () => {
+    const response = await fetch(`${API_BASE_URL}/api/history/stats`)
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, '获取历史统计失败'))
+    }
+    return response.json() as Promise<HistoryStatsResponse>
+  },
+
   // Monitoring endpoints
   getHealth: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/health`)
@@ -610,6 +640,41 @@ export interface ProviderHealthStats {
   last_ok_at: string | null
   last_error: string | null
   last_error_at: string | null
+}
+
+// ---- 历史记录（SQLite 持久化）----
+
+export interface HistoryListItem {
+  id: number
+  thread_id: string
+  symbols: string[]
+  query: string
+  status: string
+  created_at: string
+  updated_at: string
+  execution_time: number
+}
+
+export interface HistoryListResponse {
+  items: HistoryListItem[]
+  total: number
+  page: number
+  page_size: number
+  has_more: boolean
+}
+
+export interface HistorySearchResponse {
+  items: HistoryListItem[]
+  keyword: string
+  count: number
+}
+
+export interface HistoryStatsResponse {
+  total_analyses: number
+  completed: number
+  failed: number
+  pending: number
+  running: number
 }
 
 export interface DataSourceHealthResponse {

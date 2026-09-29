@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
+import { statusZh } from '@/lib/status'
 import type { WorkflowState, LogEntry } from './types'
 import { useDataSourceHealth } from './useDataSourceHealth'
 import { DataSourceHealthPanel } from './DataSourceHealthPanel'
@@ -29,18 +30,6 @@ const AGENTS = [
   { key: 'decision_making', name: '决策制定', icon: Brain },
   { key: 'report_generation', name: '报告生成', icon: FileText },
 ]
-
-const STATUS_ZH: Record<string, string> = {
-  pending: '等待中',
-  running: '运行中',
-  completed: '已完成',
-  failed: '失败',
-  degraded: '已降级',
-  loading: '加载中',
-}
-
-const statusZh = (status: string | undefined) =>
-  STATUS_ZH[(status || 'loading').toLowerCase()] || status || '加载中'
 
 export function PipelineMonitor({ threadId }: { threadId: string }) {
   const router = useRouter()

@@ -2,11 +2,12 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LineChart, FlaskConical, Radar } from 'lucide-react'
+import { LineChart, FlaskConical, Radar, History } from 'lucide-react'
 
 const NAV_ITEMS = [
   { href: '/', label: '研究分析', icon: LineChart, exact: true },
   { href: '/backtest', label: '策略回测', icon: FlaskConical, exact: false },
+  { href: '/history', label: '历史记录', icon: History, exact: false },
   { href: '/monitoring', label: '运行监控', icon: Radar, exact: false },
 ]
 
