@@ -136,6 +136,12 @@ export default function HomePage() {
       return
     }
 
+    if (!query.trim()) {
+      setError('请输入研究问题')
+      setLoading(false)
+      return
+    }
+
     try {
       const data = await API.reactAnalyze({ query, symbols: symbolList })
       router.push(`/monitoring?thread_id=${data.thread_id}&mode=react`)

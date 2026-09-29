@@ -41,8 +41,11 @@ except Exception:
 
 
 class AnalyzeRequest(BaseModel):
-    query: str = Field(description="User query")
-    symbols: list[str] = Field(description="Stock symbols to analyze")
+    # min_length parity with the pipeline twin (StockAnalysisRequest in
+    # analysis.py): an empty query or symbol list must 422 at the door
+    # instead of launching a no-instruction agent run.
+    query: str = Field(description="User query", min_length=1)
+    symbols: list[str] = Field(description="Stock symbols to analyze", min_length=1)
     max_iterations: int = Field(default=15, ge=1, le=50)
 
 
