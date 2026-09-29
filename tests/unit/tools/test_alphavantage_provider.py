@@ -6,6 +6,7 @@ import asyncio
 from unittest.mock import patch
 
 import app.tools.data.fetcher as fetcher
+from app.config import get_settings
 
 
 class _FakeResp:
@@ -31,6 +32,11 @@ def test_snapshot_maps_quote_fields_into_market_block(monkeypatch) -> None:
     # this field-mapping test into a None. The cooldown's behavior is not
     # this test's subject — reset it.
     monkeypatch.setattr(fetcher, "_AV_COOLDOWN_UNTIL", 0.0)
+    # Hermetic against environment: _alphavantage_get returns None without a
+    # configured key, so this test only passed where .env happened to carry
+    # ALPHA_VANTAGE_KEY (worktrees/CI don't). Inject one on the cached
+    # settings instance (iteration 155/156 pattern).
+    monkeypatch.setattr(get_settings(), "alpha_vantage_key", "test-key")
     with patch.object(fetcher.requests, "get", return_value=_FakeResp()):
         result = asyncio.run(fetcher._alphavantage_fetch("AAPL"))
 
@@ -44,7 +50,7 @@ def test_snapshot_maps_quote_fields_into_market_block(monkeypatch) -> None:
     assert result["provider"] == "alphavantage"
 
 
-def test_snapshot_returns_none_without_price() -> None:
+def test_snapshot_returns_none_without_price(monkeypatch) -> None:
     class EmptyResp:
         def raise_for_status(self):
             return None
@@ -52,6 +58,11 @@ def test_snapshot_returns_none_without_price() -> None:
         def json(self):
             return {"Global Quote": {}}
 
+    # Same hermeticity pair as the mapping test: keyless environments return
+    # None at the key gate, so this assertion passed vacuously without ever
+    # exercising the no-price path it exists to pin.
+    monkeypatch.setattr(fetcher, "_AV_COOLDOWN_UNTIL", 0.0)
+    monkeypatch.setattr(get_settings(), "alpha_vantage_key", "test-key")
     with patch.object(fetcher.requests, "get", return_value=EmptyResp()):
         assert asyncio.run(fetcher._alphavantage_fetch("AAPL")) is None
 
