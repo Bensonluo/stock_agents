@@ -67,7 +67,7 @@ export function ReactResultPage({ threadId }: { threadId: string }) {
       <header className="bg-white border-b sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={() => router.push('/')}>
+            <Button variant="ghost" size="icon" className="no-print" onClick={() => router.push('/')}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
@@ -90,8 +90,8 @@ export function ReactResultPage({ threadId }: { threadId: string }) {
             </Card>
           </div>
 
-          {/* Sidebar: Metadata */}
-          <div className="space-y-4">
+          {/* Sidebar: Metadata (打印/导出 PDF 时隐藏——运营信息不进报告) */}
+          <div className="space-y-4 no-print">
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">

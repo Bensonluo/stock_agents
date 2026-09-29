@@ -152,6 +152,14 @@ export default function HomePage() {
     }
   }
 
+  // ⌘/Ctrl + Enter 在任意输入框内直接提交
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !loading) {
+      e.preventDefault()
+      handleAnalyze()
+    }
+  }
+
   const handleDelete = async (threadId: string, e: React.MouseEvent) => {
     e.stopPropagation()
     if (!confirm('确定要删除这条记录吗?')) return
@@ -247,7 +255,7 @@ export default function HomePage() {
 
           <TabsContent value="analyze">
             <Card className="shadow-xl shadow-slate-900/10 border-slate-200/80">
-              <CardContent className="p-5 md:p-6 space-y-4">
+              <CardContent className="p-5 md:p-6 space-y-4" onKeyDown={handleKeyDown}>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label htmlFor="symbols">股票代码</Label>
@@ -267,6 +275,7 @@ export default function HomePage() {
                         key={symbol}
                         type="button"
                         disabled={loading}
+                        aria-pressed={symbols.split(',').map(s => s.trim()).includes(symbol)}
                         onClick={() => setSymbols(prev => {
                           const parts = prev.split(',').map(s => s.trim()).filter(Boolean)
                           return parts.includes(symbol) ? parts.filter(s => s !== symbol).join(', ') : [...parts, symbol].join(', ')
@@ -314,8 +323,9 @@ export default function HomePage() {
                 </div>
 
                 {error && (
-                  <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg">
-                    {error}
+                  <div role="alert" className="flex items-start gap-2 p-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg">
+                    <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                    <span>{error}</span>
                   </div>
                 )}
 
@@ -339,6 +349,11 @@ export default function HomePage() {
                 </Button>
                 <p className="text-center text-xs text-muted-foreground">
                   Agent 将自主调用数据、分析、估值与风险工具,约 1-2 分钟出报告
+                  <span className="ml-2 hidden sm:inline text-slate-400">
+                    · <kbd className="px-1.5 py-0.5 rounded border border-slate-200 bg-slate-50 font-mono text-[10px]">⌘/Ctrl</kbd>
+                    {' + '}
+                    <kbd className="px-1.5 py-0.5 rounded border border-slate-200 bg-slate-50 font-mono text-[10px]">Enter</kbd> 快速提交
+                  </span>
                 </p>
               </CardContent>
             </Card>

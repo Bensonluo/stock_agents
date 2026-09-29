@@ -204,7 +204,7 @@ export function PipelineResultPage({ threadId }: { threadId: string | null }) {
       <header className="bg-white border-b sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={() => router.push('/')}>
+            <Button variant="ghost" size="icon" className="no-print" onClick={() => router.push('/')}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
@@ -540,8 +540,8 @@ export function PipelineResultPage({ threadId }: { threadId: string | null }) {
             )}
           </div>
 
-          {/* 右侧：执行状态 */}
-          <div className="space-y-4">
+          {/* 右侧：执行状态（打印时隐藏——运营面板不进报告） */}
+          <div className="space-y-4 no-print">
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">执行状态</CardTitle>

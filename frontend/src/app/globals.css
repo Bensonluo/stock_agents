@@ -53,9 +53,47 @@
   * {
     @apply border-border;
   }
+  html {
+    scroll-behavior: smooth;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *, ::before, ::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+  ::selection {
+    @apply bg-blue-200 text-blue-950;
+  }
   body {
     @apply bg-background text-foreground;
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  /* 财务数字等宽对齐,便于纵向扫描比较 */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+  /* 细滚动条(WebKit) */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(148 163 184 / 0.4);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(100 116 139 / 0.55);
+    border: 2px solid transparent;
+    background-clip: content-box;
   }
 }
 
@@ -142,5 +180,42 @@
   }
   .text-balance {
     text-wrap: balance;
+  }
+  /* 打印/导出 PDF 时隐藏的交互区块(导航、按钮、侧栏操作) */
+  .no-print {
+    /* 仅在 @media print 中生效,见文件末尾 */
+  }
+}
+
+/* ===== 打印:报告导出 PDF =====
+ * 投资报告是本产品的核心输出。浏览器打印(Ctrl/Cmd+P)时:
+ * 隐藏站点导航/页脚/交互按钮(.no-print),白底黑字,卡片不跨页断裂。 */
+@media print {
+  .site-header,
+  .site-footer,
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff !important;
+  }
+  main {
+    padding: 0 !important;
+  }
+  /* 卡片内容尽量不跨页断裂;表格表头断页后重复 */
+  .print-keep,
+  [class*="rounded-lg"],
+  [class*="rounded-xl"] {
+    break-inside: avoid;
+  }
+  table thead {
+    display: table-header-group;
+  }
+  tr {
+    break-inside: avoid;
+  }
+  a {
+    text-decoration: none;
+    color: inherit;
   }
 }
