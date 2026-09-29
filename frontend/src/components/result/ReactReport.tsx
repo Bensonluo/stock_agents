@@ -14,7 +14,7 @@ import {
 import { ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts'
 import {
   actionZh, actionStyle, trendZh, trendColor, riskZh, riskStyle,
-  sentimentZh, scoreOf, SectionCard,
+  sentimentZh, scoreOf, SectionCard, OptionImpliedBlock,
 } from './report-shared'
 import { BarChart3, Brain, Database, Hash, Newspaper, PieChart, Shield } from 'lucide-react'
 
@@ -574,6 +574,7 @@ export function ReactReport({ answer, report: structuredReport }: {
                   </div>
                 )
               })()}
+              {risk.option_implied && <OptionImpliedBlock block={risk.option_implied} />}
             </div>
           </SectionCard>
         )}

@@ -2,6 +2,8 @@
 
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
+import { OptionImpliedBlock } from './report-shared'
+import type { OptionImplied } from './types'
 
 // 风险评估组件
 export function RiskAssessment({ data }: { data: any }) {
@@ -50,6 +52,12 @@ export function RiskAssessment({ data }: { data: any }) {
             ))}
           </ul>
         </div>
+      )}
+
+      {/* 期权隐含情绪标注 —— pipeline 形状键恒在、值可 null（无 CN 快照时），
+          与 ReAct 视图共用同一渲染块 */}
+      {typeof data.option_implied === 'object' && data.option_implied !== null && (
+        <OptionImpliedBlock block={data.option_implied as OptionImplied} />
       )}
     </div>
   )

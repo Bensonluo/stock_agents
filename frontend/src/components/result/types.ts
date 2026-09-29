@@ -63,3 +63,40 @@ export interface AnalysisResult {
     had_errors?: boolean
   }
 }
+
+// 期权隐含情绪标注 —— wire 上的 report.sections.risk_analysis.option_implied
+// （ReAct 视图）或顶层 risk_assessment.option_implied（pipeline 视图）。
+// 镜像 app/tools/data/option_signals.py::build_option_implied：仅当后端产出
+// 时存在，降级 run 整键缺席（pipeline 形状键在值可为 null）。纯标注，不参与评分。
+export interface OptionImpliedQvix {
+  current: number
+  as_of: string | null
+  percentile_1y: number | null // 0-1 排名
+  history_days: number
+}
+
+export interface OptionImpliedIv {
+  status: string
+  atm_iv_near: number | null // 比率：0.18 = 18%
+  near_expiry: string | null
+  atm_iv_next: number | null
+  next_expiry: string | null
+  term_structure: number | null // 近月 − 次月；负值 = 期限倒挂（近端恐慌）
+  skew_25d: number | null // 认沽翼 − 认购翼（比率）
+  n_contracts: number
+  n_filtered: number
+}
+
+export interface OptionImpliedPcr {
+  market_pcr: number | null
+  by_underlying: Record<string, unknown>
+}
+
+export interface OptionImplied {
+  status: 'ok' | 'insufficient_data'
+  regime: string | null // '恐慌' | '自满' | '中性'，缺 QVIX 分位时为 null
+  qvix: OptionImpliedQvix | null
+  iv: OptionImpliedIv | null
+  pcr: OptionImpliedPcr | null
+  generated_at: string
+}

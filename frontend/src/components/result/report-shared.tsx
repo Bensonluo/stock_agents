@@ -2,6 +2,9 @@
 
 import type { ReactNode } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
+import { formatNumber, formatPercent, formatSignedPercent } from '@/lib/format'
+import type { OptionImplied } from './types'
 
 /* ReactReport 的共享格式化器与 SectionCard —— 从组件内提取的纯函数
  * （不闭包组件状态；filterEntries 因闭包 activeSymbol 留在组件内）。 */
@@ -75,3 +78,91 @@ export const SectionCard = ({ icon: Icon, title, children }: { icon: any; title:
     <CardContent>{children}</CardContent>
   </Card>
 )
+
+/* 期权隐含情绪标注块 —— pipeline / ReAct 两个报告视图共用同一渲染，保证视觉
+ * 一致。纯标注：只读 wire 上的 option_implied 块；全空（无 regime 亦无任何
+ * 可显示行）时整块不渲染，绝不伪造「中性」。 */
+
+const OPTION_REGIME_STYLE: Record<string, { bg: string; color: string }> = {
+  恐慌: { bg: 'bg-red-100', color: 'text-red-700' },
+  自满: { bg: 'bg-sky-100', color: 'text-sky-700' },
+  中性: { bg: 'bg-slate-100', color: 'text-slate-600' },
+}
+
+// regime → 徽章样式/文案；status 非 ok 或 regime 缺席 → amber「数据不足」
+// （诚实的缺席，比照 build_option_implied 的 insufficient_data 约定）
+export const optionImpliedBadge = (block: OptionImplied): { bg: string; color: string; label: string } => {
+  if (block.status === 'ok' && block.regime != null) {
+    return { ...(OPTION_REGIME_STYLE[block.regime] || { bg: 'bg-slate-100', color: 'text-slate-600' }), label: block.regime }
+  }
+  return { bg: 'bg-amber-100', color: 'text-amber-700', label: '数据不足' }
+}
+
+// 整块渲染门：任一可显示内容存在才渲染（regime 或任一指标行）
+export const hasOptionImpliedContent = (block: OptionImplied): boolean =>
+  (block.status === 'ok' && block.regime != null) ||
+  block.qvix?.current != null ||
+  block.iv?.atm_iv_near != null ||
+  block.iv?.term_structure != null ||
+  block.iv?.skew_25d != null ||
+  block.pcr?.market_pcr != null
+
+export const OptionImpliedBlock = ({ block }: { block: OptionImplied }) => {
+  const { qvix, iv, pcr } = block
+  if (!hasOptionImpliedContent(block)) return null
+  const badge = optionImpliedBadge(block)
+  const inverted = iv?.term_structure != null && iv.term_structure < 0
+  return (
+    <div className="p-3 border border-slate-200 rounded-lg space-y-1 text-xs">
+      <div className="flex items-center justify-between">
+        <span className="text-slate-500">期权隐含情绪（CN 场内期权）</span>
+        <span className={cn('px-2 py-0.5 rounded text-xs font-semibold', badge.bg, badge.color)}>{badge.label}</span>
+      </div>
+      {qvix?.current != null && (
+        <div className="flex justify-between">
+          <span className="text-slate-500">QVIX（中国波指）</span>
+          <span className="font-medium">
+            {formatNumber(qvix.current, 2)}
+            {qvix.percentile_1y != null && (
+              <span className="ml-1 font-normal text-slate-400">· 1年分位 {formatPercent(qvix.percentile_1y, 0)}</span>
+            )}
+            {qvix.as_of && <span className="ml-1 font-normal text-slate-400">截至 {qvix.as_of}</span>}
+          </span>
+        </div>
+      )}
+      {iv?.atm_iv_near != null && (
+        <div className="flex justify-between">
+          <span className="text-slate-500">ATM 隐含波动率</span>
+          <span className="font-medium">
+            {formatPercent(iv.atm_iv_near)}（近月）
+            {iv.atm_iv_next != null && (
+              <span className="ml-1 font-normal text-slate-400">次月 {formatPercent(iv.atm_iv_next)}</span>
+            )}
+          </span>
+        </div>
+      )}
+      {iv?.term_structure != null && (
+        <div className="flex justify-between">
+          <span className="text-slate-500">期限结构（近月−次月）</span>
+          <span className={cn('font-medium', inverted ? 'text-amber-600' : 'text-slate-600')}>
+            {formatSignedPercent(iv.term_structure)}
+          </span>
+        </div>
+      )}
+      {inverted && <p className="text-amber-600">⚠ 近月高于次月——期限倒挂（近端恐慌）</p>}
+      {iv?.skew_25d != null && (
+        <div className="flex justify-between">
+          <span className="text-slate-500">25Δ 偏度（正 = 下行保护贵）</span>
+          <span className="font-medium">{formatSignedPercent(iv.skew_25d)}</span>
+        </div>
+      )}
+      {pcr?.market_pcr != null && (
+        <div className="flex justify-between">
+          <span className="text-slate-500">市场 PCR（认沽/认购）</span>
+          <span className="font-medium">{formatNumber(pcr.market_pcr, 2)}</span>
+        </div>
+      )}
+      <p className="text-slate-400">{iv?.n_filtered ? `${iv.n_filtered} 份筛选后合约 · ` : ''}纯标注，不影响评分</p>
+    </div>
+  )
+}
