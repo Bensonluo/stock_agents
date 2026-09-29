@@ -3,7 +3,6 @@
 
 import asyncio
 import sys
-from datetime import datetime
 
 # Add parent directory to path
 sys.path.insert(0, ".")
@@ -19,9 +18,10 @@ async def main():
     # Test 1: Import modules
     print("Test 1: Importing modules...")
     try:
-        from app.orchestration import create_initial_state, get_workflow_summary
         from app.monitoring import get_monitor
-        from app.resilience import get_retry_manager, get_circuit_breaker_registry
+        from app.orchestration import create_initial_state, get_workflow_summary
+        from app.resilience import get_circuit_breaker_registry, get_retry_manager
+
         print("  ✓ All modules imported successfully")
     except Exception as e:
         print(f"  ✗ Import failed: {e}")
@@ -63,7 +63,7 @@ async def main():
     # Test 4: Test resilience
     print("Test 4: Testing resilience patterns...")
     try:
-        retry_manager = get_retry_manager()
+        get_retry_manager()  # initialize the retry-manager singleton
         circuit_registry = get_circuit_breaker_registry()
 
         # Test circuit breaker
@@ -81,7 +81,7 @@ async def main():
     try:
         summary = get_workflow_summary()
         print(f"  ✓ Workflow has {len(summary['agents'])} agents:")
-        for agent in summary['agents']:
+        for agent in summary["agents"]:
             print(f"    - {agent}")
     except Exception as e:
         print(f"  ✗ Workflow summary failed: {e}")
@@ -99,7 +99,7 @@ async def main():
         if quote and quote.get("price"):
             print(f"  ✓ AAPL price: ${quote.get('price', 0):.2f}")
         else:
-            print(f"  ⚠ Data service returned empty response (network issue?)")
+            print("  ⚠ Data service returned empty response (network issue?)")
     except Exception as e:
         print(f"  ⚠ Data service test skipped: {e}")
 
