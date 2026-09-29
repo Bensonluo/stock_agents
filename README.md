@@ -70,7 +70,7 @@ It's a **reference implementation** for production-grade multi-agent systems —
 
 | 📈 Stats | | |
 |:---:|:---:|:---:|
-| **10** data sources | **1126** tests green | **2** architectures |
+| **10** data sources | **1166** tests green | **2** architectures |
 | **5** backtest strategies | **1** shared engine per domain | **WebSocket** real-time |
 
 </div>
@@ -91,26 +91,28 @@ It's a **reference implementation** for production-grade multi-agent systems —
 
 ### Architecture 1: Sequential Pipeline (LangGraph)
 
-For structured, deterministic reports — the three analysis agents run as a
-parallel superstep (map-reduce) behind an explicit join barrier; pipeline-critical
-nodes stay sequential:
+For structured, deterministic reports — two map-reduce fan-outs: the three
+analysis agents run as a parallel superstep behind an explicit join barrier,
+and after risk the research-synthesis and decision branches run concurrently
+(report generation is the fan-in); pipeline-critical nodes stay sequential:
 
 ```
 data_collection      ← 3y history, multi-provider fallback chain
     ↓
-technical_analysis   ← Daily + weekly SMA(5/10/20/40/60w) engines
-    ↓
-fundamental_analysis ← Scoring + quality red flags + Bear/Base/Bull valuation
-    ↓
-sentiment_analysis   ← Canonical lexicon scoring (+ optional LLM enrichment)
+[ technical_analysis | fundamental_analysis | sentiment_analysis ]
+      technical: Daily + weekly SMA(5/10/20/40/60w) engines
+      fundamental: Scoring + quality red flags + Bear/Base/Bull valuation
+      sentiment: Canonical lexicon scoring (+ optional LLM enrichment)
+      ↑ first fan-out — one parallel superstep behind an explicit join barrier
     ↓
 risk_assessment      ← Beta/alpha/R², CVaR, Sortino, stress scenarios
                        (+ option-implied annotation block on CN runs)
     ↓
-research_synthesis   ← Bull/Bear debate → evidence audit → risk committee
-    ↓
-decision_making      ← Composite formula (fund 45% + tech 30% + sent 15% + risk 10%;
-                       weights adapt toward measured IC when evidence gates pass)
+[ research_synthesis | decision_making ]
+      synthesis: Bull/Bear debate → evidence audit → risk committee
+      decision: Composite formula (fund 45% + tech 30% + sent 15% + risk 10%;
+                weights adapt toward measured IC when evidence gates pass)
+      ↑ second fan-out — both run concurrently; report_generation fans in
     ↓
 report_generation    ← Versioned report + evidence index + quality gates
 ```
@@ -383,7 +385,7 @@ stock_agents/
 ├── frontend/                # Next.js dashboard
 ├── deploy/                  # Production deployment scripts
 ├── scripts/                 # smoke_data_chain.py — post-deploy data-chain probe
-├── tests/                   # 1126 tests: unit + integration + path parity
+├── tests/                   # 1166 tests: unit + integration + path parity
 └── docker-compose.yml
 ```
 
@@ -426,7 +428,7 @@ stock_agents/
 ## 🧪 Testing
 
 ```bash
-poetry run pytest tests/ -q          # 1126 passed (3 network tests deselected)
+poetry run pytest tests/ -q          # 1166 passed (3 network tests deselected)
 ```
 
 Coverage highlights: every engine has golden-value tests; pipeline/ReAct
@@ -489,8 +491,8 @@ If this project helped you learn multi-agent systems, please ⭐ star the repo.
 
 ### 核心亮点
 
-- **双执行路径·单一事实源**:LangGraph 流水线(三个分析 Agent 并行 superstep,汇合 barrier 后串行)+ ReAct 自主 Agent,共享同一组确定性引擎
-- **8 阶段流水线**:数据采集、技术/基本面/舆情分析(并行)、风险评估、研究合成(多空辩论→证据审计→风险委员会)、决策、报告
+- **双执行路径·单一事实源**:LangGraph 流水线(两级 map-reduce 扇出:三个分析 Agent 并行 superstep,风险后研究合成与决策并行,报告汇合)+ ReAct 自主 Agent,共享同一组确定性引擎
+- **8 阶段流水线**:数据采集、技术/基本面/舆情分析(并行)、风险评估、研究合成(多空辩论→证据审计→风险委员会)与决策(并行)、报告
 - **A 股支持**:6 位股票代码自动触发 AkShare 数据源(原生 CN 新闻 + 行业基准)
 - **数据源韧性**:东财 push2his 域名封禁、Yahoo 限流时,腾讯接口自动兜底(A 股日K、全市场快照表、双市场基准指数),美股行业基准在 Yahoo 不可用时由新浪 SPDR 历史兜底;每个 fallback 接缝的 ok/fail/fallback 计数经 `GET /api/monitoring/data-sources` 暴露并在前端监控页展示;核心行情缺失时决策层不发方向性建议(hold、置信 0)
 - **期权隐含标注层**:CN 运行附加一份 SSE 官方期权快照(逐合约 IV → ATM IV/期限结构/25-delta 偏度,官方 PCR)+ QVIX 一年分位 → 恐慌/中性/自满 市场状态标签;流水线与 ReAct 报告均渲染;纯标注——评分/权重/仓位/决策一律不读取,`OPTION_SIGNALS_ENABLED` 可整体关闭
