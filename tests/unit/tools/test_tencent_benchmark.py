@@ -24,6 +24,7 @@ import pytest
 import app.tools.data.fetcher as fetcher_mod
 import app.tools.data.tencent_benchmark as tencent_mod
 from app.tools.data.fetcher import fetch_benchmark_history
+from app.tools.data.provider_health import provider_health_snapshot, reset_provider_health
 from app.tools.data.tencent_benchmark import tencent_index_history
 
 # close values share no digit-pattern with their row's open/high/low — an
@@ -324,3 +325,131 @@ class TestBenchmarkFallbackWiring:
         # Not poisoned: the retry re-attempts the fallback source.
         assert await fetch_benchmark_history("000001.SS") is None
         assert len(recorder.calls) == 2
+
+
+class _FakeSina:
+    """Recorder for the async ``_sina_us_hist`` seam: returns a fixed
+    history dict (or None) and records every (symbol, period) call."""
+
+    def __init__(self, hist: dict[str, Any] | None) -> None:
+        self.hist = hist
+        self.calls: list[tuple[str, str]] = []
+
+    async def __call__(self, symbol: str, period: str = "3y") -> dict[str, Any] | None:
+        self.calls.append((symbol, period))
+        return self.hist
+
+
+_SINA_HIST = {
+    "dates": ["2026-09-25", "2026-09-26"],
+    "open": [52.0, 52.5],
+    "high": [53.0, 54.0],
+    "low": [51.5, 52.2],
+    "close": [52.8, 53.6],
+    "volume": [9_000_000, 8_500_000],
+}
+
+
+class TestSectorEtfSinaFallback:
+    """The benchmark chain's third leg, sector ETFs only.
+
+    Probed 2026-09-29: Tencent's ifzq kline serves full history for indexes
+    (usINX 801 rows) but exactly ONE row for US ETFs at any count — the
+    SPDR tickers have no viable Tencent fallback by endpoint design. When
+    yfinance is dark (the production host's documented state), US
+    sector_relative was left without regression input. Sina's US daily
+    serves full SPDR history (XLF verified: 6,471 rows back to 2001) and is
+    the one US history source answering from the production host
+    (iteration 91). Every test runs offline against the fakes above.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rate_limited_yfinance_falls_back_to_sina_for_etfs(self, monkeypatch) -> None:
+        """The production failure shape for sector ETFs: yfinance raises,
+        tencent has no ETF mapping (returns None, no HTTP), Sina answers —
+        the caller gets the same {symbol, dates, close} contract with the
+        yahoo-form symbol preserved."""
+        _install_yf(monkeypatch, _RateLimitedYf.Ticker)
+        sina = _FakeSina(_SINA_HIST)
+        monkeypatch.setattr(fetcher_mod, "_sina_us_hist", sina)
+
+        result = await fetch_benchmark_history("XLF")
+
+        assert result == {
+            "symbol": "XLF",
+            "dates": ["2026-09-25", "2026-09-26"],
+            "close": [52.8, 53.6],
+        }
+        # The benchmark window (2y), not the default 3y stock-history window.
+        assert sina.calls == [("XLF", "2y")]
+
+    @pytest.mark.asyncio
+    async def test_healthy_yfinance_never_touches_sina(self, monkeypatch) -> None:
+        """yfinance healthy means the third leg must not even be attempted —
+        the result is yfinance's own dates/closes, unchanged."""
+        _install_yf(monkeypatch, _HealthyYf.Ticker)
+        sina = _FakeSina(_SINA_HIST)
+        monkeypatch.setattr(fetcher_mod, "_sina_us_hist", sina)
+
+        result = await fetch_benchmark_history("XLF")
+
+        assert result == {
+            "symbol": "XLF",
+            "dates": ["2026-09-25", "2026-09-26"],
+            "close": [4190.0, 4195.5],
+        }
+        assert sina.calls == []
+
+    @pytest.mark.asyncio
+    async def test_market_indexes_never_touch_sina(self, monkeypatch) -> None:
+        """The Sina leg exists for sector ETFs; the market indexes keep the
+        two-leg chain (^GSPC is tencent-mapped) even when both legs are
+        dark — None stays None without a third attempt."""
+        _install_yf(monkeypatch, _RateLimitedYf.Ticker)
+        recorder = _RecorderGet(response=_FakeResponse(status_code=503, payload={}))
+        monkeypatch.setattr(tencent_mod.requests, "get", recorder)
+        sina = _FakeSina(_SINA_HIST)
+        monkeypatch.setattr(fetcher_mod, "_sina_us_hist", sina)
+
+        assert await fetch_benchmark_history("^GSPC") is None
+        assert sina.calls == []
+        assert len(recorder.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_sina_failure_returns_none_and_records_fail(self, monkeypatch) -> None:
+        """Sina failing too keeps the None + fail-uncached contract, and the
+        provider-health snapshot shows the third leg honestly failing."""
+        _install_yf(monkeypatch, _RateLimitedYf.Ticker)
+        sina = _FakeSina(None)
+        monkeypatch.setattr(fetcher_mod, "_sina_us_hist", sina)
+        reset_provider_health()
+
+        assert await fetch_benchmark_history("XLF") is None
+        assert not any(key.startswith("bench_") for key in fetcher_mod._cache)
+
+        stats = provider_health_snapshot()["providers"].get("sina-benchmark")
+        assert stats is not None
+        assert stats["fail"] == 1
+
+        # Not poisoned: the retry re-attempts the Sina leg.
+        assert await fetch_benchmark_history("XLF") is None
+        assert len(sina.calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_sina_success_is_cached_and_records_ok(self, monkeypatch) -> None:
+        """A Sina-sourced benchmark flows through the success-cache
+        semantics (one fetch serves repeated calls) and the provider-health
+        snapshot records the ok outcome."""
+        _install_yf(monkeypatch, _RateLimitedYf.Ticker)
+        sina = _FakeSina(_SINA_HIST)
+        monkeypatch.setattr(fetcher_mod, "_sina_us_hist", sina)
+        reset_provider_health()
+
+        first = await fetch_benchmark_history("XLF")
+        second = await fetch_benchmark_history("XLF")
+
+        assert second == first
+        assert len(sina.calls) == 1
+        stats = provider_health_snapshot()["providers"].get("sina-benchmark")
+        assert stats is not None
+        assert stats["ok"] == 1

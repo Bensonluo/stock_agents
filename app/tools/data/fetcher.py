@@ -156,6 +156,15 @@ def sector_benchmark_ticker(sector: str | None) -> str | None:
     return SECTOR_BENCHMARK_ETFS.get(str(sector).strip())
 
 
+# The benchmark chain's Sina leg serves exactly these tickers. Tencent's
+# ifzq kline endpoint returns full history for indexes only (usINX: 801
+# rows) and exactly one row for US ETFs at any count — probed 2026-09-29 —
+# so the SPDR sector benchmarks have no Tencent fallback by endpoint
+# design; Sina's US daily (full history, production-host-verified since
+# iteration 91) is their last resort under Yahoo rate limiting.
+_SECTOR_ETF_TICKERS = frozenset(SECTOR_BENCHMARK_ETFS.values())
+
+
 def _sync_fetch_benchmark_history(yahoo_symbol: str) -> dict[str, Any] | None:
     """Benchmark index history as a dates/close dict — the shape
     ``aligned_returns`` regresses against (same as historical_data)."""
@@ -207,7 +216,23 @@ async def fetch_benchmark_history(yahoo_symbol: str) -> dict[str, Any] | None:
         bench = await asyncio.to_thread(_sync_fetch_benchmark_history, yahoo_symbol)
     except Exception as e:
         logger.warning(f"Benchmark history unavailable for {yahoo_symbol}: {e}")
-        return None
+        bench = None
+    if bench is None and yahoo_symbol in _SECTOR_ETF_TICKERS:
+        # Third leg, sector ETFs only: tencent_index_history returns None for
+        # the unmapped SPDR tickers by design (iteration 96), so a Yahoo-dark
+        # host left US sector_relative without regression input. Sina serves
+        # full SPDR history and answers from the production host.
+        hist = await _sina_us_hist(yahoo_symbol, BENCHMARK_HISTORY_PERIOD)
+        bench = (
+            {"symbol": yahoo_symbol, "dates": hist["dates"], "close": hist["close"]}
+            if hist is not None
+            else None
+        )
+        record_provider_outcome(
+            "sina-benchmark",
+            "ok" if bench is not None else "fail",
+            None if bench is not None else "no sector ETF history",
+        )
     if bench is not None:
         _cache_set(cache_key, bench)
     return bench
