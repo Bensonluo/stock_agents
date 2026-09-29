@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { apiErrorMessage } from './api-error'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -29,22 +30,7 @@ export const API = {
     }
 
     if (!response.ok) {
-      let errorMessage = 'Analysis request failed'
-      try {
-        const error = await response.json()
-        console.error('[API] Error response:', error)
-        if (typeof error.detail === 'string') {
-          errorMessage = error.detail
-        } else if (error.message) {
-          errorMessage = error.message
-        } else {
-          errorMessage = `HTTP ${response.status}: ${response.statusText}`
-        }
-      } catch (parseError) {
-        console.error('[API] Error parsing error response:', parseError)
-        errorMessage = `HTTP ${response.status}: ${response.statusText}`
-      }
-      throw new Error(errorMessage)
+      throw new Error(await apiErrorMessage(response, 'Analysis request failed'))
     }
 
     const result = await response.json() as Promise<AnalysisResponse>
@@ -58,16 +44,16 @@ export const API = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     })
-    if (!response.ok) throw new Error('Sync analysis failed')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Sync analysis failed'))
+    }
     return response.json() as Promise<AnalysisResultResponse>
   },
 
   getWorkflowStatus: async (threadId: string) => {
     const response = await fetch(`${API_BASE_URL}/api/analysis/workflow/${threadId}`)
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Failed to get workflow status' }))
-      const message = typeof error.detail === 'string' ? error.detail : 'Failed to get workflow status'
-      throw new Error(message)
+      throw new Error(await apiErrorMessage(response, 'Failed to get workflow status'))
     }
     return response.json() as Promise<WorkflowStatusResponse>
   },
@@ -75,9 +61,7 @@ export const API = {
   getAnalysisResult: async (threadId: string) => {
     const response = await fetch(`${API_BASE_URL}/api/analysis/result/${threadId}`)
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Failed to get analysis result' }))
-      const message = typeof error.detail === 'string' ? error.detail : 'Failed to get analysis result'
-      throw new Error(message)
+      throw new Error(await apiErrorMessage(response, 'Failed to get analysis result'))
     }
     return response.json()
   },
@@ -89,13 +73,17 @@ export const API = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     })
-    if (!response.ok) throw new Error('Backtest failed')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Backtest failed'))
+    }
     return response.json() as Promise<BacktestResponse>
   },
 
   getStrategies: async () => {
     const response = await fetch(`${API_BASE_URL}/api/backtest/strategies`)
-    if (!response.ok) throw new Error('Failed to get strategies')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get strategies'))
+    }
     return response.json() as Promise<StrategiesResponse>
   },
 
@@ -106,9 +94,7 @@ export const API = {
       body: JSON.stringify(data),
     })
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Walk-forward failed' }))
-      const message = typeof error.detail === 'string' ? error.detail : 'Walk-forward failed'
-      throw new Error(message)
+      throw new Error(await apiErrorMessage(response, 'Walk-forward failed'))
     }
     return response.json() as Promise<WalkForwardResponse>
   },
@@ -120,9 +106,7 @@ export const API = {
       body: JSON.stringify(data),
     })
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Calibration failed' }))
-      const message = typeof error.detail === 'string' ? error.detail : 'Calibration failed'
-      throw new Error(message)
+      throw new Error(await apiErrorMessage(response, 'Calibration failed'))
     }
     return response.json() as Promise<CalibrateResponse>
   },
@@ -130,13 +114,17 @@ export const API = {
   // Decision-layer signal quality endpoints
   getDecisionIC: async (horizonBars = 20) => {
     const response = await fetch(`${API_BASE_URL}/api/history/ic?horizon_bars=${horizonBars}`)
-    if (!response.ok) throw new Error('Failed to get decision IC')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get decision IC'))
+    }
     return response.json() as Promise<DecisionICResponse>
   },
 
   getDecisionICDecay: async () => {
     const response = await fetch(`${API_BASE_URL}/api/history/ic/decay`)
-    if (!response.ok) throw new Error('Failed to get IC decay')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get IC decay'))
+    }
     return response.json() as Promise<ICDecayResponse>
   },
 
@@ -144,7 +132,9 @@ export const API = {
     const response = await fetch(
       `${API_BASE_URL}/api/history/ic/regime?horizon_bars=${horizonBars}`
     )
-    if (!response.ok) throw new Error('Failed to get regime-conditional IC')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get regime-conditional IC'))
+    }
     return response.json() as Promise<RegimeConditionalICResponse>
   },
 
@@ -152,7 +142,9 @@ export const API = {
     const response = await fetch(
       `${API_BASE_URL}/api/history/ic/calibration?horizon_bars=${horizonBars}`
     )
-    if (!response.ok) throw new Error('Failed to get confidence calibration')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get confidence calibration'))
+    }
     return response.json() as Promise<ConfidenceCalibrationResponse>
   },
 
@@ -160,20 +152,26 @@ export const API = {
     const response = await fetch(
       `${API_BASE_URL}/api/history/portfolio?horizon_bars=${horizonBars}&top_k=${topK}`
     )
-    if (!response.ok) throw new Error('Failed to get top-k portfolio')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get top-k portfolio'))
+    }
     return response.json() as Promise<TopKPortfolioResponse>
   },
 
   // Monitoring endpoints
   getHealth: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/health`)
-    if (!response.ok) throw new Error('Failed to get health')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get health'))
+    }
     return response.json() as Promise<SystemHealth>
   },
 
   getDataSourceHealth: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/data-sources`)
-    if (!response.ok) throw new Error('Failed to get data source health')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get data source health'))
+    }
     return response.json() as Promise<DataSourceHealthResponse>
   },
 
@@ -181,13 +179,17 @@ export const API = {
     const response = await fetch(
       `${API_BASE_URL}/api/monitoring/metrics${agentName ? `?agent_name=${agentName}` : ''}`
     )
-    if (!response.ok) throw new Error('Failed to get metrics')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get metrics'))
+    }
     return response.json()
   },
 
   getCircuitBreakers: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/circuit-breakers`)
-    if (!response.ok) throw new Error('Failed to get circuit breakers')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get circuit breakers'))
+    }
     return response.json() as Promise<CircuitBreakersResponse>
   },
 
@@ -198,7 +200,9 @@ export const API = {
     const response = await fetch(
       `${API_BASE_URL}/api/monitoring/events?${params.toString()}`
     )
-    if (!response.ok) throw new Error('Failed to get events')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get events'))
+    }
     return response.json() as Promise<EventsResponse>
   },
 
@@ -212,19 +216,25 @@ export const API = {
     const response = await fetch(
       `${API_BASE_URL}/api/monitoring/alerts?${params.toString()}`
     )
-    if (!response.ok) throw new Error('Failed to get alerts')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get alerts'))
+    }
     return response.json() as Promise<AlertsResponse>
   },
 
   getRetryStats: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/retry/stats`)
-    if (!response.ok) throw new Error('Failed to get retry stats')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get retry stats'))
+    }
     return response.json() as Promise<RetryStatsResponse>
   },
 
   getTimeoutStats: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/timeout/stats`)
-    if (!response.ok) throw new Error('Failed to get timeout stats')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to get timeout stats'))
+    }
     return response.json() as Promise<TimeoutStatsResponse>
   },
 
@@ -234,7 +244,9 @@ export const API = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(name ? { name } : {}),
     })
-    if (!response.ok) throw new Error('Failed to reset circuit breaker')
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, 'Failed to reset circuit breaker'))
+    }
     return response.json()
   },
 
@@ -246,8 +258,7 @@ export const API = {
       body: JSON.stringify(data),
     })
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Failed to start ReAct analysis' }))
-      throw new Error(typeof error.detail === 'string' ? error.detail : 'Failed to start ReAct analysis')
+      throw new Error(await apiErrorMessage(response, 'Failed to start ReAct analysis'))
     }
     return response.json() as Promise<ReactAnalyzeResponse>
   },
@@ -255,8 +266,7 @@ export const API = {
   getReactProgress: async (threadId: string) => {
     const response = await fetch(`${API_BASE_URL}/api/agent/progress/${threadId}`)
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Failed to get progress' }))
-      throw new Error(typeof error.detail === 'string' ? error.detail : 'Failed to get progress')
+      throw new Error(await apiErrorMessage(response, 'Failed to get progress'))
     }
     return response.json() as Promise<ReactProgressResponse>
   },
@@ -264,8 +274,7 @@ export const API = {
   getReactResult: async (threadId: string) => {
     const response = await fetch(`${API_BASE_URL}/api/agent/result/${threadId}`)
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Failed to get result' }))
-      throw new Error(typeof error.detail === 'string' ? error.detail : 'Failed to get result')
+      throw new Error(await apiErrorMessage(response, 'Failed to get result'))
     }
     return response.json() as Promise<ReactResultResponse>
   },
