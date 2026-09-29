@@ -255,15 +255,13 @@ export function SignalQualityCard() {
                     <span className="flex items-center gap-3">
                       <span className="text-muted-foreground">IC {fmt(summary.ic_mean)}</span>
                       <span
-                        className={`font-semibold ${T_STAT_CLS[tStatTier(summary.t_stat)]}`}
+                        className={`font-semibold ${
+                          T_STAT_CLS[tStatTier(preferredTStat(summary.t_stat_nw, summary.t_stat))]
+                        }`}
                       >
-                        t {fmt(summary.t_stat, 2)}
+                        t {fmt(preferredTStat(summary.t_stat_nw, summary.t_stat), 2)}
+                        {typeof summary.t_stat_nw === 'number' ? ' · NW' : ''}
                       </span>
-                      {typeof summary.t_stat_nw === 'number' && (
-                        <span className="text-muted-foreground">
-                          t·NW {fmt(summary.t_stat_nw, 2)}
-                        </span>
-                      )}
                     </span>
                   </div>
                 ))}
