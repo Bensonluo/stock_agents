@@ -6,6 +6,7 @@ over the completed analysis packets, in that order. It writes a single
 must respect the auditor's gate and the committee's conditions.
 """
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -33,8 +34,16 @@ class ResearchSynthesisAgent(StatelessAgent):
 
         synthesis = synthesize(data)
         if self.llm is not None:
-            synthesis = await narrate_synthesis(synthesis, llm=self.llm)
-            synthesis = await attach_analyst_panel(synthesis, llm=self.llm)
+            # Both enhancement layers serialize their prompts before awaiting
+            # the LLM, then write disjoint per-symbol keys (narrative vs
+            # analysts/pm) into this shared dict and return it, so they are
+            # safe to run concurrently: worst-case wall time drops from
+            # narration + panel to max(narration, panel).
+            narrated, _panelled = await asyncio.gather(
+                narrate_synthesis(synthesis, llm=self.llm),
+                attach_analyst_panel(synthesis, llm=self.llm),
+            )
+            synthesis = narrated
         blocked = synthesis["audit"]["verdict"] == "blocked"
         logger.info(
             "Research synthesis complete: audit=%s, symbols=%d%s",
