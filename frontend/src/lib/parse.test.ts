@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  parseDateField,
   parseIntField,
   parseNonEmptyText,
   parseNumberField,
   parseNumberList,
+  requireDateField,
   requireIntField,
   requireNonEmptyText,
   requireNumberField,
@@ -114,6 +116,50 @@ describe('require*Field — throwing wrappers for form submit handlers', () => {
     expect(requireNumberField('initial_cash', '10000')).toBe(10000)
     expect(() => requireNumberField('initial_cash', '1.2.3')).toThrowError(
       '参数 initial_cash 无效——请输入数字',
+    )
+  })
+})
+
+describe('parseDateField — date fields (start/end date, type="date" inputs)', () => {
+  it('returns the trimmed value for a well-formed calendar date', () => {
+    expect(parseDateField('2023-01-01')).toBe('2023-01-01')
+    expect(parseDateField('  2024-06-15  ')).toBe('2024-06-15')
+    // Leap-year day is a real date.
+    expect(parseDateField('2024-02-29')).toBe('2024-02-29')
+  })
+
+  it('returns null for a cleared or whitespace-only field', () => {
+    // The realistic garbage from a type="date" input is "" (cleared);
+    // the browser enforces the shape, this guard catches the clearing.
+    expect(parseDateField('')).toBeNull()
+    expect(parseDateField('   ')).toBeNull()
+  })
+
+  it('returns null for malformed shapes the wire contract rejects', () => {
+    expect(parseDateField('2023/01/01')).toBeNull()
+    expect(parseDateField('23-01-01')).toBeNull()
+    expect(parseDateField('2023-1-1')).toBeNull()
+    expect(parseDateField('not-a-date')).toBeNull()
+  })
+
+  it('returns null for calendar-impossible dates that match the shape', () => {
+    // 2023-02-30 matches ^\d{4}-\d{2}-\d{2}$ but Date rolls it to March —
+    // the round-trip check catches what the regex cannot.
+    expect(parseDateField('2023-02-30')).toBeNull()
+    expect(parseDateField('2023-13-01')).toBeNull()
+    expect(parseDateField('2023-00-10')).toBeNull()
+    expect(parseDateField('2023-02-29')).toBeNull() // 2023 is not a leap year
+  })
+})
+
+describe('requireDateField — throwing wrapper for the date fields', () => {
+  it('returns the value and names the field on error', () => {
+    expect(requireDateField('开始日期', '2023-01-01')).toBe('2023-01-01')
+    expect(() => requireDateField('开始日期', '')).toThrowError(
+      '参数 开始日期 无效——请输入日期',
+    )
+    expect(() => requireDateField('结束日期', '2023-02-30')).toThrowError(
+      '参数 结束日期 无效——请输入日期',
     )
   })
 })

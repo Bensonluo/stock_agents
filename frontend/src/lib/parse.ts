@@ -73,3 +73,28 @@ export function requireNonEmptyText(label: string, raw: string): string {
   if (value === null) throw new Error(`参数 ${label} 不能为空`)
   return value
 }
+
+/**
+ * Parse a date field (start/end date, type="date" inputs). Returns the
+ * trimmed YYYY-MM-DD value; null for a cleared field, a malformed shape,
+ * or a calendar-impossible date that matches the shape (2023-02-30 rolls
+ * to March inside Date — the round-trip check catches what the regex
+ * cannot). Mirrors the backend pattern ^\d{4}-\d{2}-\d{2}$ plus realness.
+ */
+export function parseDateField(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return null
+  const [y, m, d] = trimmed.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) {
+    return null
+  }
+  return trimmed
+}
+
+/** Throwing wrapper for submit handlers — names the field in the error. */
+export function requireDateField(label: string, raw: string): string {
+  const value = parseDateField(raw)
+  if (value === null) throw new Error(`参数 ${label} 无效——请输入日期`)
+  return value
+}

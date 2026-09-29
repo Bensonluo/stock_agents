@@ -15,7 +15,7 @@ import {
 import { Loader2, Play } from 'lucide-react'
 import { API, type BacktestRequest, type BacktestResponse, type StrategiesResponse } from '@/lib/utils'
 import { formatSignedPercent } from '@/lib/format'
-import { requireIntField, requireNonEmptyText, requireNumberField } from '@/lib/parse'
+import { requireDateField, requireIntField, requireNonEmptyText, requireNumberField } from '@/lib/parse'
 import { nullBenchmarkVerdict } from '@/lib/verdicts'
 import { BacktestChart } from './BacktestChart'
 
@@ -54,8 +54,8 @@ export function BacktestForm() {
       const request: BacktestRequest = {
         symbol: requireNonEmptyText('股票代码', symbol).toUpperCase(),
         strategy: selectedStrategy,
-        start_date: startDate,
-        end_date: endDate,
+        start_date: requireDateField('开始日期', startDate),
+        end_date: requireDateField('结束日期', endDate),
         initial_cash: requireNumberField('初始资金', initialCash),
       }
       if (selectedStrategy === 'sma_crossover') {

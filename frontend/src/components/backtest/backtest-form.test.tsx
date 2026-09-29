@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-// Component-level lock for the input-validation wiring (iterations 136-137):
+// Component-level lock for the input-validation wiring (iterations 136-139):
 // a cleared numeric field must block submit with the form's field-named
 // Chinese error instead of sending NaN (rendered as null on the wire and
 // answered by pydantic's English 422); a cleared symbol must likewise be
-// caught client-side instead of shipping "".
+// caught client-side instead of shipping ""; a cleared date field must be
+// caught before the empty string reaches the wire (iteration 139).
 //
 // Mock convention (established in signal-quality-card.test.tsx): @/lib/utils
 // is a dual-purpose module (API client + shadcn cn()) — an integral module
@@ -51,6 +52,17 @@ describe('BacktestForm input validation (iterations 136-137)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Run Backtest/i }))
 
     expect(await screen.findByText(/股票代码 不能为空/)).toBeInTheDocument()
+    expect(runBacktest).not.toHaveBeenCalled()
+  })
+
+  it('blocks submit when a date is cleared — named error, no API call', async () => {
+    render(<BacktestForm />)
+
+    const start = await screen.findByLabelText(/Start Date/i)
+    fireEvent.change(start, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: /Run Backtest/i }))
+
+    expect(await screen.findByText(/开始日期 无效/)).toBeInTheDocument()
     expect(runBacktest).not.toHaveBeenCalled()
   })
 })
