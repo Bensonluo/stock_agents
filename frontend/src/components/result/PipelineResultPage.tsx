@@ -15,10 +15,12 @@ import { MarketOverview } from './MarketOverview'
 import { AnalysisDetail } from './AnalysisDetail'
 import { SentimentAnalysis } from './SentimentAnalysis'
 import { RiskAssessment } from './RiskAssessment'
+import { ReportSkeleton } from './ReportSkeleton'
+import { BackToTop } from '@/components/layout/BackToTop'
 import {
-  Loader2, ArrowLeft, CheckCircle2, AlertCircle, TrendingUp, TrendingDown,
+  ArrowLeft, CheckCircle2, AlertCircle, TrendingUp, TrendingDown,
   Minus, Activity, Target, Shield, BarChart3, Newspaper, Database,
-  Brain, FileText, Clock, DollarSign, PieChart, Zap
+  Brain, FileText, Clock, DollarSign, PieChart, Zap, Printer
 } from 'lucide-react'
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') + '/api'
@@ -148,11 +150,14 @@ export function PipelineResultPage({ threadId }: { threadId: string | null }) {
   // 加载状态
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="h-10 w-10 animate-spin text-blue-500 mx-auto" />
-          <p className="mt-4 text-slate-600">正在加载分析结果...</p>
-        </div>
+      <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
+        <main className="max-w-6xl mx-auto px-4 py-6">
+          <Card>
+            <CardContent className="p-6 md:p-8">
+              <ReportSkeleton />
+            </CardContent>
+          </Card>
+        </main>
       </div>
     )
   }
@@ -220,6 +225,16 @@ export function PipelineResultPage({ threadId }: { threadId: string | null }) {
                 历史记录 · {historyDate.slice(0, 10)}
               </Badge>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="no-print h-8"
+              onClick={() => window.print()}
+              title="打印或另存为 PDF(自动隐藏导航与操作区)"
+            >
+              <Printer className="h-3.5 w-3.5 mr-1.5" />
+              导出 PDF
+            </Button>
             {result.execution_metadata?.execution_time && (
               <div className="flex items-center gap-2 text-sm text-slate-500">
                 <Clock className="h-4 w-4" />
@@ -607,6 +622,7 @@ export function PipelineResultPage({ threadId }: { threadId: string | null }) {
           </div>
         </div>
       </main>
+      <BackToTop />
     </div>
   )
 }

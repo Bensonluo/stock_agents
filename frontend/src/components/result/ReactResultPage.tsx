@@ -8,8 +8,10 @@ import { Button } from '@/components/ui/button'
 import { API } from '@/lib/utils'
 import type { ReactResultResponse } from '@/lib/utils'
 import { ReactReport } from './ReactReport'
+import { ReportSkeleton } from './ReportSkeleton'
+import { BackToTop } from '@/components/layout/BackToTop'
 import {
-  Loader2, ArrowLeft, AlertCircle, Zap, Hash, DollarSign, Wrench
+  ArrowLeft, AlertCircle, Zap, Hash, DollarSign, Wrench, Printer, Copy, Check
 } from 'lucide-react'
 
 /* ── ReAct Result View (Markdown Report) ──────────────────────── */
@@ -19,6 +21,19 @@ export function ReactResultPage({ threadId }: { threadId: string }) {
   const [result, setResult] = useState<ReactResultResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  // 复制原始 Markdown 报告(非安全上下文下降级为无反馈)
+  const handleCopy = async () => {
+    if (!result?.answer) return
+    try {
+      await navigator.clipboard.writeText(result.answer)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // clipboard API 不可用(http 非安全上下文)——静默降级
+    }
+  }
 
   useEffect(() => {
     const fetchResult = async () => {
@@ -36,11 +51,14 @@ export function ReactResultPage({ threadId }: { threadId: string }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="h-10 w-10 animate-spin text-blue-500 mx-auto" />
-          <p className="mt-4 text-slate-600">正在加载分析报告...</p>
-        </div>
+      <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
+        <main className="max-w-6xl mx-auto px-4 py-6">
+          <Card>
+            <CardContent className="p-6 md:p-8">
+              <ReportSkeleton />
+            </CardContent>
+          </Card>
+        </main>
       </div>
     )
   }
@@ -75,7 +93,38 @@ export function ReactResultPage({ threadId }: { threadId: string }) {
               <p className="text-sm text-slate-500">{threadId.slice(0, 24)}...</p>
             </div>
           </div>
-          <Badge variant="success">已完成</Badge>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="no-print h-8"
+              onClick={handleCopy}
+              title="复制原始 Markdown 报告"
+            >
+              {copied ? (
+                <>
+                  <Check className="h-3.5 w-3.5 mr-1.5 text-green-600" />
+                  已复制
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5 mr-1.5" />
+                  复制 Markdown
+                </>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="no-print h-8"
+              onClick={() => window.print()}
+              title="打印或另存为 PDF(自动隐藏导航与操作区)"
+            >
+              <Printer className="h-3.5 w-3.5 mr-1.5" />
+              导出 PDF
+            </Button>
+            <Badge variant="success">已完成</Badge>
+          </div>
         </div>
       </header>
 
@@ -153,6 +202,7 @@ export function ReactResultPage({ threadId }: { threadId: string }) {
           </div>
         </div>
       </main>
+      <BackToTop />
     </div>
   )
 }
