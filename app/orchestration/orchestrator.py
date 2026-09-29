@@ -181,17 +181,19 @@ class MultiAgentOrchestrator:
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph workflow.
 
-        Topology (LangGraph's map-reduce fan-out pattern):
+        Topology (LangGraph's map-reduce fan-out pattern, two fan-outs):
 
             data_collection
               -> [technical, sentiment, fundamental]   # parallel analysis stage
               -> analysis_barrier                       # join: all branches settled
-              -> risk_assessment -> research_synthesis
-              -> decision_making -> report_generation
+              -> risk_assessment
+              -> [research_synthesis ∥ decision_making]  # second parallel stage
+              -> synthesis_barrier                       # join: both completed
+              -> report_generation
 
         Nodes return partial state updates; shared channels accumulate through
         reducers (errors/agent_outputs append, agent_status/retry_count merge,
-        current_step adds), which is what makes the parallel stage safe.
+        current_step adds), which is what makes both parallel stages safe.
 
         Join semantics: routing every analysis branch straight to risk made
         risk (and everything downstream) run once per arriving branch — a
@@ -199,6 +201,19 @@ class MultiAgentOrchestrator:
         partial data, then triggered a second full pass. The analysis_barrier
         node spins (a no-op self-loop) until every branch is settled, then
         releases risk exactly once.
+
+        Second fan-out: DecisionMakingAgent.process is data-independent of
+        research_synthesis — it reads technical/fundamental/sentiment/risk
+        (plus the regime keys extracted from risk) and never reads the
+        synthesis output (committee gating of decisions is a ReAct-only
+        overlay). Report generation is the true fan-in: report_agent reads
+        both ``decision`` and ``research_synthesis``. So risk releases
+        synthesis and decision into the same superstep, and the
+        synthesis_barrier spins until both are completed before releasing
+        report exactly once — strictly "completed", not the analysis
+        barrier's budget-exhausted "settled" leniency, because these are
+        pipeline-critical nodes: a branch that dies routes the whole run to
+        the error handler, and report must never run without both inputs.
 
         Retry semantics: routing keys off the agent's LAST attempt outcome
         (agent_status) with retry_count as the budget, so a transient failure
@@ -208,7 +223,8 @@ class MultiAgentOrchestrator:
         route to the error handler.
 
         Set ``parallel_execution=False`` in the initial state to force the
-        sequential technical -> sentiment -> fundamental order.
+        sequential technical -> sentiment -> fundamental order and the serial
+        synthesis -> decision chain.
 
         Returns:
             Compiled StateGraph
@@ -224,6 +240,7 @@ class MultiAgentOrchestrator:
         graph.add_node("sentiment_analysis_agent", self._sentiment_analysis_node)
         graph.add_node("analysis_barrier", self._analysis_barrier_node)
         graph.add_node("risk_assessment_agent", self._risk_assessment_node)
+        graph.add_node("synthesis_barrier", self._synthesis_barrier_node)
         graph.add_node("research_synthesis_agent", self._research_synthesis_node)
         graph.add_node("decision_making_agent", self._decision_making_node)
         graph.add_node("report_generation_agent", self._report_generation_node)
@@ -297,21 +314,32 @@ class MultiAgentOrchestrator:
             },
         )
 
+        # Second fan-out: the router returns both path keys at once, so
+        # research_synthesis and decision_making run in the same superstep.
+        # They are data-independent (decision reads risk + the three analysis
+        # blocks, never the synthesis output); report is the fan-in.
         graph.add_conditional_edges(
             "risk_assessment_agent",
             self._route_after_risk,
             {
-                "synthesis": "research_synthesis_agent",  # Debate/audit/committee before deciding
+                "fan_out_synthesis": "research_synthesis_agent",
+                "fan_out_decision": "decision_making_agent",
+                "sequential": "research_synthesis_agent",
                 "retry": "risk_assessment_agent",
                 "error": "error_handler",
             },
         )
 
+        # Both branches converge on the synthesis_barrier, never directly on
+        # report: the barrier turns two independently routed branches (one may
+        # still be inside its retry self-loop) into a single release of
+        # report_generation.
         graph.add_conditional_edges(
             "research_synthesis_agent",
             self._route_after_synthesis,
             {
-                "decision": "decision_making_agent",  # Decision with audited research
+                "join_report": "synthesis_barrier",
+                "decision": "decision_making_agent",  # sequential chain only
                 "retry": "research_synthesis_agent",
                 "error": "error_handler",
             },
@@ -321,9 +349,25 @@ class MultiAgentOrchestrator:
             "decision_making_agent",
             self._route_after_decision,
             {
-                "report": "report_generation_agent",
+                "join_report": "synthesis_barrier",
+                "report": "report_generation_agent",  # sequential chain only
                 "retry": "decision_making_agent",
                 "error": "error_handler",
+            },
+        )
+
+        # Spin barrier: re-enter itself while either branch is still
+        # unsettled (retrying branches run in the same supersteps, so this
+        # converges), release report exactly once when both branches are
+        # completed. A branch that exhausted its budget aborts the run (its
+        # own router already fired "error", so the error handler still runs).
+        graph.add_conditional_edges(
+            "synthesis_barrier",
+            self._route_after_synthesis_barrier,
+            {
+                "proceed_report": "report_generation_agent",
+                "wait": "synthesis_barrier",
+                "abort": END,
             },
         )
 
@@ -766,6 +810,17 @@ class MultiAgentOrchestrator:
         """
         return {}
 
+    async def _synthesis_barrier_node(self, state: AgentState) -> dict[str, Any]:
+        """No-op join barrier between the second fan-out and report_generation.
+
+        Writes nothing (an empty update keeps current_step/agent_status
+        untouched): the barrier only exists so its conditional edge can spin
+        until both research_synthesis and decision_making have completed,
+        then release report once. It is wiring, not an agent — it never
+        appears in agent_status, logs, or monitoring events.
+        """
+        return {}
+
     async def _risk_assessment_node(self, state: AgentState) -> dict[str, Any]:
         return await self._run_agent_node(
             state,
@@ -900,23 +955,68 @@ class MultiAgentOrchestrator:
             return "proceed_risk"
         return "wait"
 
-    def _route_after_risk(self, state: AgentState) -> str:
-        """synthesis / retry / error."""
+    def _route_after_risk(self, state: AgentState) -> Any:
+        """Route after risk assessment: fan out synthesis and decision.
+
+        Returns a list of path keys in parallel mode (LangGraph then runs
+        both destinations in the same superstep) or the single "sequential"
+        key when ``parallel_execution`` is disabled, preserving the old
+        synthesis -> decision chain.
+        """
         if self._last_attempt_failed(state, "risk_assessment"):
             return "retry" if should_retry(state, "risk_assessment") else "error"
-        return "synthesis"  # All analysis done, run debate/audit/committee
+        if state.get("parallel_execution", True):
+            return ["fan_out_synthesis", "fan_out_decision"]
+        return "sequential"
 
     def _route_after_synthesis(self, state: AgentState) -> str:
-        """decision / retry / error."""
+        """join_report / decision / retry / error."""
         if self._last_attempt_failed(state, "research_synthesis"):
             return "retry" if should_retry(state, "research_synthesis") else "error"
-        return "decision"
+        if not state.get("parallel_execution", True):
+            return "decision"
+        return "join_report"
 
     def _route_after_decision(self, state: AgentState) -> str:
-        """report / retry / error."""
+        """join_report / report / retry / error."""
         if self._last_attempt_failed(state, "decision_making"):
             return "retry" if should_retry(state, "decision_making") else "error"
-        return "report"
+        if not state.get("parallel_execution", True):
+            return "report"
+        return "join_report"
+
+    def _route_after_synthesis_barrier(self, state: AgentState) -> str:
+        """proceed_report / wait / abort — release report only when both completed.
+
+        Strict equality, NOT the analysis barrier's budget-exhausted
+        "settled" leniency: synthesis/decision are pipeline-critical, so a
+        branch that exhausts its retry budget routes to the error handler
+        and the barrier must never release report from a run whose synthesis
+        or decision actually failed. Retrying branches drain toward
+        "completed" or "error" so the spin converges; the graph recursion
+        limit is the backstop.
+
+        The "abort" edge exists so a doomed run terminates: the dead
+        branch's own router evaluated the same failed-and-exhausted
+        predicate one superstep earlier and already scheduled the error
+        handler, so routing the barrier to END ends the run cleanly with
+        error_summary in the final state instead of spinning until the
+        recursion limit raises.
+        """
+        statuses = state.get("agent_status", {})
+        if (
+            statuses.get("research_synthesis") == "completed"
+            and statuses.get("decision_making") == "completed"
+        ):
+            return "proceed_report"
+        max_retries = state.get("max_retries", 3)
+        for name in ("research_synthesis", "decision_making"):
+            if (
+                statuses.get(name) == "failed"
+                and state.get("retry_count", {}).get(name, 0) >= max_retries
+            ):
+                return "abort"
+        return "wait"
 
     def _retry_or_error(self, agent_name: str, state: AgentState) -> str:
         """Determine whether to retry or go to error handler.
