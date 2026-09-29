@@ -15,7 +15,14 @@ import {
 import { Loader2, Play } from 'lucide-react'
 import { API, type BacktestRequest, type BacktestResponse, type StrategiesResponse } from '@/lib/utils'
 import { formatSignedPercent } from '@/lib/format'
-import { requireDateField, requireDateOrder, requireIntField, requireNonEmptyText, requireNumberField } from '@/lib/parse'
+import {
+  requireDateField,
+  requireDateOrder,
+  requireIntField,
+  requireLessThan,
+  requireNonEmptyText,
+  requireNumberField,
+} from '@/lib/parse'
 import { nullBenchmarkVerdict } from '@/lib/verdicts'
 import { BacktestChart } from './BacktestChart'
 
@@ -62,15 +69,24 @@ export function BacktestForm() {
         initial_cash: requireNumberField('初始资金', initialCash),
       }
       if (selectedStrategy === 'sma_crossover') {
-        request.sma_short = requireIntField('sma_short', smaShort)
-        request.sma_long = requireIntField('sma_long', smaLong)
+        const short = requireIntField('sma_short', smaShort)
+        const long = requireIntField('sma_long', smaLong)
+        requireLessThan('sma_short', 'sma_long', short, long)
+        request.sma_short = short
+        request.sma_long = long
       } else if (selectedStrategy === 'rsi_strategy') {
         request.rsi_period = requireIntField('rsi_period', rsiPeriod)
-        request.rsi_overbought = requireNumberField('rsi_overbought', rsiOverbought)
-        request.rsi_oversold = requireNumberField('rsi_oversold', rsiOversold)
+        const overbought = requireNumberField('rsi_overbought', rsiOverbought)
+        const oversold = requireNumberField('rsi_oversold', rsiOversold)
+        requireLessThan('rsi_oversold', 'rsi_overbought', oversold, overbought)
+        request.rsi_overbought = overbought
+        request.rsi_oversold = oversold
       } else if (selectedStrategy === 'macd_strategy') {
-        request.fast_period = requireIntField('fast_period', fastPeriod)
-        request.slow_period = requireIntField('slow_period', slowPeriod)
+        const fast = requireIntField('fast_period', fastPeriod)
+        const slow = requireIntField('slow_period', slowPeriod)
+        requireLessThan('fast_period', 'slow_period', fast, slow)
+        request.fast_period = fast
+        request.slow_period = slow
         request.signal_period = requireIntField('signal_period', signalPeriod)
       } else if (selectedStrategy === 'technical_score') {
         request.score_threshold = requireNumberField('score_threshold', scoreThreshold)

@@ -9,6 +9,7 @@ import {
   requireDateField,
   requireDateOrder,
   requireIntField,
+  requireLessThan,
   requireNonEmptyText,
   requireNumberField,
 } from './parse'
@@ -182,6 +183,25 @@ describe('requireDateOrder — cross-field guard for date pairs', () => {
   it('throws for a reversed range', () => {
     expect(() => requireDateOrder('2024-01-01', '2023-01-01')).toThrowError(
       '日期区间无效——结束日期必须晚于开始日期',
+    )
+  })
+})
+
+describe('requireLessThan — cross-field guard for strategy parameter pairs', () => {
+  it('passes silently when the pair is strictly ordered', () => {
+    expect(() => requireLessThan('sma_short', 'sma_long', 20, 50)).not.toThrow()
+    expect(() => requireLessThan('rsi_oversold', 'rsi_overbought', 30, 70)).not.toThrow()
+  })
+
+  it('throws for equal values — the backend rejects >=, equality included', () => {
+    expect(() => requireLessThan('sma_short', 'sma_long', 50, 50)).toThrowError(
+      '参数 sma_short 必须小于 sma_long',
+    )
+  })
+
+  it('throws for an inverted pair', () => {
+    expect(() => requireLessThan('fast_period', 'slow_period', 26, 12)).toThrowError(
+      '参数 fast_period 必须小于 slow_period',
     )
   })
 })

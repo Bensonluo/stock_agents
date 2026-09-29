@@ -110,3 +110,21 @@ export function requireDateOrder(start: string, end: string): void {
     throw new Error('日期区间无效——结束日期必须晚于开始日期')
   }
 }
+
+/**
+ * Cross-field guard for strategy parameter pairs (short/long, oversold/
+ * overbought, fast/slow). Mirrors the V1 backend model's rejection of
+ * less >= more — equality included: sma_short == sma_long is rejected
+ * there, so the client guard must reject it too. Call after both fields
+ * pass their parse/require wrapper.
+ */
+export function requireLessThan(
+  lessLabel: string,
+  moreLabel: string,
+  less: number,
+  more: number,
+): void {
+  if (less >= more) {
+    throw new Error(`参数 ${lessLabel} 必须小于 ${moreLabel}`)
+  }
+}

@@ -78,4 +78,18 @@ describe('BacktestForm input validation (iterations 136-137)', () => {
     expect(await screen.findByText(/日期区间无效——结束日期必须晚于开始日期/)).toBeInTheDocument()
     expect(runBacktest).not.toHaveBeenCalled()
   })
+
+  it('blocks submit when sma_short >= sma_long — strategy constraint, no API call', async () => {
+    render(<BacktestForm />)
+
+    // Default strategy is sma_crossover (short 20 / long 50); flipping the
+    // short period past the long one mirrors the backend's sma_short >=
+    // sma_long rejection before the wire.
+    const short = await screen.findByLabelText(/Short Period/i)
+    fireEvent.change(short, { target: { value: '50' } })
+    fireEvent.click(screen.getByRole('button', { name: /Run Backtest/i }))
+
+    expect(await screen.findByText(/参数 sma_short 必须小于 sma_long/)).toBeInTheDocument()
+    expect(runBacktest).not.toHaveBeenCalled()
+  })
 })
