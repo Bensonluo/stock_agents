@@ -10,9 +10,14 @@
 // render dies before the first assertion. Companion views are stubbed to
 // reject so their quiet-failure wiring is asserted alongside the main branch.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { SignalQualityCard } from '@/components/history/SignalQualityCard'
-import { API, type DecisionICResponse } from '@/lib/utils'
+import {
+  API,
+  type DecisionICResponse,
+  type ICDecayResponse,
+  type TopKPortfolioResponse,
+} from '@/lib/utils'
 
 vi.mock('@/lib/utils', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/utils')>()
@@ -139,5 +144,100 @@ describe('SignalQualityCard', () => {
     render(<SignalQualityCard />)
 
     expect(await screen.findByText('信号质量评估暂不可用')).toBeInTheDocument()
+  })
+})
+
+describe('SignalQualityCard interactions', () => {
+  // Interaction tests stick to the card's plain Buttons (decay chips, top-k
+  // selector): fireEvent.click covers them without user-event or Radix
+  // Select portal plumbing. These pin the wiring three iterations built —
+  // chips switch the main window (75), the 5d point must be reachable
+  // (130), and the money view refetches per k (122).
+
+  it('switches the horizon window when the 5d decay chip is clicked and refetches', async () => {
+    vi.mocked(API.getDecisionIC)
+      .mockResolvedValueOnce(okFixture)
+      .mockResolvedValueOnce({ ...okFixture, horizon_bars: 5, ic_mean: 0.321 })
+    vi.mocked(API.getDecisionICDecay).mockResolvedValue({
+      method: 'spearman_rank_ic',
+      status: 'ok',
+      caveat: '历史 run 由演化中的决策公式产生，IC 跨版本聚合',
+      horizons: [
+        {
+          method: 'spearman_rank_ic',
+          horizon_bars: 5,
+          records_examined: 10,
+          runs_evaluated: 5,
+          runs_pending_maturity: 3,
+          runs_skipped: 2,
+          runs_duplicate: 1,
+          per_run: [],
+          caveat: '历史 run 由演化中的决策公式产生，IC 跨版本聚合',
+          status: 'ok',
+          ic_mean: 0.1,
+        },
+      ],
+    })
+    render(<SignalQualityCard />)
+
+    // Initial load fetches the default 20-day window.
+    await screen.findByText('0.123')
+    expect(vi.mocked(API.getDecisionIC)).toHaveBeenLastCalledWith(20)
+
+    // Click the shortest decay point — iteration 130 made it a first-class
+    // horizon so the trigger never goes blank.
+    fireEvent.click(screen.getByText('5d'))
+    await waitFor(() =>
+      expect(vi.mocked(API.getDecisionIC)).toHaveBeenLastCalledWith(5)
+    )
+    // The refreshed aggregate for the new window renders (distinct IC mean).
+    await screen.findByText('0.321')
+    // The clicked chip carries the active styling.
+    expect(screen.getByText('5d')).toHaveClass('bg-primary')
+  })
+
+  it('refetches the money view when a top-k selector button is clicked', async () => {
+    const topkBase: TopKPortfolioResponse = {
+      method: 'equal_weight_replay',
+      top_k: 1,
+      horizon_bars: 20,
+      records_examined: 10,
+      runs_evaluated: 5,
+      runs_pending_maturity: 3,
+      runs_skipped: 2,
+      runs_duplicate: 1,
+      runs_narrow: 0,
+      caveat: '回放口径为毛收益（不含成本与滑点）；基准为全截面等权',
+      status: 'ok',
+      excess_mean: 0.034,
+      per_run: [
+        {
+          thread_id: 't1',
+          date: '2026-09-20',
+          symbols: 6,
+          top_return: 0.05,
+          baseline_return: 0.016,
+          excess: 0.034,
+        },
+      ],
+    }
+    vi.mocked(API.getDecisionIC).mockResolvedValue(okFixture)
+    vi.mocked(API.getTopKPortfolio)
+      .mockResolvedValueOnce(topkBase)
+      .mockResolvedValueOnce({ ...topkBase, top_k: 3, excess_mean: -0.012 })
+    render(<SignalQualityCard />)
+
+    // The money view lands with the default k=1.
+    await screen.findByText(/照做收益 · 前 1 名等权/)
+    expect(vi.mocked(API.getTopKPortfolio)).toHaveBeenLastCalledWith(20, 1)
+
+    fireEvent.click(screen.getByText('前3'))
+    await waitFor(() =>
+      expect(vi.mocked(API.getTopKPortfolio)).toHaveBeenLastCalledWith(20, 3)
+    )
+    // The refreshed view renders the new k and its (negative) excess.
+    await screen.findByText(/照做收益 · 前 3 名等权/)
+    expect(screen.getByText(/平均超额 -1\.20%/)).toBeInTheDocument()
+    expect(screen.getByText('前3')).toHaveClass('bg-primary')
   })
 })
