@@ -70,7 +70,7 @@ It's a **reference implementation** for production-grade multi-agent systems —
 
 | 📈 Stats | | |
 |:---:|:---:|:---:|
-| **8** data sources | **1073** tests green | **2** architectures |
+| **10** data sources | **1126** tests green | **2** architectures |
 | **5** backtest strategies | **1** shared engine per domain | **WebSocket** real-time |
 
 </div>
@@ -83,6 +83,7 @@ It's a **reference implementation** for production-grade multi-agent systems —
 4. **Native A-share support with CN-host fallbacks** — 6-digit codes auto-trigger AkShare; a multi-provider fallback chain (yfinance → Finnhub → Alpha Vantage → AkShare/Sina → Yahoo API → Stooq) keeps CN-hosted servers alive, Tencent kline/quote endpoints backstop the A-share daily bars, the spot table and both market benchmarks when East Money is domain-blocked or Yahoo is rate-limited, US sector-ETF benchmarks keep a Sina SPDR-history third leg for sector-relative regressions when Yahoo is dark, capped responses (AV free tier's 100-day slice) fall through instead of shadowing multi-year sources, and when core market data is missing entirely the decision layer withholds the directional call (hold at zero conviction instead of a guess)
 5. **Measured self-assessment, not self-congratulation** — historical recommendations are replayed against realized forward returns: rank IC / ICIR with Newey-West t-statistics (overlapping forward windows) and decay curves, regime-conditional IC buckets, top-k portfolio replay against the equal-weight cross-section, confidence calibration (Brier score + reliability curve), walk-forward results priced with the Deflated Sharpe Ratio and a Monte Carlo random-entry null benchmark; measured IC feeds back into the decision blend (vintage-stamped so evidence never crosses formula versions); an opt-in daily watchlist run (`DAILY_RUN_*`, exactly-once per day) feeds this evidence base without hand-triggering
 6. **Backtesting you can trust** — signals fill at the next bar's open, commissions/slippage/stamp tax included, force-liquidation at the end, walk-forward with Wilson-bounded hit rates, and a reproducibility manifest (data hash + params + commit); the `technical_score` strategy replays the live decision formula's technical dimension bar-by-bar, so the engine prices what the agent actually recommends
+7. **Market-level option-implied annotation, fenced from scoring** — every CN run attaches one SSE options snapshot (official per-contract IV surface → ATM IV per expiry, term structure, 25-delta skew, plus the official put/call ratio) and the QVIX one-year percentile maps to a 恐慌/中性/自满 market-regime label; both the pipeline and ReAct reports render the block, and it is annotation-only by construction — risk scores, weights, position sizing and decisions never read it (`OPTION_SIGNALS_ENABLED` toggles the whole layer)
 
 ---
 
@@ -104,6 +105,7 @@ fundamental_analysis ← Scoring + quality red flags + Bear/Base/Bull valuation
 sentiment_analysis   ← Canonical lexicon scoring (+ optional LLM enrichment)
     ↓
 risk_assessment      ← Beta/alpha/R², CVaR, Sortino, stress scenarios
+                       (+ option-implied annotation block on CN runs)
     ↓
 research_synthesis   ← Bull/Bear debate → evidence audit → risk committee
     ↓
@@ -318,6 +320,7 @@ curl "http://localhost:8000/api/history/ic?horizon_bars=20"
 | **Tencent** | A-share daily bars + spot table, dual-market benchmarks | CN-host-verifiable fallback (`qt.gtimg.cn` quotes, ifzq kline) when East Money is domain-blocked or Yahoo is rate-limited |
 | **Sina** | US history + sector-ETF benchmarks | CN-host-viable US daily bars (`stock_us_daily`); third leg for SPDR sector-ETF benchmark history when Yahoo is dark |
 | **Yahoo chart API / Stooq** | Global | Last-resort fallbacks |
+| **SSE options + QVIX** | CN market-level options signals | Official SSE per-contract IV + official PCR (via AkShare) and the QVIX index (third-party host, mirrored to a local SQLite store so outages serve the last known closes); annotation-only — never feeds scores or decisions |
 
 Providers chain automatically on failure, and every fallback seam records
 its outcome (ok / fail / fallback) into in-process provider-health counters
@@ -337,6 +340,7 @@ every metric.
 | `MAX_RETRIES` | Max retry attempts per agent | `3` |
 | `TIMEOUT_PER_AGENT` | Timeout per agent (seconds) | `300` |
 | `LLM_TIMEOUT` | HTTP ceiling for every LLM client; research budgets (narrator 45s / panel 90s) stay at or below it | `90` |
+| `OPTION_SIGNALS_ENABLED` | CN option-implied annotation layer — SSE options trio + QVIX market-regime label; pure annotation, no scoring reads it | `true` |
 | `DAILY_RUN_ENABLED` | Opt-in daily watchlist analysis scheduler | `false` |
 | `DAILY_RUN_SYMBOLS` | Comma-separated watchlist for the daily run (cross-sector CN default; IC views need ≥3 scored symbols per run) | `600519,600036,601088,600276,002415,600887` |
 | `DAILY_RUN_TIME` | Daily-run trigger time, server local `HH:MM` | `16:00` |
@@ -379,7 +383,7 @@ stock_agents/
 ├── frontend/                # Next.js dashboard
 ├── deploy/                  # Production deployment scripts
 ├── scripts/                 # smoke_data_chain.py — post-deploy data-chain probe
-├── tests/                   # 1073 tests: unit + integration + path parity
+├── tests/                   # 1126 tests: unit + integration + path parity
 └── docker-compose.yml
 ```
 
@@ -412,7 +416,8 @@ stock_agents/
 - [x] Regime-conditional IC and top-k portfolio replay over past recommendations
 - [x] Agent resilience panel — circuit breakers, retry/timeout stats on the monitoring page
 - [x] Result fallback to SQLite history — reports readable after a backend restart
-- [ ] Phase 4: filings RAG, expectations data, options-implied signals
+- [x] Market-level option-implied annotation — SSE options trio + QVIX regime label (annotation-only, fenced from scoring)
+- [ ] Phase 4: filings RAG, expectations data
 - [ ] Portfolio optimization agent
 - [ ] Multi-language reports (EN/ZH auto-switch)
 
@@ -421,7 +426,7 @@ stock_agents/
 ## 🧪 Testing
 
 ```bash
-poetry run pytest tests/ -q          # 1073 passed (3 network tests deselected)
+poetry run pytest tests/ -q          # 1126 passed (3 network tests deselected)
 ```
 
 Coverage highlights: every engine has golden-value tests; pipeline/ReAct
@@ -488,6 +493,7 @@ If this project helped you learn multi-agent systems, please ⭐ star the repo.
 - **8 阶段流水线**:数据采集、技术/基本面/舆情分析(并行)、风险评估、研究合成(多空辩论→证据审计→风险委员会)、决策、报告
 - **A 股支持**:6 位股票代码自动触发 AkShare 数据源(原生 CN 新闻 + 行业基准)
 - **数据源韧性**:东财 push2his 域名封禁、Yahoo 限流时,腾讯接口自动兜底(A 股日K、全市场快照表、双市场基准指数),美股行业基准在 Yahoo 不可用时由新浪 SPDR 历史兜底;每个 fallback 接缝的 ok/fail/fallback 计数经 `GET /api/monitoring/data-sources` 暴露并在前端监控页展示;核心行情缺失时决策层不发方向性建议(hold、置信 0)
+- **期权隐含标注层**:CN 运行附加一份 SSE 官方期权快照(逐合约 IV → ATM IV/期限结构/25-delta 偏度,官方 PCR)+ QVIX 一年分位 → 恐慌/中性/自满 市场状态标签;流水线与 ReAct 报告均渲染;纯标注——评分/权重/仓位/决策一律不读取,`OPTION_SIGNALS_ENABLED` 可整体关闭
 - **企业级容错**:每个 Agent 都有熔断器、超时、重试
 - **WebSocket 实时监控**:Agent 执行事件实时推送到前端;监控页含韧性面板(熔断器、重试/超时统计)
 - **策略回测**:SMA、RSI、MACD、Buy & Hold,以及 `technical_score`——逐 bar 重放决策公式技术维度;walk-forward 选参带 Deflated Sharpe 与随机入场零假设基准
