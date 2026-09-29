@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     yfinance_enabled: bool = True
     finnhub_enabled: bool = True
     cache_ttl: int = 300  # 5 minutes
+    # CN options implied-signal layer (iteration 155): SSE official options
+    # trio + QVIX, attached as a market-level annotation for CN runs — pure
+    # label, no scoring path reads it.
+    option_signals_enabled: bool = True
 
     # Agent Settings (ReAct)
     agent_max_iterations: int = 15

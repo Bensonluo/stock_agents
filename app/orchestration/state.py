@@ -45,6 +45,9 @@ class AgentState(TypedDict):
     market_data: dict[str, Any]  # Market data
     financial_data: dict[str, Any]  # Financial data
     news_data: list[dict]  # News data
+    # Market-level SSE option snapshot (iteration 155): CN runs only,
+    # annotation-only — declared so the data agent's partial update lands.
+    option_snapshot: dict | None
 
     # ========== Analysis Results ==========
     technical_analysis: dict  # Technical analysis results
@@ -111,6 +114,7 @@ def create_initial_state(
         market_data={},
         financial_data={},
         news_data=[],
+        option_snapshot=None,
         # Analysis (empty initially)
         technical_analysis={},
         fundamental_analysis={},

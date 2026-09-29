@@ -8,6 +8,7 @@ import pandas as pd
 import yfinance as yf
 
 from app.agents.base import BaseAgent
+from app.config import get_settings
 from app.orchestration.state import AgentState
 from app.utils.logging import get_logger
 
@@ -47,7 +48,12 @@ from app.tools.data.fetcher import (  # noqa: E402
     sector_benchmark_ticker,
 )
 from app.tools.data.fetcher import dedup_news as _dedup_news  # noqa: E402
+from app.tools.data.option_signals import (  # noqa: E402
+    fetch_qvix_context,
+    fetch_sse_option_snapshot,
+)
 from app.tools.data.provider_health import record_provider_outcome  # noqa: E402
+from app.tools.data.qvix_store import get_qvix_store  # noqa: E402
 from app.tools.data.tencent_spot import tencent_cn_spot_table  # noqa: E402
 
 
@@ -451,16 +457,48 @@ class DataCollectionAgent(BaseAgent):
             if bench and market_data[s]:
                 market_data[s]["sector_benchmark_historical_data"] = bench
 
+        # CN options implied-signal layer (iteration 155): SSE official
+        # per-contract IV/Greeks + volume PCR + QVIX — market-level (China
+        # lists only ETF/index options), one snapshot per run, gated on the
+        # same CN presence that drives cn_benchmarks. PURE ANNOTATION: the
+        # risk stage labels 恐慌/中性/自满, nothing scores it. Failure
+        # leaves the key absent, exactly like the benchmark fetches above.
+        option_snapshot = None
+        if get_settings().option_signals_enabled and cn_symbols:
+            option_snapshot = await self._fetch_option_snapshot()
+
         logger.info(
             f"Collected data for {len(market_data)} symbols, " f"{len(news_data)} news items"
         )
 
         # Return only the partial state (fields we modify)
-        return {
+        result: dict[str, Any] = {
             "market_data": market_data,
             "financial_data": financial_data,
             "news_data": news_data[-100:],  # Keep last 100 unique news items
         }
+        if option_snapshot is not None:
+            result["option_snapshot"] = option_snapshot
+        return result
+
+    async def _fetch_option_snapshot(self) -> dict[str, Any] | None:
+        """SSE option snapshot + QVIX context merged into one annotation payload.
+
+        Each seam degrades alone (snapshot None keeps QVIX; both None → the
+        execute-level key stays absent) — the same never-fail convention as
+        the benchmark fetches.
+        """
+        try:
+            snapshot = await asyncio.to_thread(fetch_sse_option_snapshot)
+            qvix = await asyncio.to_thread(fetch_qvix_context, get_qvix_store())
+        except Exception as e:
+            logger.warning(f"Options implied-signal fetch failed: {e}")
+            return None
+        if snapshot is None and qvix is None:
+            return None
+        merged = dict(snapshot) if snapshot else {}
+        merged["qvix_context"] = qvix
+        return merged
 
     async def _collect_symbol_data(self, symbol: str) -> dict[str, Any]:
         """Collect all data for a single symbol.

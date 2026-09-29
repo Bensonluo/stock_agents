@@ -98,10 +98,12 @@ class ReportService:
         portfolio_risk: dict[str, Any] = {}
         overall_risk_level = "medium"
         market_regime: dict[str, Any] | None = None
+        option_implied: dict[str, Any] | None = None
         if "risk_by_symbol" in risk:  # pipeline shape nests per-symbol data
             portfolio_risk = risk.get("portfolio_risk") or {}
             overall_risk_level = risk.get("overall_risk_level", "medium")
             market_regime = risk.get("market_regime")
+            option_implied = risk.get("option_implied")
             risk = risk.get("risk_by_symbol") or {}
         else:
             # ReAct shape: assess_risk parks the run-level regime under a
@@ -110,6 +112,9 @@ class ReportService:
             market_regime = risk.get("market_regime")
             if market_regime is not None:
                 risk = {k: v for k, v in risk.items() if k != "market_regime"}
+            option_implied = risk.get("option_implied")
+            if option_implied is not None:
+                risk = {k: v for k, v in risk.items() if k != "option_implied"}
 
         sentiment = data.get("sentiment_analysis") or {}
         overall_sentiment = sentiment.get("overall_sentiment", {})
@@ -139,6 +144,7 @@ class ReportService:
             "risk_flat": risk,
             "portfolio_risk": portfolio_risk,
             "market_regime": market_regime,
+            "option_implied": option_implied,
             "overall_risk_level": overall_risk_level,
             "decisions": decisions,
             "research_synthesis": data.get("research_synthesis") or {},
@@ -321,12 +327,19 @@ class ReportService:
         if c["overall_risk_level"] == "medium" and scores:
             avg = sum(scores) / len(scores)
             overall = "high" if avg >= 60 else "low" if avg < 30 else "medium"
-        return {
+        risk_section = {
             "by_symbol": by_symbol,
             "portfolio_risk": c["portfolio_risk"],
             "market_regime": c.get("market_regime"),
             "overall_risk": overall,
         }
+        # Market-level option annotation rides the run-level risk section by
+        # presence — same convention as the per-symbol annotation blocks; the
+        # composite score never reads it.
+        option_implied = c.get("option_implied")
+        if isinstance(option_implied, dict):
+            risk_section["option_implied"] = option_implied
+        return risk_section
 
     @classmethod
     def _evidence_index(cls, c: dict[str, Any]) -> dict[str, Any]:

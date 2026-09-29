@@ -13,6 +13,7 @@ from app.agents.base import StatelessAgent
 from app.analysis.regime import classify_market_regime
 from app.analysis.risk import correlation_matrix
 from app.orchestration.state import AgentState
+from app.tools.data.option_signals import build_option_implied, compute_iv_metrics, compute_pcr
 from app.tools.risk.assessment import (
     _calculate_beta,
     _calculate_score,
@@ -83,6 +84,7 @@ class RiskAssessmentAgent(StatelessAgent):
             "risk_by_symbol": results,
             "portfolio_risk": portfolio_risk,
             "market_regime": self._market_regime(market_data),
+            "option_implied": self._option_implied(state),
             "overall_risk_level": self._calculate_overall_risk(results),
             "timestamp": datetime.now().isoformat(),
         }
@@ -103,6 +105,22 @@ class RiskAssessmentAgent(StatelessAgent):
             if isinstance(closes, list) and closes:
                 return classify_market_regime(closes)
         return None
+
+    def _option_implied(self, state: AgentState) -> dict[str, Any] | None:
+        """Market-level option-implied annotation from the run's CN snapshot.
+
+        Pure compute over ``state["option_snapshot"]`` (attached by the
+        data agent when CN symbols are present) — no network in the risk
+        node. 纯标注: the 恐慌/中性/自满 regime labels the risk output;
+        risk_score, weights and position sizing never read it. Absent
+        snapshot → None, the market_regime None convention.
+        """
+        snapshot = state.get("option_snapshot")
+        if not isinstance(snapshot, dict):
+            return None
+        iv_metrics = compute_iv_metrics(snapshot.get("contracts"))
+        pcr = compute_pcr(snapshot.get("pcr_by_underlying"))
+        return build_option_implied(iv_metrics, pcr, snapshot.get("qvix_context"))
 
     async def _assess_risk(self, symbol: str, data: dict) -> dict[str, Any]:
         """Assess risk for a single symbol via the shared engine path."""
