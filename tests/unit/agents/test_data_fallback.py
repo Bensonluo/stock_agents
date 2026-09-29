@@ -47,12 +47,16 @@ class TestProviderFallback:
         self, data_agent_module, monkeypatch
     ) -> None:
         agent = data_agent_module.DataCollectionAgent()
+        # Canonical post-flatten shape: fetch_stock_data normalizes every
+        # provider (keyed or flat) to this FLAT block — with "symbol" injected
+        # as a string value — at its boundary. The previous keyed fake pinned
+        # the pre-flatten provider contract and passed only because it mirrored
+        # the broken keyed read below it.
         fallback_payload = {
             "market_data": {
-                "TEST": {
-                    "current_price": 123.45,
-                    "historical_data": {"dates": ["2024-01-02"], "close": [100.0]},
-                }
+                "symbol": "TEST",
+                "current_price": 123.45,
+                "historical_data": {"dates": ["2024-01-02"], "close": [100.0]},
             }
         }
         monkeypatch.setattr(

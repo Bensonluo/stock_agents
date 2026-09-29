@@ -598,7 +598,10 @@ class DataCollectionAgent(BaseAgent):
 
             if not result or not result.get("historical_data"):
                 fallback = await fetch_stock_data(symbol)
-                market = (fallback or {}).get("market_data", {}).get(symbol) or {}
+                # fetch_stock_data normalizes every provider (keyed or flat)
+                # to the FLAT snapshot shape at its boundary — read the block
+                # flat; market_data[symbol] is the state-level convention.
+                market = (fallback or {}).get("market_data") or {}
                 if market.get("historical_data"):
                     logger.info(
                         f"[data_agent] provider-chain fallback supplied market data for {symbol}"
