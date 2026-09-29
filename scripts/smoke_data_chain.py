@@ -214,7 +214,9 @@ def check_full_analysis() -> tuple[str, str]:
     try:
         resp = requests.post(
             ANALYZE_SYNC_URL,
-            json={"symbols": ["600000"], "mode": "pipeline"},
+            # query 是 StockAnalysisRequest 必填字段(min_length=1)——漏发会被
+            # pydantic 422 秒拒(2026-09-29 首次生产 --full 冒烟实锤的脚本 bug)。
+            json={"query": "smoke data chain: full pipeline analysis", "symbols": ["600000"]},
             timeout=240,
         )
         payload = resp.json()
