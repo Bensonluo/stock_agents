@@ -23,8 +23,10 @@ Design notes:
   2026-09-28), so the main() guard fires under the pipe exactly as in a
   normal script run, while ``python -c`` importing this file stays
   side-effect free.
-- Pure sync on purpose: the Tencent seams are sync functions, akshare is
-  sync, and the HTTP probes use requests -- no asyncio anywhere.
+- Sync on purpose: the Tencent seams are sync functions, akshare is sync,
+  and the HTTP probes use requests. The one async island is the sector-ETF
+  benchmark check -- the Sina leg lives inside the async
+  fetch_benchmark_history wrapper, so that check rides asyncio.run.
 - Pre-deploy SKIP semantics: the production container may still run the
   pre-fallback image, where app.tools.data.tencent_spot /
   tencent_benchmark do not exist. Every app.* import is individually
@@ -38,6 +40,7 @@ Design notes:
 - Exit codes: 0 = no FAIL, 1 = at least one FAIL. SKIPs never count.
 """
 
+import asyncio
 import os
 import sys
 import time
@@ -130,6 +133,44 @@ def check_tencent_benchmarks() -> tuple[str, str]:
     return "PASS", ", ".join(details)
 
 
+def check_sector_etf_benchmark() -> tuple[str, str]:
+    """Sector-ETF benchmark chain (XLF) -- the three-leg fallback end to end.
+
+    Exercises the deployed fetch_benchmark_history wrapper under whatever
+    state production has yfinance in: yfinance -> tencent (indexes only, no
+    ETF mapping) -> Sina (SPDR tickers, the iteration-133 third leg). The
+    provider-health snapshot says which leg served, so a PASS is attributable.
+    Pre-deploy SKIP is keyed on _SECTOR_ETF_TICKERS -- the pre-fallback image
+    already ships an older fetch_benchmark_history, so an ImportError guard
+    alone would run old code and misread a missing leg as a broken deploy."""
+    try:
+        from app.tools.data import fetcher as fetcher_mod
+        from app.tools.data.provider_health import provider_health_snapshot
+    except ImportError:
+        return "SKIP", "module absent (pre-deploy image)"
+    if not hasattr(fetcher_mod, "_SECTOR_ETF_TICKERS"):
+        return "SKIP", "Sina sector-ETF leg absent (pre-deploy image)"
+    try:
+        hist = asyncio.run(fetcher_mod.fetch_benchmark_history("XLF"))
+    except Exception as e:
+        return "FAIL", f"{type(e).__name__}: {e}"
+    if not hist or not hist.get("dates") or not hist.get("close"):
+        return "FAIL", "no sector-ETF history returned (all three legs dark)"
+    if hist.get("symbol") != "XLF":
+        return "FAIL", f"symbol mutated: {hist.get('symbol')!r}"
+    n = len(hist["close"])
+    if n < 50:
+        return "FAIL", f"only {n} closes (need >=50)"
+    providers = provider_health_snapshot()["providers"]
+    if providers.get("sina-benchmark", {}).get("ok"):
+        served = "sina"
+    elif providers.get("yfinance-benchmark", {}).get("ok"):
+        served = "yfinance"
+    else:
+        served = "unknown"
+    return "PASS", f"XLF {n} bars via {served}, latest {hist['dates'][-1]}"
+
+
 def check_em_financial_indicator() -> tuple[str, str]:
     """EM datacenter financial indicators -- the financial-chain anchor."""
     df = ak.stock_financial_analysis_indicator(symbol="600000")
@@ -207,7 +248,15 @@ def check_provider_health_endpoint() -> tuple[str, str]:
     if n == 0:
         return "FAIL", "no provider outcomes recorded after a completed analysis"
     sample = next(iter(providers.values()))
-    expected = {"total_calls", "ok", "fail", "fallback", "last_ok_at", "last_error", "last_error_at"}
+    expected = {
+        "total_calls",
+        "ok",
+        "fail",
+        "fallback",
+        "last_ok_at",
+        "last_error",
+        "last_error_at",
+    }
     if set(sample) != expected:
         return "FAIL", f"per-provider shape drift: {sorted(sample)}"
     return "PASS", f"{n} providers recorded"
@@ -218,6 +267,7 @@ def main() -> int:
         ("tencent daily K (600000)", check_tencent_daily_k),
         ("tencent batch spot table", check_tencent_spot_table),
         ("tencent dual-market benchmarks", check_tencent_benchmarks),
+        ("sector ETF benchmark chain (XLF)", check_sector_etf_benchmark),
         ("EM financial indicator (600000)", check_em_financial_indicator),
         ("EM full-market spot table", check_em_spot_table),
         ("EM sector-benchmark chain", check_em_sector_chain),
