@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 import app.tools.data.fetcher as fetcher_mod
+import app.tools.data.fetcher_finnhub as fetcher_finnhub_mod
 from app.agents.data_agent import DataCollectionAgent, _dedup_news
 from app.agents.sentiment_agent import SentimentAnalysisAgent
 from app.config import get_settings
@@ -55,7 +56,7 @@ async def test_multi_symbol_fallback_news_reaches_each_symbols_sentiment(
 
     by_symbol = {"AAPL": _finnhub_items("AAPL"), "MSFT": _finnhub_items("MSFT")}
     monkeypatch.setattr(
-        fetcher_mod, "_finnhub_get", lambda path, params: by_symbol[params["symbol"]]
+        fetcher_finnhub_mod, "_finnhub_get", lambda path, params: by_symbol[params["symbol"]]
     )
 
     agent = DataCollectionAgent("data_collection")

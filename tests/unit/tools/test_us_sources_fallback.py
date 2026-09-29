@@ -24,6 +24,7 @@ import pandas as pd
 import pytest
 
 import app.tools.data.fetcher as fetcher_mod
+import app.tools.data.fetcher_finnhub as fetcher_finnhub_mod
 from app.config import get_settings
 from app.tools.data.fetcher import (
     _akshare_us,
@@ -231,7 +232,7 @@ async def test_fetch_us_news_articles_carry_symbol_attribution(
         {"headline": f"Apple story {i}", "url": f"https://x/{i}", "datetime": 1, "source": "R"}
         for i in range(3)
     ]
-    monkeypatch.setattr(fetcher_mod, "_finnhub_get", lambda path, params: items)
+    monkeypatch.setattr(fetcher_finnhub_mod, "_finnhub_get", lambda path, params: items)
     articles = await fetch_us_news("AAPL")
     assert len(articles) == 3
     assert all(

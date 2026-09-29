@@ -43,13 +43,13 @@ class TestHkSymbols:
     @pytest.mark.asyncio
     async def test_eastmoney_hk_scrape_builds_market_block(self) -> None:
         """The primary HK route: direct East Money kline scrape."""
-        from app.tools.data import fetcher
+        from app.tools.data import fetcher, fetcher_hk
 
         klines = [
             f"2026-09-{d:02d},440.0,44{d % 10}.0,445.0,435.0,15000000,6.6e9,2.3,0.5,2"
             for d in range(1, 4)
         ]
-        with patch.object(fetcher, "_eastmoney_hk_klines", return_value=klines):
+        with patch.object(fetcher_hk, "_eastmoney_hk_klines", return_value=klines):
             result = await fetcher._eastmoney_hk_fetch("0700.HK")
 
         mkt = result["market_data"]["0700.HK"]
@@ -73,7 +73,7 @@ class TestHkSymbols:
         """akshare wrapper remains the HK fallback when the scrape misses."""
         import pandas as pd
 
-        from app.tools.data import fetcher
+        from app.tools.data import fetcher, fetcher_hk
 
         days = 30
         closes = [300.0 + i for i in range(days)]
@@ -95,7 +95,7 @@ class TestHkSymbols:
                 assert kwargs["symbol"] == "00700"
                 return fake_df
 
-        with patch.object(fetcher, "_eastmoney_hk_klines", return_value=[]):
+        with patch.object(fetcher_hk, "_eastmoney_hk_klines", return_value=[]):
             result = await fetcher._akshare_hk("0700.HK", FakeAk())
 
         mkt = result["market_data"]["0700.HK"]
@@ -244,7 +244,7 @@ class TestTencentHk:
     @pytest.mark.asyncio
     async def test_tencent_hk_snapshot_and_history(self) -> None:
         """Tencent quote+kline parsers build the standard market block."""
-        from app.tools.data import fetcher
+        from app.tools.data import fetcher, fetcher_hk
 
         quote = {
             "name": "腾讯控股",
@@ -261,8 +261,8 @@ class TestTencentHk:
             ["2026-09-03", "444.2", "433.0", "445.6", "433.0", "17387096"],
         ]
         with (
-            patch.object(fetcher, "_tencent_hk_quote", return_value=quote),
-            patch.object(fetcher, "_tencent_hk_klines", return_value=klines),
+            patch.object(fetcher_hk, "_tencent_hk_quote", return_value=quote),
+            patch.object(fetcher_hk, "_tencent_hk_klines", return_value=klines),
         ):
             result = await fetcher._tencent_hk_fetch("0700.HK")
 

@@ -21,6 +21,8 @@ import requests
 
 import app.agents.data_agent as data_agent_mod
 import app.tools.data.fetcher as fetcher_mod
+import app.tools.data.fetcher_benchmarks as fetcher_benchmarks_mod
+import app.tools.data.fetcher_cn as fetcher_cn_mod
 from app.agents.data_agent import AkShareDataAgent
 from app.config import get_settings
 from app.tools.data.provider_health import provider_health_snapshot, reset_provider_health
@@ -148,7 +150,7 @@ class TestBenchmarkHistoryWiring:
     def test_healthy_yfinance_records_ok_and_never_tencent(self, monkeypatch) -> None:
         self._install_yf(monkeypatch, healthy=True)
         monkeypatch.setattr(
-            fetcher_mod,
+            fetcher_benchmarks_mod,
             "tencent_index_history",
             lambda symbol: pytest.fail("tencent must not be called"),
         )
@@ -163,7 +165,7 @@ class TestBenchmarkHistoryWiring:
     def test_dead_yfinance_records_fail_and_tencent_ok(self, monkeypatch) -> None:
         self._install_yf(monkeypatch, healthy=False)
         bench = {"symbol": "000001.SS", "dates": list(_DATES), "close": [5100.0, 5110.0, 5120.0]}
-        monkeypatch.setattr(fetcher_mod, "tencent_index_history", lambda symbol: bench)
+        monkeypatch.setattr(fetcher_benchmarks_mod, "tencent_index_history", lambda symbol: bench)
 
         result = fetcher_mod._sync_fetch_benchmark_history("000001.SS")
 
@@ -175,7 +177,7 @@ class TestBenchmarkHistoryWiring:
 
     def test_both_dead_records_both_fail(self, monkeypatch) -> None:
         self._install_yf(monkeypatch, healthy=False)
-        monkeypatch.setattr(fetcher_mod, "tencent_index_history", lambda symbol: None)
+        monkeypatch.setattr(fetcher_benchmarks_mod, "tencent_index_history", lambda symbol: None)
 
         result = fetcher_mod._sync_fetch_benchmark_history("000001.SS")
 
@@ -188,7 +190,7 @@ class TestBenchmarkHistoryWiring:
 class TestAkshareCNSnapshotWiring:
     async def _run(self, monkeypatch: pytest.MonkeyPatch, fake: _RecorderAk) -> Any:
         monkeypatch.setattr(
-            fetcher_mod, "_sync_fetch_akshare_financials", lambda symbol, ak: _FAKE_FINANCIALS
+            fetcher_cn_mod, "_sync_fetch_akshare_financials", lambda symbol, ak: _FAKE_FINANCIALS
         )
         return await fetcher_mod._akshare_cn("600519", fake)
 

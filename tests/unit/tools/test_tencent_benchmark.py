@@ -22,6 +22,7 @@ import pandas as pd
 import pytest
 
 import app.tools.data.fetcher as fetcher_mod
+import app.tools.data.fetcher_benchmarks as fetcher_benchmarks_mod
 import app.tools.data.tencent_benchmark as tencent_mod
 from app.tools.data.fetcher import fetch_benchmark_history
 from app.tools.data.provider_health import provider_health_snapshot, reset_provider_health
@@ -371,7 +372,7 @@ class TestSectorEtfSinaFallback:
         yahoo-form symbol preserved."""
         _install_yf(monkeypatch, _RateLimitedYf.Ticker)
         sina = _FakeSina(_SINA_HIST)
-        monkeypatch.setattr(fetcher_mod, "_sina_us_hist", sina)
+        monkeypatch.setattr(fetcher_benchmarks_mod, "_sina_us_hist", sina)
 
         result = await fetch_benchmark_history("XLF")
 
@@ -389,7 +390,7 @@ class TestSectorEtfSinaFallback:
         the result is yfinance's own dates/closes, unchanged."""
         _install_yf(monkeypatch, _HealthyYf.Ticker)
         sina = _FakeSina(_SINA_HIST)
-        monkeypatch.setattr(fetcher_mod, "_sina_us_hist", sina)
+        monkeypatch.setattr(fetcher_benchmarks_mod, "_sina_us_hist", sina)
 
         result = await fetch_benchmark_history("XLF")
 
@@ -409,7 +410,7 @@ class TestSectorEtfSinaFallback:
         recorder = _RecorderGet(response=_FakeResponse(status_code=503, payload={}))
         monkeypatch.setattr(tencent_mod.requests, "get", recorder)
         sina = _FakeSina(_SINA_HIST)
-        monkeypatch.setattr(fetcher_mod, "_sina_us_hist", sina)
+        monkeypatch.setattr(fetcher_benchmarks_mod, "_sina_us_hist", sina)
 
         assert await fetch_benchmark_history("^GSPC") is None
         assert sina.calls == []
@@ -421,7 +422,7 @@ class TestSectorEtfSinaFallback:
         provider-health snapshot shows the third leg honestly failing."""
         _install_yf(monkeypatch, _RateLimitedYf.Ticker)
         sina = _FakeSina(None)
-        monkeypatch.setattr(fetcher_mod, "_sina_us_hist", sina)
+        monkeypatch.setattr(fetcher_benchmarks_mod, "_sina_us_hist", sina)
         reset_provider_health()
 
         assert await fetch_benchmark_history("XLF") is None
@@ -442,7 +443,7 @@ class TestSectorEtfSinaFallback:
         snapshot records the ok outcome."""
         _install_yf(monkeypatch, _RateLimitedYf.Ticker)
         sina = _FakeSina(_SINA_HIST)
-        monkeypatch.setattr(fetcher_mod, "_sina_us_hist", sina)
+        monkeypatch.setattr(fetcher_benchmarks_mod, "_sina_us_hist", sina)
         reset_provider_health()
 
         first = await fetch_benchmark_history("XLF")

@@ -23,6 +23,7 @@ import pandas as pd
 import pytest
 
 import app.tools.data.fetcher as fetcher_mod
+import app.tools.data.fetcher_cn as fetcher_cn_mod
 from app.config import get_settings
 from app.tools.data.fetcher import _cn_tencent_symbol, fetch_historical
 
@@ -315,7 +316,7 @@ async def _run_cn_snapshot(
     faked to pin that it survives the history outage.
     """
     monkeypatch.setattr(
-        fetcher_mod, "_sync_fetch_akshare_financials", lambda symbol, ak: _FAKE_FINANCIALS
+        fetcher_cn_mod, "_sync_fetch_akshare_financials", lambda symbol, ak: _FAKE_FINANCIALS
     )
     return await fetcher_mod._akshare_cn("600519", fake)
 

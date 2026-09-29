@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import app.tools.data.fetcher_benchmarks as fetcher_benchmarks_mod
+
 
 def _load_data_agent() -> ModuleType:
     """Load data_agent with stubbed base/state modules (package-cycle guard)."""
@@ -218,7 +220,7 @@ class TestFetcherBenchmarkCache:
             calls.append(ticker)
             return {"symbol": ticker, "dates": ["2026-01-02"], "close": [4800.0]}
 
-        monkeypatch.setattr(self.fetcher, "_sync_fetch_benchmark_history", fake_sync)
+        monkeypatch.setattr(fetcher_benchmarks_mod, "_sync_fetch_benchmark_history", fake_sync)
 
         first = await self.fetcher.fetch_benchmark_history("^GSPC")
         second = await self.fetcher.fetch_benchmark_history("^GSPC")
@@ -234,7 +236,7 @@ class TestFetcherBenchmarkCache:
             calls.append(ticker)
             raise RuntimeError("index feed down")
 
-        monkeypatch.setattr(self.fetcher, "_sync_fetch_benchmark_history", failing_sync)
+        monkeypatch.setattr(fetcher_benchmarks_mod, "_sync_fetch_benchmark_history", failing_sync)
 
         assert await self.fetcher.fetch_benchmark_history("^GSPC") is None
         assert await self.fetcher.fetch_benchmark_history("^GSPC") is None
