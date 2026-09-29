@@ -58,6 +58,14 @@ export function formatSignedPercent(value: number, digits = 1): string {
   return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(digits)}%`
 }
 
+// 统计值格式化（SignalQualityCard 指标瓦片/行共用，iteration 129 逐字提取）：
+// 缺数渲染 em dash「—」——该卡指标位的既定风格，与金额类的 "-" 是两种页面
+// 惯例，各自保真；NaN 落「—」同本文件 honest-guard 约定（wire 上不会出现）。
+export function formatStat(value: number | null | undefined, digits = 3): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '—'
+  return value.toFixed(digits)
+}
+
 // 相对时间（monitoring 页：秒/分钟/小时三档；未来时间戳钳到 0 秒，无效输入 → null）
 export function relativeTime(iso: string | null): string | null {
   if (!iso) return null

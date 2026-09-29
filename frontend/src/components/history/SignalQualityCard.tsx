@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/select'
 import { Loader2, Target } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { formatStat } from '@/lib/format'
 import {
   API,
   type ConfidenceCalibrationResponse,
@@ -46,10 +47,6 @@ const REGIME_BIN_LABELS: Record<string, string> = {
   bear: '熊市',
   neutral: '震荡',
   unknown: '未记录',
-}
-
-function fmt(value: number | null | undefined, digits = 3): string {
-  return typeof value === 'number' ? value.toFixed(digits) : '—'
 }
 
 export function SignalQualityCard() {
@@ -181,18 +178,18 @@ export function SignalQualityCard() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="p-3 bg-muted/50 rounded-lg">
                 <div className="text-xs text-muted-foreground">IC 均值</div>
-                <div className="text-lg font-bold">{fmt(ic.ic_mean)}</div>
+                <div className="text-lg font-bold">{formatStat(ic.ic_mean)}</div>
               </div>
               <div className="p-3 bg-muted/50 rounded-lg">
                 <div className="text-xs text-muted-foreground">ICIR</div>
-                <div className="text-lg font-bold">{fmt(ic.icir)}</div>
+                <div className="text-lg font-bold">{formatStat(ic.icir)}</div>
               </div>
               <div className="p-3 bg-muted/50 rounded-lg">
                 <div className="text-xs text-muted-foreground">
                   t 统计量{typeof ic.t_stat_nw === 'number' ? ' · NW' : ''}
                 </div>
                 <div className="text-lg font-bold">
-                  {fmt(typeof ic.t_stat_nw === 'number' ? ic.t_stat_nw : ic.t_stat, 2)}
+                  {formatStat(typeof ic.t_stat_nw === 'number' ? ic.t_stat_nw : ic.t_stat, 2)}
                 </div>
               </div>
               <div className="p-3 bg-muted/50 rounded-lg">
@@ -253,13 +250,13 @@ export function SignalQualityCard() {
                       {DIMENSION_LABELS[dimension] ?? dimension} · {summary.runs} run
                     </span>
                     <span className="flex items-center gap-3">
-                      <span className="text-muted-foreground">IC {fmt(summary.ic_mean)}</span>
+                      <span className="text-muted-foreground">IC {formatStat(summary.ic_mean)}</span>
                       <span
                         className={`font-semibold ${
                           T_STAT_CLS[tStatTier(preferredTStat(summary.t_stat_nw, summary.t_stat))]
                         }`}
                       >
-                        t {fmt(preferredTStat(summary.t_stat_nw, summary.t_stat), 2)}
+                        t {formatStat(preferredTStat(summary.t_stat_nw, summary.t_stat), 2)}
                         {typeof summary.t_stat_nw === 'number' ? ' · NW' : ''}
                       </span>
                     </span>
@@ -329,7 +326,7 @@ export function SignalQualityCard() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="p-3 bg-muted/50 rounded-lg">
                 <div className="text-xs text-muted-foreground">Brier 分</div>
-                <div className="text-lg font-bold">{fmt(calib.brier_score)}</div>
+                <div className="text-lg font-bold">{formatStat(calib.brier_score)}</div>
               </div>
               <div className="p-3 bg-muted/50 rounded-lg">
                 <div className="text-xs text-muted-foreground">Brier skill</div>
@@ -344,7 +341,7 @@ export function SignalQualityCard() {
                       : ''
                   }`}
                 >
-                  {fmt(calib.brier_skill_score)}
+                  {formatStat(calib.brier_skill_score)}
                 </div>
               </div>
               <div className="p-3 bg-muted/50 rounded-lg">
@@ -497,15 +494,7 @@ export function SignalQualityCard() {
               {typeof topk.excess_t_stat === 'number' && (
                 <span className="text-muted-foreground">
                   t{' '}
-                  <span
-                    className={
-                      topk.excess_t_stat >= 2
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : topk.excess_t_stat <= -2
-                          ? 'text-red-500'
-                          : ''
-                    }
-                  >
+                  <span className={T_STAT_CLS[tStatTier(topk.excess_t_stat)]}>
                     {topk.excess_t_stat.toFixed(2)}
                   </span>
                 </span>
@@ -513,15 +502,7 @@ export function SignalQualityCard() {
               {typeof topk.excess_t_stat_nw === 'number' && (
                 <span className="text-muted-foreground">
                   t·NW{' '}
-                  <span
-                    className={
-                      topk.excess_t_stat_nw >= 2
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : topk.excess_t_stat_nw <= -2
-                          ? 'text-red-500'
-                          : ''
-                    }
-                  >
+                  <span className={T_STAT_CLS[tStatTier(topk.excess_t_stat_nw)]}>
                     {topk.excess_t_stat_nw.toFixed(2)}
                   </span>
                 </span>

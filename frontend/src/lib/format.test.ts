@@ -14,6 +14,7 @@ import {
   formatMarketCap,
   sparkColor,
   formatSignedPercent,
+  formatStat,
   relativeTime,
 } from '@/lib/format'
 
@@ -138,6 +139,28 @@ describe('formatSignedPercent', () => {
   })
   it('honors a custom digit count', () => {
     expect(formatSignedPercent(0.5, 0)).toBe('+50%')
+  })
+})
+
+describe('formatStat', () => {
+  // Extracted verbatim from SignalQualityCard's local fmt (iteration 129).
+  // The em dash — not the money formatters' hyphen — is the stat-tile
+  // convention that card already renders; both dash styles predate the
+  // extraction and are pinned as-is.
+  it('formats with 3 decimals by default', () => {
+    expect(formatStat(0.123456)).toBe('0.123')
+  })
+  it('honors a custom decimal count', () => {
+    expect(formatStat(2.5, 2)).toBe('2.50')
+  })
+  it('returns the em dash for null and undefined', () => {
+    expect(formatStat(null)).toBe('—')
+    expect(formatStat(undefined, 2)).toBe('—')
+  })
+  it('guards NaN to the em dash like the other honest guards', () => {
+    // NaN never survives JSON from the backend — defense-in-depth only
+    // (the local fmt would have rendered the literal string "NaN").
+    expect(formatStat(NaN)).toBe('—')
   })
 })
 
