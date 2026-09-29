@@ -53,6 +53,6 @@ npm start
 ```bash
 npm run lint           # eslint, zero warnings allowed
 npx tsc --noEmit       # type check
-npm test               # vitest, 87 tests — logic pins (format/verdicts/parse) + component & interaction tests
+npm test               # vitest, 122 tests — logic pins (format/verdicts/parse/api-error) + component & interaction tests
 npm run build          # production build
 ```
