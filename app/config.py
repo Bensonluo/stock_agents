@@ -150,6 +150,11 @@ class Settings(BaseSettings):
     # the worst-case bounded run still holds an analysis-capacity slot for
     # tens of minutes. 0 disables the bound.
     react_run_timeout: float = 900.0
+    # Overall wall clock for one pipeline run (iteration 178) — the pipeline
+    # twin of react_run_timeout. Every node is bounded (timeout_per_agent),
+    # but 8 nodes x per-node budget x retry attempts is still tens of
+    # minutes holding a capacity slot; a legitimate run is ~162s. 0 disables.
+    pipeline_run_timeout: float = 1800.0
 
     # Backtesting
     backtest_initial_cash: float = 10000.0

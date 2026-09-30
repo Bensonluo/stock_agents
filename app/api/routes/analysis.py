@@ -1,5 +1,6 @@
 """Stock analysis endpoints."""
 
+import asyncio
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -418,14 +419,38 @@ async def _execute_workflow_impl(
     """
     orchestrator = get_orchestrator()
 
-    result = await orchestrator.execute_workflow(
-        query=query,
-        symbols=symbols,
-        thread_id=thread_id,
-        max_retries=max_retries,
-        timeout_per_agent=timeout_per_agent,
-        parallel_execution=parallel_execution,
-    )
+    # Overall wall-clock bound (iteration 178): every node is bounded
+    # (timeout_per_agent) but nodes x budget x retries is still tens of
+    # minutes holding a capacity slot. 0 disables the bound.
+    run_timeout = get_settings().pipeline_run_timeout
+    try:
+        if run_timeout > 0:
+            result = await asyncio.wait_for(
+                orchestrator.execute_workflow(
+                    query=query,
+                    symbols=symbols,
+                    thread_id=thread_id,
+                    max_retries=max_retries,
+                    timeout_per_agent=timeout_per_agent,
+                    parallel_execution=parallel_execution,
+                ),
+                timeout=run_timeout,
+            )
+        else:
+            result = await orchestrator.execute_workflow(
+                query=query,
+                symbols=symbols,
+                thread_id=thread_id,
+                max_retries=max_retries,
+                timeout_per_agent=timeout_per_agent,
+                parallel_execution=parallel_execution,
+            )
+    except TimeoutError as e:
+        # RuntimeError flows into the existing failure paths: the background
+        # task marks the workflow entry failed; the sync route maps it to a
+        # 500 with this detail; the guarded wrapper's finally releases the
+        # capacity slot either way.
+        raise RuntimeError(f"Pipeline timed out after {run_timeout}s (pipeline_run_timeout)") from e
 
     errors = result.get("errors", [])
     agent_status = result.get("agent_status", {})
