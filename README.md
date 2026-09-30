@@ -70,7 +70,7 @@ It's a **reference implementation** for production-grade multi-agent systems —
 
 | 📈 Stats | | |
 |:---:|:---:|:---:|
-| **10** data sources | **1283** tests green | **2** architectures |
+| **10** data sources | **1287** tests green | **2** architectures |
 | **5** backtest strategies | **1** shared engine per domain | **WebSocket** real-time |
 
 </div>
@@ -345,6 +345,7 @@ every metric.
 | `TIMEOUT_PER_AGENT` | Timeout per agent (seconds) | `300` |
 | `REACT_TOOL_TIMEOUT` | Per-tool-invocation wall clock in the ReAct loop — a hung upstream call never raises; this bound keeps the loop (and its analysis-capacity slot) from stalling forever. 0 disables | `120` |
 | `REACT_RUN_TIMEOUT` | Overall wall clock for one ReAct run — the worst-case bounded run (capped iterations × bounded tools) still holds a capacity slot for tens of minutes without it. 0 disables | `900` |
+| `PIPELINE_RUN_TIMEOUT` | Overall wall clock for one pipeline run — the pipeline twin of the knob above (nodes × per-node budget × retries is still tens of minutes). 0 disables | `1800` |
 | `LLM_TIMEOUT` | HTTP ceiling for every LLM client; research budgets (narrator 45s / panel 90s) stay at or below it | `90` |
 | `OPTION_SIGNALS_ENABLED` | CN option-implied annotation layer — SSE options trio + QVIX market-regime label; pure annotation, no scoring reads it | `true` |
 | `CONSENSUS_ENABLED` | CN analyst-consensus annotation layer — THS EPS forecasts + Sina target prices/ratings per symbol; pure annotation, no scoring reads it | `true` |
@@ -393,7 +394,7 @@ stock_agents/
 ├── frontend/                # Next.js dashboard
 ├── deploy/                  # Production deployment scripts
 ├── scripts/                 # smoke_data_chain.py — post-deploy data-chain probe
-├── tests/                   # 1283 tests: unit + integration + path parity
+├── tests/                   # 1287 tests: unit + integration + path parity
 └── docker-compose.yml
 ```
 
@@ -433,6 +434,7 @@ stock_agents/
 - [x] Symbols-per-request cap — 422 when a request exceeds MAX_SYMBOLS_PER_REQUEST (pipeline + ReAct; client guard mirrors it)
 - [x] ReAct tool-invocation timeout — a hung tool call degrades to a ToolTimeout error instead of stalling the loop and its capacity slot forever
 - [x] ReAct overall run timeout — worst-case bounded runs (900s) release the capacity slot instead of holding it for tens of minutes
+- [x] Pipeline overall run timeout — the pipeline twin (1800s); both architectures now have end-to-end wall-clock bounds
 - [ ] Phase 4: filings RAG, expectations data
 - [ ] Portfolio optimization agent
 - [ ] Multi-language reports (EN/ZH auto-switch)
@@ -442,7 +444,7 @@ stock_agents/
 ## 🧪 Testing
 
 ```bash
-poetry run pytest tests/ -q          # 1283 passed (3 network tests deselected)
+poetry run pytest tests/ -q          # 1287 passed (3 network tests deselected)
 ```
 
 Coverage highlights: every engine has golden-value tests; pipeline/ReAct
