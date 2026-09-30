@@ -269,7 +269,14 @@ class TestReActAttach:
         async def fake_bench(ticker):
             return {"symbol": ticker, "dates": ["2026-01-02"], "close": [100.0]}
 
+        async def no_cn_sector(symbol):
+            return None  # offline test: no CN sector benchmark is the degraded case
+
         monkeypatch.setattr(auto_tools, "fetch_benchmark_history", fake_bench)
+        # CN leg must be stubbed, not left to the real fetcher: the sectorless
+        # pass would otherwise depend on the host failing to reach East Money
+        # (TestSectorBenchmarkAttach's no_cn_fetch pattern, iteration 163).
+        monkeypatch.setattr(auto_tools, "fetch_cn_sector_benchmark", no_cn_sector)
 
         out = await auto_tools._attach_benchmark({"symbol": "600000"}, "600000")
 
