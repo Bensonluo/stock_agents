@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
-from app.analysis.events import next_earnings_window
+from app.analysis.events import build_catalysts_view, next_earnings_window
 from app.analysis.fundamental import compact_quality_view
 from app.analysis.ic import STATIC_DIMENSION_WEIGHTS
 from app.analysis.portfolio import suggest_weights
@@ -91,6 +91,9 @@ class ReportService:
             "risk_analysis": cls._risk(c),
             "recommendations": cls._recommendations(c),
         }
+        catalysts = cls._catalysts(c)
+        if catalysts:
+            sections["catalysts"] = catalysts
         synthesis = cls._synthesis(c)
         if synthesis:
             sections["research_synthesis"] = synthesis
@@ -532,6 +535,28 @@ class ReportService:
                 ]
             index[symbol] = records
         return index
+
+    @classmethod
+    def _catalysts(cls, c: dict[str, Any]) -> dict[str, Any]:
+        """Upcoming events + recent EPS surprise per symbol; empty → absent.
+
+        The data layer's ``event_calendar``/``earnings_surprise`` blocks ride
+        ``financial_data``; the view buckets them 1w/1m/3m for the timeline
+        card. A symbol with neither an upcoming event nor a surprise row is
+        omitted entirely (optional-key convention) so old/thin payloads never
+        render an empty shell section.
+        """
+        by_symbol: dict[str, Any] = {}
+        for symbol in c["symbols"]:
+            financial = c["financial_data"].get(symbol) or {}
+            view = build_catalysts_view(
+                symbol,
+                financial.get("event_calendar"),
+                financial.get("earnings_surprise"),
+            )
+            if view["events"] or view["earnings_surprise"]:
+                by_symbol[symbol] = view
+        return {"by_symbol": by_symbol} if by_symbol else {}
 
     @classmethod
     def _synthesis(cls, c: dict[str, Any]) -> dict[str, Any]:
