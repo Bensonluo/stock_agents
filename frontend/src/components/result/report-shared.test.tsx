@@ -379,4 +379,26 @@ describe('ConsensusBlock', () => {
     expect(screen.getByText('HK$2.15')).toBeInTheDocument()
     expect(screen.getByText('· 行业 HK$2.31')).toBeInTheDocument()
   })
+
+  it('labels the US ratings-only block with the US market suffix', () => {
+    render(
+      <ConsensusBlock
+        symbol="AAPL"
+        consensus={consensus({
+          status: 'insufficient_data',
+          eps_forecast: undefined,
+          target_price: undefined,
+        })}
+      />
+    )
+
+    // US runs carry ratings only (Finnhub band counts, no EPS/target rows).
+    expect(screen.getByText('分析师一致预期（US）')).toBeInTheDocument()
+    expect(screen.getByText('数据不足')).toHaveClass('bg-amber-100', 'text-amber-700')
+    expect(screen.getByText('买入 12 · 增持 8')).toBeInTheDocument()
+    expect(screen.getByText('· 主导 买入')).toBeInTheDocument()
+    expect(screen.getByText('20 条评级 · 纯标注，不影响评分')).toBeInTheDocument()
+    expect(screen.queryByText(/EPS 预测/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/目标价/)).not.toBeInTheDocument()
+  })
 })

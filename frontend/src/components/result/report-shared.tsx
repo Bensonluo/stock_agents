@@ -187,13 +187,17 @@ export const ConsensusBlock = ({ symbol, consensus: c }: { symbol: string; conse
   if (!hasConsensusContent(c)) return null
   const badge = consensusBadge(c)
   const currency = currencyForSymbol(symbol)
+  // Market suffix mirrors the backend dispatch: 6-digit symbols ride the CN
+  // price seam, everything else the US ratings-only seam (Finnhub) — the
+  // header must not claim CN coverage for an AAPL ratings block.
+  const marketSuffix = /^\d{6}$/.test(symbol) ? 'CN' : 'US'
   const eps = c.eps_forecast
   const tp = c.target_price
   const ratings = c.ratings
   return (
     <div className="p-3 border border-slate-200 rounded-lg space-y-1 text-xs">
       <div className="flex items-center justify-between">
-        <span className="text-slate-500">分析师一致预期（CN）</span>
+        <span className="text-slate-500">{`分析师一致预期（${marketSuffix}）`}</span>
         <span className={cn('px-2 py-0.5 rounded text-xs font-semibold', badge.bg, badge.color)}>{badge.label}</span>
       </div>
       {eps != null && (
