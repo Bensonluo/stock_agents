@@ -130,6 +130,26 @@ rsync -avz --delete -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no" \
     "$PROJECT_ROOT"/ ${SERVER_USER}@${SERVER_IP}:${SERVER_DIR}/
 echo -e "${GREEN}✓ 文件上传完成${NC}"
 
+# 发货完整性自检(rsync 后、build 前):本地与服务器代码树文件数必须一致。
+# 2026-09-30 第 5 次部署事故的代价结构:排除规则错 → 服务器树静默冻结 →
+# 构建出缺模块镜像 → 健康检查失败 → 自动回滚(~7 分钟)。把一致性校验放在
+# build 之前,同一错误的代价降为「即刻中止 ~0 秒」。
+# rsync --delete 后服务器树 = 本地树 − 排除项,故文件数只可能 server < local,
+# 任何不一致都意味着排除规则回归(或服务器残留)。MANIFEST_PATTERN 镜像
+# rsync 的未锚定排除模式(路径组件精确匹配),新增未锚定排除时同步维护。
+MANIFEST_PATTERN='(^|/)(__pycache__|node_modules|\.git|\.pytest_cache|\.ruff_cache|\.venv|\.omc|\.claude|\.sisyphus|\.worktrees|htmlcov|tests|docs|\.idea)(/|$)|\.pyc$|(^|/)(\.DS_Store|\.coverage)$'
+local_app=$(find "$PROJECT_ROOT/app" -type f | { grep -vE "$MANIFEST_PATTERN" || true; } | wc -l | tr -d ' ')
+local_front=$(find "$PROJECT_ROOT/frontend/src" -type f | { grep -vE "$MANIFEST_PATTERN" || true; } | wc -l | tr -d ' ')
+remote_counts="$(${SSH_CMD} "find '$SERVER_DIR/app' -type f | grep -vE '$MANIFEST_PATTERN' | wc -l; find '$SERVER_DIR/frontend/src' -type f | grep -vE '$MANIFEST_PATTERN' | wc -l")"
+# 双行输出拍平成一行再 read(read 只读首行,多行 here-string 会丢第二行)
+read -r remote_app remote_front <<< "$(printf '%s' "${remote_counts}" | tr '\n' ' ')"
+echo "代码树文件数: 本地 app=${local_app} frontend/src=${local_front} | 服务器 app=${remote_app} frontend/src=${remote_front}"
+if [ "$local_app" != "$remote_app" ] || [ "$local_front" != "$remote_front" ]; then
+    echo -e "${RED}错误: 发货完整性自检失败——服务器代码树与本地不一致(参考 2026-09-30 未锚定 'data/' 冻结 app/tools/data 事故)。中止部署。${NC}" >&2
+    exit 1
+fi
+echo -e "${GREEN}✓ 发货完整性自检通过${NC}"
+
 # 5. 在服务器上构建和启动
 echo -e "${YELLOW}[5/6] 在服务器上构建和启动...${NC}"
 ${SSH_CMD} "DEPLOY_ID=${DEPLOY_ID} bash -s" << 'ENDSSH'

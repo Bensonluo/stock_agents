@@ -94,7 +94,38 @@ class TestUnanchoredExcludesDoNotShadowCodeDirs:
                         f"排除 '{dir_patterns[directory.name]}' 遮蔽代码目录 {directory}"
                     )
 
-        assert not shadowed, (
+        assert (
+            not shadowed
+        ), (
             "未锚定目录排除遮蔽了代码根下的真实目录(rsync 会静默跳过传输,"
             "服务器旧快照残留、镜像缺文件):\n" + "\n".join(shadowed)
         )
+
+
+class TestPostRsyncShippingCompletenessCheck:
+    """rsync 后、build 前必须自检服务器代码树与本地逐项一致。
+
+    第 5 次部署事故的代价结构:排除规则错 → 服务器树静默冻结 → 构建缺模块
+    镜像 → 健康检查失败 → 自动回滚。把一致性校验放在 build 之前,同一错误
+    的代价从「构建+回滚 ~7 分钟」降到「即刻中止 ~0 秒」。
+    """
+
+    def test_self_check_present_and_runs_before_build(self):
+        text = DEPLOY_SH.read_text(encoding="utf-8")
+        check_marker = "发货完整性自检"
+        assert check_marker in text, (
+            "deploy.sh 缺少 rsync 后的发货完整性自检 —— 排除规则回归时会在"
+            "build 阶段生产缺模块镜像并触发健康检查回滚"
+        )
+        check_pos = text.index(check_marker)
+        build_pos = text.index("docker compose build")
+        assert check_pos < build_pos, "发货完整性自检必须位于 docker compose build 之前"
+
+        # 双侧 find 成对出现(本地 + 服务器),失败即 exit 1 中止
+        assert 'find "$PROJECT_ROOT/app"' in text, "缺本地 app/ 清单 find"
+        assert "find '$SERVER_DIR/app'" in text, "缺服务器 app/ 清单 find"
+        assert 'find "$PROJECT_ROOT/frontend/src"' in text, "缺本地 frontend/src 清单 find"
+        assert "find '$SERVER_DIR/frontend/src'" in text, "缺服务器 frontend/src 清单 find"
+
+        check_block = text[check_pos : text.index("# 5.", check_pos)]
+        assert "exit 1" in check_block, "自检失败必须 exit 1 中止部署"
