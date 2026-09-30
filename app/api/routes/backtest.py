@@ -3,9 +3,10 @@
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.api.rate_limit import rate_limit
 from app.services.backtest_service import BacktestService
 from app.utils.logging import get_logger
 from app.utils.validators import validate_stock_symbol
@@ -126,7 +127,7 @@ class BacktestResponse(BaseModel):
     execution_time: float
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(rate_limit("backtest"))])
 async def run_backtest(request: BacktestRequest) -> BacktestResponse:
     """Run a backtest for the given strategy and symbol.
 
@@ -341,7 +342,7 @@ class WalkForwardRequest(V2BacktestRequest):
     )
 
 
-@router.post("/v2/run")
+@router.post("/v2/run", dependencies=[Depends(rate_limit("backtest"))])
 async def run_backtest_v2(request: V2BacktestRequest) -> dict:
     """V2 backtest: fills at the next bar's open with full costs, benchmark
     comparison, the complete metric suite and a reproducibility manifest."""
@@ -370,7 +371,7 @@ async def run_backtest_v2(request: V2BacktestRequest) -> dict:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/v2/walkforward")
+@router.post("/v2/walkforward", dependencies=[Depends(rate_limit("backtest"))])
 async def run_walk_forward(request: WalkForwardRequest) -> dict:
     """Rolling walk-forward: parameters chosen on train, scored on unseen test
     windows; reports every window (including losers) and configs tested."""
@@ -463,7 +464,7 @@ class CalibrateRequest(BaseModel):
         return value
 
 
-@router.post("/v2/calibrate")
+@router.post("/v2/calibrate", dependencies=[Depends(rate_limit("backtest"))])
 async def calibrate_signals(request: CalibrateRequest) -> dict:
     """Empirical hit rates of the strategy's entry signals per horizon, with
     Wilson lower bounds and per-year breakdowns — the grounding for any

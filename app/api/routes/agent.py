@@ -7,9 +7,10 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.api.rate_limit import rate_limit
 from app.react_agent.react_agent import ReActAgent
 from app.services.report_service import ReportService
 from app.storage.database import AnalysisRecord, get_database
@@ -74,7 +75,11 @@ class ProgressResponse(BaseModel):
     completed_at: str | None
 
 
-@router.post("/analyze", response_model=AnalyzeResponse)
+@router.post(
+    "/analyze",
+    response_model=AnalyzeResponse,
+    dependencies=[Depends(rate_limit("analysis"))],
+)
 async def analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks):
     """Start an autonomous stock analysis."""
     thread_id = f"react-{uuid.uuid4()}"

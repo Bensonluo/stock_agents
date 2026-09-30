@@ -3,10 +3,11 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.dependencies import get_orchestrator
+from app.api.rate_limit import rate_limit
 from app.monitoring.workflow_status import PIPELINE_AGENTS
 from app.orchestration.state import AgentState
 from app.utils.logging import get_logger
@@ -128,7 +129,11 @@ def _store_workflow(thread_id: str, entry: dict) -> None:
     workflows[thread_id] = entry
 
 
-@router.post("/analyze", response_model=AnalysisResponse)
+@router.post(
+    "/analyze",
+    response_model=AnalysisResponse,
+    dependencies=[Depends(rate_limit("analysis"))],
+)
 async def analyze_stocks(
     request: StockAnalysisRequest,
     background_tasks: BackgroundTasks,
@@ -248,7 +253,7 @@ async def get_analysis_result(thread_id: str):
     return result
 
 
-@router.post("/analyze/sync")
+@router.post("/analyze/sync", dependencies=[Depends(rate_limit("analysis"))])
 async def analyze_stocks_sync(request: StockAnalysisRequest) -> AnalysisResultResponse:
     """Analyze stocks synchronously (waits for completion).
 

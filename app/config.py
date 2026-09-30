@@ -149,6 +149,17 @@ class Settings(BaseSettings):
     # for seconds per backtest); concurrent backtests queue rather than fan out.
     backtest_executor_workers: int = 2
 
+    # Rate limiting (iteration 169): in-process sliding window per client key
+    # fencing the expensive POSTs — every analyze spends ~162s of real
+    # multi-agent LLM work, every backtest burns executor CPU. Analysis is
+    # the LLM-heavy bucket; backtest is compute-only. GET endpoints
+    # (health/history/monitoring/progress) stay unlimited.
+    rate_limit_enabled: bool = True
+    rate_limit_analysis_limit: int = 10
+    rate_limit_analysis_window_seconds: int = 600
+    rate_limit_backtest_limit: int = 30
+    rate_limit_backtest_window_seconds: int = 600
+
 
 @lru_cache
 def get_settings() -> Settings:
