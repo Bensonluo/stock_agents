@@ -66,9 +66,14 @@ class TestDedupNews:
 
 
 class TestExecuteDedup:
-    async def test_execute_merges_cross_symbol_duplicates(self):
+    async def test_execute_merges_cross_symbol_duplicates(self, monkeypatch):
         agent = DataCollectionAgent("data_collection")
         agent.llm = None
+
+        async def no_us_consensus(symbol: str):
+            return None  # offline test: no US analyst coverage is the degraded case
+
+        monkeypatch.setattr("app.agents.data_agent.fetch_us_consensus", no_us_consensus)
         per_symbol = {
             "AAPL": {
                 "market_data": {"AAPL": {}},

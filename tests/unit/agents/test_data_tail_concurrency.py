@@ -2,7 +2,8 @@
 
 ``execute`` collects per-symbol data first, then runs five independent
 annotation fetches — per-market benchmarks, SPDR sector benchmarks, CN
-industry benchmarks, the CN option snapshot and the CN analyst consensus.
+industry benchmarks, the CN option snapshot and the analyst consensus
+(CN price-based seam / US ratings-only seam, dispatched by market).
 None of them reads another leg's result, and their writes are disjoint (the
 SPDR sector map excludes CN symbols so the CN industry loop keeps its
 unconditional write), so they all run in one ``asyncio.gather``: worst-case
@@ -40,6 +41,24 @@ def _consensus_block() -> dict[str, Any]:
 def _fake_consensus_ok() -> Any:
     async def _fake(symbol: str, current_price: float | None = None) -> dict[str, Any] | None:
         return _consensus_block()
+
+    return _fake
+
+
+def _us_consensus_block() -> dict[str, Any]:
+    return {
+        "status": "insufficient_data",
+        "ratings": {
+            "counts": {"买入": 12, "增持": 8, "中性": 0, "减持": 0, "卖出": 0},
+            "dominant": "买入",
+            "total": 20,
+        },
+    }
+
+
+def _fake_us_consensus_ok() -> Any:
+    async def _fake(symbol: str) -> dict[str, Any] | None:
+        return _us_consensus_block()
 
     return _fake
 
@@ -129,7 +148,8 @@ async def test_cn_sector_field_never_fetches_spdr(monkeypatch: pytest.MonkeyPatc
 async def test_mixed_run_attaches_expected_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     """Same inputs → same final market_data shape as the sequential tail:
     US symbols get market + SPDR sector benchmarks, CN symbols get market +
-    industry benchmark, and the option snapshot rides along on CN runs."""
+    industry benchmark, the option snapshot rides along on CN runs, and the
+    consensus leg dispatches by market (US ratings-only vs CN price-based)."""
     fetched: list[str] = []
 
     async def _fake_market_benchmark(ticker: str) -> dict[str, Any]:
@@ -147,6 +167,7 @@ async def test_mixed_run_attaches_expected_keys(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(data_agent_mod, "fetch_benchmark_history", _fake_market_benchmark)
     monkeypatch.setattr(data_agent_mod, "fetch_cn_sector_benchmark", _fake_cn_benchmark)
     monkeypatch.setattr(data_agent_mod, "fetch_cn_consensus", _fake_consensus_ok())
+    monkeypatch.setattr(data_agent_mod, "fetch_us_consensus", _fake_us_consensus_ok())
     monkeypatch.setattr(
         data_agent_mod.DataCollectionAgent, "_fetch_option_snapshot", _fake_option_snapshot
     )
@@ -167,11 +188,15 @@ async def test_mixed_run_attaches_expected_keys(monkeypatch: pytest.MonkeyPatch)
     assert cn_block["benchmark_historical_data"]["symbol"] == data_agent_mod.BENCHMARK_TICKERS["cn"]
     assert cn_block["sector_benchmark_historical_data"]["symbol"] == "银行"
     assert result["option_snapshot"] == {"status": "ok"}
+    # Market-dispatched consensus: each symbol attaches its own market's block.
+    assert result["financial_data"]["AAPL"]["consensus"] == _us_consensus_block()
+    assert result["financial_data"]["600000"]["consensus"] == _consensus_block()
 
 
 async def test_us_only_run_skips_option_leg(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No CN symbols → no option snapshot: the leg never runs and the key
-    stays absent (self-containment of the CN gate inside the gather)."""
+    """No CN symbols → no option snapshot and no CN consensus fetch; the US
+    consensus leg still runs (market dispatch) and a None block leaves the
+    key absent."""
     option_calls: list[str] = []
 
     async def _spy_option_snapshot(self) -> dict[str, Any]:
@@ -187,6 +212,12 @@ async def test_us_only_run_skips_option_leg(monkeypatch: pytest.MonkeyPatch) -> 
     async def _forbidden_consensus(symbol: str, current_price: float | None = None):
         raise AssertionError("CN consensus must not run on US-only runs")
 
+    us_consensus_calls: list[str] = []
+
+    async def _spy_us_consensus(symbol: str):
+        us_consensus_calls.append(symbol)
+        return None  # no coverage → no block, key stays absent
+
     _patch_collection(monkeypatch, {"AAPL": {"sector": "Technology"}})
     monkeypatch.setattr(get_settings(), "option_signals_enabled", True)
     monkeypatch.setattr(
@@ -195,12 +226,17 @@ async def test_us_only_run_skips_option_leg(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(data_agent_mod, "fetch_benchmark_history", _fake_market_benchmark)
     monkeypatch.setattr(data_agent_mod, "fetch_cn_sector_benchmark", _forbidden_cn)
     monkeypatch.setattr(data_agent_mod, "fetch_cn_consensus", _forbidden_consensus)
+    monkeypatch.setattr(data_agent_mod, "fetch_us_consensus", _spy_us_consensus)
 
     agent = data_agent_mod.DataCollectionAgent(name="data_collection")
     result = await agent.execute({"symbols": ["AAPL"]})
 
     assert option_calls == []
     assert "option_snapshot" not in result
+    # The US consensus leg DOES run on US-only runs — dispatch is by market,
+    # not a CN-only gate. No coverage (None) → the key stays absent.
+    assert us_consensus_calls == ["AAPL"]
+    assert "consensus" not in result["financial_data"]["AAPL"]
 
 
 async def test_disabled_toggle_skips_option_leg(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,20 +1,33 @@
-"""Analyst-consensus annotation layer for CN symbols (iteration 163).
+"""Analyst-consensus annotation layer, dispatched by market.
 
-Two akshare endpoints (shapes verified live 2026-09-30, akshare 1.18.96):
+CN twin (iteration 163) — two akshare endpoints (shapes verified live
+2026-09-30, akshare 1.18.96):
     stock_profit_forecast_ths(symbol, indicator='预测年报每股收益')
         [年度, 预测机构数, 最小值, 均值, 最大值, 行业平均数]
     stock_institute_recommend_detail(symbol)
         [股票代码, 股票名称, 目标价, 最新评级, 评级机构, 分析师, 行业, 评级日期]
 
-Layered like option_signals (iteration 155):
-    fetch layer  — never-raise akshare seam, lazy import, raw frames only
-    cache layer  — raw (forecast_df, ratings_df) tuple under consensus_raw:{symbol},
-                   30-min TTL; total failure is never cached (retried), an empty
-                   frame IS cached (no coverage is a valid provider answer)
-    pure layer   — consensus_annotation builds eps_forecast / target_price /
-                   ratings blocks from the raw frames plus the caller's price
+US twin (iteration 167) — Finnhub /stock/recommendation: monthly analyst
+band snapshots (strongBuy/buy/hold/sell/strongSell); the latest period
+wins (max period string — feed order is never trusted), bands map onto
+the same canonical five-label scale. Ratings-only: the endpoint carries
+no hard-number evidence and takes no price input, so a US block never
+has eps_forecast/target_price and its status is always
+"insufficient_data".
+
+Layered like option_signals (iteration 155) — both twins:
+    fetch layer  — never-raise seams, raw payloads only (lazy akshare
+                   frames / the Finnhub items list via _finnhub_get)
+    cache layer  — raw payloads under consensus_raw:{symbol} /
+                   consensus_us_raw:{symbol}, 30-min TTL; total failure is never
+                   cached (retried), an empty payload IS cached (no coverage is
+                   a valid provider answer)
+    pure layer   — consensus_annotation / us_consensus_annotation build the
+                   blocks from raw payloads (the CN one plus the caller's price)
     health layer — record_provider_outcome per endpoint seam ("ths-forecast" /
-                   "sina-ratings"), empty frame = ok (data absence, not failure)
+                   "sina-ratings" / "finnhub-recommendation"), empty payload =
+                   ok (data absence, not failure); keyless Finnhub never records
+                   (iteration 104 convention)
 
 The annotation is PURE: nothing in the scoring, risk or decision paths may
 read it (the liquidity/sector_relative/option_implied convention). Caching
@@ -32,7 +45,9 @@ from typing import Any
 
 import pandas as pd
 
+from app.config import get_settings
 from app.tools.data.fetcher_common import _cache_get, _cache_set
+from app.tools.data.fetcher_finnhub import _finnhub_get
 from app.tools.data.provider_health import record_provider_outcome
 
 # Ratings older than this are not observations — analysts re-rate, and a
@@ -48,6 +63,18 @@ MIN_TARGET_OBSERVATIONS = 3
 _RATING_LABELS = ("买入", "增持", "中性", "减持", "卖出")
 
 _RAW_CACHE_PREFIX = "consensus_raw:"
+_US_CACHE_PREFIX = "consensus_us_raw:"
+
+# Finnhub band keys (strongBuy..strongSell) onto the canonical scale.
+# Order-preserving map; count ties ride _RATING_LABELS's bullish-first
+# order, same as the CN _ratings_block.
+_US_BAND_TO_LABEL = {
+    "strongBuy": "买入",
+    "buy": "增持",
+    "hold": "中性",
+    "sell": "减持",
+    "strongSell": "卖出",
+}
 
 
 def _to_float(value: Any) -> float | None:
@@ -258,3 +285,60 @@ async def fetch_cn_consensus(
         _cache_set(cache_key, raw)
     forecast_df, ratings_df = raw
     return consensus_annotation(forecast_df, ratings_df, current_price)
+
+
+def us_consensus_annotation(items: Any) -> dict[str, Any] | None:
+    """Ratings-only US block from Finnhub band snapshots; None when empty.
+
+    The feed is a list of monthly snapshots — the max period string wins,
+    never the feed order. Ratings-only evidence can't justify "ok", so a
+    US block is always "insufficient_data" (the counts still render).
+    """
+    if not isinstance(items, list) or not items:
+        return None
+    rows = [r for r in items if isinstance(r, dict)]
+    if not rows:
+        return None
+    latest = max(rows, key=lambda r: str(r.get("period") or ""))
+    counts = {label: _to_int(latest.get(band)) or 0 for band, label in _US_BAND_TO_LABEL.items()}
+    total = sum(counts.values())
+    if total < 1:
+        return None
+    dominant = max(_RATING_LABELS, key=lambda label: counts[label])
+    return {
+        "status": "insufficient_data",
+        "ratings": {"counts": counts, "dominant": dominant, "total": total},
+    }
+
+
+def _sync_fetch_us_raw(symbol: str) -> list[Any] | None:
+    """Fetch the Finnhub recommendation snapshots; never raises.
+
+    An empty list is a provider "ok" (no coverage for this symbol); None
+    is a failure. Keyless is a configuration state, not a provider
+    failure — the seam then returns None without recording (iteration
+    104 convention: keyless layers never reach the health counters).
+    """
+    items = _finnhub_get("/stock/recommendation", {"symbol": symbol})
+    if items is not None:
+        record_provider_outcome("finnhub-recommendation", "ok")
+    elif get_settings().finnhub_api_key:
+        record_provider_outcome("finnhub-recommendation", "fail", "request failed or no data")
+    return items
+
+
+async def fetch_us_consensus(symbol: str) -> dict[str, Any] | None:
+    """Cached US consensus annotation for a non-CN symbol; never raises.
+
+    Raw snapshots are cached for 30 minutes; total failure (None) is
+    retried on the next call, never cached. No price argument — the
+    endpoint carries none, so there is no upside math to keep fresh.
+    """
+    cache_key = f"{_US_CACHE_PREFIX}{symbol}"
+    raw = _cache_get(cache_key)
+    if raw is None:
+        raw = await asyncio.to_thread(_sync_fetch_us_raw, symbol)
+        if raw is None:
+            return None  # total failure — retried next call, never cached
+        _cache_set(cache_key, raw)  # empty list IS cached (no coverage is a valid answer)
+    return us_consensus_annotation(raw)

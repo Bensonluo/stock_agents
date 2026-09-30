@@ -1,9 +1,10 @@
-"""CN analyst-consensus wiring on the ReAct seam (_fetch_and_split).
+"""Analyst-consensus wiring on the ReAct seam (_fetch_and_split).
 
 The pipeline data agent attaches consensus as its fifth tail gather leg;
 this file pins the ReAct twin (_attach_consensus) — both return points of
-_fetch_and_split carry the block, the price rides from the market block,
-and the disabled toggle / non-CN symbol leaves financial_data untouched.
+_fetch_and_split carry the block, 6-digit symbols route to the CN seam
+(with the market block's price) while every other symbol routes to the
+US ratings seam, and the disabled toggle leaves financial_data untouched.
 """
 
 from __future__ import annotations
@@ -20,10 +21,27 @@ _CONSENSUS_BLOCK: dict[str, Any] = {
     "eps_forecast": {"year1": 2026, "eps_mean": 1.53},
 }
 
+_US_CONSENSUS_BLOCK: dict[str, Any] = {
+    "status": "insufficient_data",
+    "ratings": {
+        "counts": {"买入": 12, "增持": 8, "中性": 0, "减持": 0, "卖出": 0},
+        "dominant": "买入",
+        "total": 20,
+    },
+}
+
 
 def _consensus_spy(seen: list[tuple[str, float | None]], block: dict[str, Any] | None):
     async def _fake(symbol: str, current_price: float | None = None):
         seen.append((symbol, current_price))
+        return block
+
+    return _fake
+
+
+def _us_consensus_spy(seen: list[str], block: dict[str, Any] | None):
+    async def _fake(symbol: str):
+        seen.append(symbol)
         return block
 
     return _fake
@@ -131,8 +149,12 @@ async def test_none_block_leaves_financial_untouched(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_us_symbol_and_toggle_off_never_fetch(monkeypatch) -> None:
-    seen: list[tuple[str, float | None]] = []
+async def test_market_dispatch_and_toggle_off_never_fetch(monkeypatch) -> None:
+    """6-digit symbols route to the CN seam with the live price; every other
+    symbol routes to the US ratings seam (no price argument — the Finnhub
+    endpoint carries none); the disabled toggle fetches neither seam."""
+    cn_seen: list[tuple[str, float | None]] = []
+    us_seen: list[str] = []
 
     async def fake_snapshot(symbol: str) -> dict:
         return {
@@ -147,13 +169,23 @@ async def test_us_symbol_and_toggle_off_never_fetch(monkeypatch) -> None:
 
     monkeypatch.setattr(auto_tools, "fetch_stock_data", fake_snapshot)
     _quiet_tail(monkeypatch)
-    monkeypatch.setattr(auto_tools, "fetch_cn_consensus", _consensus_spy(seen, _CONSENSUS_BLOCK))
+    monkeypatch.setattr(auto_tools, "fetch_cn_consensus", _consensus_spy(cn_seen, _CONSENSUS_BLOCK))
+    monkeypatch.setattr(
+        auto_tools, "fetch_us_consensus", _us_consensus_spy(us_seen, _US_CONSENSUS_BLOCK)
+    )
 
     data = await auto_tools._fetch_and_split("AAPL")
-    assert seen == []
-    assert "consensus" not in data["financial_data"]["AAPL"]
+    assert us_seen == ["AAPL"]  # US symbol → US seam, block attached
+    assert cn_seen == []
+    assert data["financial_data"]["AAPL"]["consensus"] == _US_CONSENSUS_BLOCK
+
+    data = await auto_tools._fetch_and_split("600000")
+    assert cn_seen == [("600000", 200.0)]  # CN symbol → CN seam with price
+    assert us_seen == ["AAPL"]  # never routed to the US seam
+    assert data["financial_data"]["600000"]["consensus"] == _CONSENSUS_BLOCK
 
     monkeypatch.setattr(get_settings(), "consensus_enabled", False)
-    data = await auto_tools._fetch_and_split("600000")
-    assert seen == []
-    assert "consensus" not in data["financial_data"]["600000"]
+    await auto_tools._fetch_and_split("AAPL")
+    await auto_tools._fetch_and_split("600000")
+    assert us_seen == ["AAPL"]  # toggle off → neither seam fires
+    assert cn_seen == [("600000", 200.0)]

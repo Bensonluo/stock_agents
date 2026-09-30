@@ -105,6 +105,11 @@ async def test_auto_tool_requests_three_year_fallback_history(monkeypatch) -> No
 
     monkeypatch.setattr(auto_tools, "fetch_benchmark_history", no_benchmark)
 
+    async def no_us_consensus(symbol: str):
+        return None  # offline test: no US analyst coverage is the degraded case
+
+    monkeypatch.setattr(auto_tools, "fetch_us_consensus", no_us_consensus)
+
     await auto_tools._fetch_and_split("AAPL")
 
     assert requested_periods == ["3y"]

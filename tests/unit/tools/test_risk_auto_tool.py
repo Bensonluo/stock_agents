@@ -99,6 +99,11 @@ async def test_fetch_and_split_attaches_benchmark(monkeypatch) -> None:
     monkeypatch.setattr(auto_tools, "fetch_stock_data", fake_snapshot)
     monkeypatch.setattr(auto_tools, "fetch_benchmark_history", fake_bench)
 
+    async def no_us_consensus(symbol: str):
+        return None  # offline test: no US analyst coverage is the degraded case
+
+    monkeypatch.setattr(auto_tools, "fetch_us_consensus", no_us_consensus)
+
     data = await auto_tools._fetch_and_split("TEST")
 
     assert data["market_data"]["TEST"]["benchmark_historical_data"]["symbol"] == "^GSPC"

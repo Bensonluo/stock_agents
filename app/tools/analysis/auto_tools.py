@@ -38,7 +38,7 @@ from app.tools.analysis.technical import (
     _generate_signals,
     _to_dataframe,
 )
-from app.tools.data.consensus import fetch_cn_consensus
+from app.tools.data.consensus import fetch_cn_consensus, fetch_us_consensus
 from app.tools.data.fetcher import (
     BENCHMARK_TICKERS,
     benchmark_ticker_for,
@@ -148,17 +148,23 @@ async def _attach_benchmark(market: dict[str, Any], symbol: str) -> dict[str, An
 async def _attach_consensus(
     symbol: str, financial: dict[str, Any], current_price: Any
 ) -> dict[str, Any]:
-    """CN analyst-consensus twin of the pipeline's fifth tail leg.
+    """Analyst-consensus twin of the pipeline's fifth tail leg, dispatched
+    by market.
 
-    Same contract as the data agent: 6-digit symbol + enabled toggle -> the
-    consensus block rides financial_data[symbol]["consensus"]; disabled
-    toggle, no coverage, or total fetch failure -> financial unchanged (key
-    absent, the option/benchmark convention). fetch_cn_consensus is a
-    never-raise seam, so there is no outer try — same as _attach_benchmark.
+    Same contract as the data agent: enabled toggle -> the consensus block
+    rides financial_data[symbol]["consensus"]; disabled toggle, no
+    coverage, or total fetch failure -> financial unchanged (key absent,
+    the option/benchmark convention). 6-digit symbols take the CN price
+    seam (THS + Sina); every other symbol takes the US ratings-only seam
+    (Finnhub — no price argument, the endpoint carries none). Both seams
+    are never-raise, so there is no outer try — same as _attach_benchmark.
     """
-    if not (get_settings().consensus_enabled and symbol.isdigit() and len(symbol) == 6):
+    if not get_settings().consensus_enabled:
         return financial
-    block = await fetch_cn_consensus(symbol, current_price)
+    if symbol.isdigit() and len(symbol) == 6:
+        block = await fetch_cn_consensus(symbol, current_price)
+    else:
+        block = await fetch_us_consensus(symbol)
     if block is not None:
         return {**financial, "consensus": block}
     return financial

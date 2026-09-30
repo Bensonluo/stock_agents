@@ -198,6 +198,8 @@ class TestSectorBenchmarkAttach:
         # would otherwise depend on the host failing to reach East Money.
         monkeypatch.setattr(module, "fetch_cn_sector_benchmark", no_cn_fetch)
         monkeypatch.setattr(module, "fetch_cn_consensus", no_cn_fetch)
+        # Same contract for the US ratings seam (Finnhub) — offline by design.
+        monkeypatch.setattr(module, "fetch_us_consensus", no_cn_fetch)
 
         result = await agent.execute({"symbols": ["AAPL", "MSFT", "600000"]})
 
@@ -229,6 +231,11 @@ class TestSectorBenchmarkAttach:
             return {"symbol": ticker, "dates": ["2026-01-02"], "close": [100.0]}
 
         monkeypatch.setattr(module, "fetch_benchmark_history", half_failing)
+
+        async def no_us_consensus(symbol, current_price=None):
+            return None  # offline test: consensus absence is the degraded case
+
+        monkeypatch.setattr(module, "fetch_us_consensus", no_us_consensus)
 
         result = await agent.execute({"symbols": ["AAPL"]})
 

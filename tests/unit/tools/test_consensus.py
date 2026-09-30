@@ -23,11 +23,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from app.config import get_settings
 from app.tools.data.consensus import (
     CONSENSUS_RATING_WINDOW_DAYS,
     MIN_TARGET_OBSERVATIONS,
     consensus_annotation,
     fetch_cn_consensus,
+    fetch_us_consensus,
+    us_consensus_annotation,
 )
 from app.tools.data.provider_health import provider_health_snapshot, reset_provider_health
 
@@ -69,7 +72,8 @@ def _clear_consensus_cache():
     """Isolation: the shared fetcher cache is module-global (iteration 64)."""
     from app.tools.data import fetcher_common
 
-    for key in [k for k in fetcher_common._cache if k.startswith("consensus_raw:")]:
+    prefixes = ("consensus_raw:", "consensus_us_raw:")
+    for key in [k for k in fetcher_common._cache if k.startswith(prefixes)]:
         del fetcher_common._cache[key]
     yield
 
@@ -380,3 +384,161 @@ async def test_fetch_empty_frames_are_cached_answer(monkeypatch: pytest.MonkeyPa
     snap = provider_health_snapshot()["providers"]
     assert snap["ths-forecast"]["ok"] == 1
     assert snap["sina-ratings"]["ok"] == 1
+
+
+# --------------------------------------------------------------------------
+# US twin (iteration 167): us_consensus_annotation / fetch_us_consensus
+# --------------------------------------------------------------------------
+
+
+def _us_items(period: str = "2026-09-01", **bands: int) -> dict:
+    """One Finnhub /stock/recommendation snapshot row."""
+    row = {
+        "period": period,
+        "strongBuy": 0,
+        "buy": 0,
+        "hold": 0,
+        "sell": 0,
+        "strongSell": 0,
+        "symbol": "AAPL",
+    }
+    row.update(bands)
+    return row
+
+
+def test_us_annotation_maps_five_bands() -> None:
+    """Full-band payload: counts land on the canonical CN scale, ratings-only
+    never claims "ok" (the endpoint has no hard-number evidence), and no
+    unconsumed keys ride along on the block."""
+    block = us_consensus_annotation([_us_items(strongBuy=12, buy=8, hold=3, sell=1)])
+    assert block is not None
+    assert block["status"] == "insufficient_data"
+    assert block["ratings"]["counts"] == {
+        "买入": 12,
+        "增持": 8,
+        "中性": 3,
+        "减持": 1,
+        "卖出": 0,
+    }
+    assert block["ratings"]["dominant"] == "买入"
+    assert block["ratings"]["total"] == 24
+    assert set(block) == {"status", "ratings"}
+
+
+def test_us_annotation_latest_period_wins_regardless_of_order() -> None:
+    """Finnhub returns monthly snapshots latest-first, but the pure layer
+    must not rely on that ordering — the max period string wins."""
+    block = us_consensus_annotation(
+        [
+            _us_items("2026-07-01", buy=2),
+            _us_items("2026-09-01", buy=7, hold=5, sell=5, strongSell=3),
+            _us_items("2026-08-01", buy=1),
+        ]
+    )
+    assert block is not None
+    assert block["ratings"]["total"] == 20
+    assert block["ratings"]["counts"]["增持"] == 7  # buy band of the 09-01 snapshot
+
+
+def test_us_annotation_tie_breaks_to_more_bullish() -> None:
+    block = us_consensus_annotation([_us_items(buy=5, sell=5)])
+    assert block is not None
+    assert block["ratings"]["dominant"] == "增持"
+
+
+def test_us_annotation_rejects_non_list_or_empty_inputs() -> None:
+    assert us_consensus_annotation([]) is None
+    assert us_consensus_annotation({"not": "a list"}) is None
+    assert us_consensus_annotation(None) is None
+
+
+def test_us_annotation_rejects_all_zero_or_bandless_rows() -> None:
+    assert us_consensus_annotation([_us_items()]) is None  # all-zero bands
+    assert us_consensus_annotation([{"period": "2026-09-01", "symbol": "AAPL"}]) is None
+
+
+def test_us_annotation_filters_non_dict_rows() -> None:
+    block = us_consensus_annotation(["garbage", None, _us_items(buy=2)])
+    assert block is not None
+    assert block["ratings"]["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_us_fetch_success_caches_raw(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One Finnhub round-trip per 30-min window; both calls return the same
+    annotation from the cached raw snapshots."""
+    calls: list = []
+    reset_provider_health()
+
+    def _fake_get(path, params):
+        calls.append((path, params))
+        return [_us_items(strongBuy=12, buy=8)]
+
+    monkeypatch.setattr(get_settings(), "finnhub_api_key", "test-key")
+    monkeypatch.setattr("app.tools.data.consensus._finnhub_get", _fake_get)
+
+    first = await fetch_us_consensus("AAPL")
+    assert first is not None
+    assert first["ratings"]["total"] == 20
+    second = await fetch_us_consensus("AAPL")
+    assert second == first
+    assert calls == [("/stock/recommendation", {"symbol": "AAPL"})]
+
+    snap = provider_health_snapshot()["providers"]
+    assert snap["finnhub-recommendation"]["ok"] == 1
+    assert snap["finnhub-recommendation"]["fail"] == 0
+
+
+@pytest.mark.asyncio
+async def test_us_fetch_total_failure_is_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list = []
+    reset_provider_health()
+
+    def _fake_get(path, params):
+        calls.append((path, params))
+        return None
+
+    monkeypatch.setattr(get_settings(), "finnhub_api_key", "test-key")
+    monkeypatch.setattr("app.tools.data.consensus._finnhub_get", _fake_get)
+
+    assert await fetch_us_consensus("AAPL") is None
+    assert await fetch_us_consensus("AAPL") is None
+    assert len(calls) == 2  # failure retried, never cached
+
+    snap = provider_health_snapshot()["providers"]
+    assert snap["finnhub-recommendation"]["fail"] == 2
+
+
+@pytest.mark.asyncio
+async def test_us_fetch_empty_list_is_cached_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No coverage is a valid provider answer (thin coverage, non-US
+    listings): the empty list caches like a success so the endpoint is
+    not re-hit on every call."""
+    calls: list = []
+    reset_provider_health()
+
+    def _fake_get(path, params):
+        calls.append((path, params))
+        return []
+
+    monkeypatch.setattr(get_settings(), "finnhub_api_key", "test-key")
+    monkeypatch.setattr("app.tools.data.consensus._finnhub_get", _fake_get)
+
+    assert await fetch_us_consensus("0700.HK") is None
+    assert await fetch_us_consensus("0700.HK") is None
+    assert len(calls) == 1  # second call served from the raw cache
+
+    snap = provider_health_snapshot()["providers"]
+    assert snap["finnhub-recommendation"]["ok"] == 1
+
+
+@pytest.mark.asyncio
+async def test_us_fetch_keyless_never_records(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keyless is a configuration state, not a provider failure — the seam
+    returns None without a network call and without recording (the
+    iteration 104 keyless convention)."""
+    reset_provider_health()
+    monkeypatch.setattr(get_settings(), "finnhub_api_key", None)
+
+    assert await fetch_us_consensus("AAPL") is None
+    assert provider_health_snapshot()["providers"] == {}

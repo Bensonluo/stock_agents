@@ -222,6 +222,12 @@ class TestFetchAndSplitWiring:
         monkeypatch.setattr(auto_tools, "fetch_benchmark_history", no_bench)
         monkeypatch.setattr(auto_tools, "fetch_cn_sector_benchmark", no_cn_bench)
 
+        async def no_consensus(symbol, current_price=None):
+            return None  # offline test: consensus absence is the degraded case
+
+        monkeypatch.setattr(auto_tools, "fetch_cn_consensus", no_consensus)
+        monkeypatch.setattr(auto_tools, "fetch_us_consensus", no_consensus)
+
     @pytest.mark.asyncio
     async def test_snapshot_path_augments_cn_news(self, monkeypatch) -> None:
         self._patch_network(monkeypatch)

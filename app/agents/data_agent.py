@@ -30,7 +30,10 @@ _akshare_semaphore = asyncio.Semaphore(5)
 # provider chain emits the same metrics); the three pure re-exports
 # (F401-suppressed) keep this module the single import point for the
 # agent's call sites and its existing tests.
-from app.tools.data.consensus import fetch_cn_consensus  # noqa: E402
+from app.tools.data.consensus import (  # noqa: E402
+    fetch_cn_consensus,
+    fetch_us_consensus,
+)
 from app.tools.data.fetcher import (  # noqa: E402
     BENCHMARK_TICKERS,
     DEFAULT_HISTORY_DAYS,
@@ -433,9 +436,11 @@ class DataCollectionAgent(BaseAgent):
         # regression), SPDR sector benchmarks, CN industry benchmarks, the
         # CN option snapshot (SSE per-contract IV/Greeks + volume PCR +
         # QVIX, iteration 155: market-level PURE ANNOTATION, the risk stage
-        # labels 恐慌/中性/自满 and nothing scores it) and the CN analyst
-        # consensus (iteration 163: THS EPS forecasts + Sina ratings under
-        # financial_data[symbol]["consensus"], equally pure) — read only
+        # labels 恐慌/中性/自满 and nothing scores it) and the analyst
+        # consensus (iteration 163 CN: THS EPS forecasts + Sina ratings;
+        # iteration 167 US: Finnhub ratings-only — dispatched by market,
+        # both under financial_data[symbol]["consensus"], equally pure) —
+        # read only
         # `symbols` and the already-collected `market_data`, never each
         # other's results, so they run in ONE gather: worst-case wall time
         # is the slowest leg, not the sum. Writes stay disjoint: the market
@@ -446,6 +451,10 @@ class DataCollectionAgent(BaseAgent):
         # incidental); a failed fetch on any leg just leaves its key
         # absent, exactly as before the gather existed.
         cn_symbols = [s for s in market_data if benchmark_ticker_for(s) == BENCHMARK_TICKERS["cn"]]
+        # Non-CN symbols (US + HK) take the ratings-only US consensus seam;
+        # HK listings get an empty Finnhub answer, which caches and yields
+        # no block — graceful, like any uncovered symbol.
+        us_symbols = [s for s in market_data if benchmark_ticker_for(s) != BENCHMARK_TICKERS["cn"]]
         tickers = sorted({benchmark_ticker_for(s) for s in symbols})
         sector_tickers = {
             s: sector_benchmark_ticker((data or {}).get("sector"))
@@ -454,7 +463,7 @@ class DataCollectionAgent(BaseAgent):
         }
         wanted = sorted({t for t in sector_tickers.values() if t})
         want_options = bool(get_settings().option_signals_enabled and cn_symbols)
-        want_consensus = bool(get_settings().consensus_enabled and cn_symbols)
+        want_consensus = bool(get_settings().consensus_enabled and (cn_symbols or us_symbols))
         fetched, sector_fetched, cn_benchmarks, option_snapshot, consensus_blocks = (
             await asyncio.gather(
                 asyncio.gather(*(fetch_benchmark_history(t) for t in tickers)),
@@ -466,7 +475,8 @@ class DataCollectionAgent(BaseAgent):
                         *(
                             fetch_cn_consensus(s, (market_data.get(s) or {}).get("current_price"))
                             for s in cn_symbols
-                        )
+                        ),
+                        *(fetch_us_consensus(s) for s in us_symbols),
                     )
                     if want_consensus
                     else _no_consensus_blocks()
@@ -503,11 +513,13 @@ class DataCollectionAgent(BaseAgent):
             if bench and market_data[s]:
                 market_data[s]["sector_benchmark_historical_data"] = bench
 
-        # CN analyst consensus: rides the same financial_data map the
-        # AkShare merge fills (per-key merge keeps the consensus sibling
-        # alive); a None block (no coverage / total fetch failure) leaves
-        # the key absent — the option/benchmark absence convention.
-        for s, block in zip(cn_symbols, consensus_blocks):
+        # Analyst consensus (market-dispatched): rides the same
+        # financial_data map the AkShare merge fills (per-key merge keeps
+        # the consensus sibling alive); a None block (no coverage / total
+        # fetch failure) leaves the key absent — the option/benchmark
+        # absence convention. CN generators run before US in the gather, so
+        # the zip order matches [*cn_symbols, *us_symbols].
+        for s, block in zip([*cn_symbols, *us_symbols], consensus_blocks):
             if block is not None:
                 financial_data[s] = {**(financial_data.get(s) or {}), "consensus": block}
 
