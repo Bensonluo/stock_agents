@@ -19,6 +19,7 @@ from app.analysis.fundamental import compact_quality_view
 from app.analysis.ic import STATIC_DIMENSION_WEIGHTS
 from app.analysis.portfolio import suggest_weights
 from app.analysis.regime import decision_warnings, option_regime_warnings, regime_warnings
+from app.analysis.risk import risk_evidence
 from app.analysis.technical import compact_weekly_view
 from app.analysis.valuation import compact_valuation_view
 
@@ -26,6 +27,35 @@ from app.analysis.valuation import compact_valuation_view
 # Three years of closes (~750 floats) would bloat every response; a sparkline
 # only needs the recent tail.
 SPARK_BARS = 90
+
+# Cap for long free-text fields (business summary, LLM news verdict) riding
+# the report payload — the wire carries the gist, the full text lives
+# upstream in the analysis data.
+TEXT_CAP_CHARS = 200
+
+
+def _cap_text(text: Any) -> str | None:
+    """Free text truncated to ``TEXT_CAP_CHARS``; None when absent."""
+    if not isinstance(text, str) or not text:
+        return None
+    return text[:TEXT_CAP_CHARS]
+
+
+def _as_of_datetime(value: Any) -> datetime | None:
+    """market_data's ``as_of`` (ISO date/datetime string) as a datetime.
+
+    risk_evidence's evidence records need a datetime cutoff — its date
+    parsing path feeds ``date`` objects into ``make_evidence``, which calls
+    ``.date()`` on them. None when nothing parseable is given.
+    """
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
 
 
 def _price_spark(history: Any) -> list[float] | None:
@@ -132,13 +162,34 @@ class ReportService:
         )
         decisions = nested_decisions or data.get("decisions") or {}
 
+        # ReAct's analyze_valuation parks its per-symbol scenario results in a
+        # top-level data["valuation_analysis"] map that this normalizer used to
+        # ignore — ReAct reports shipped without valuation scenarios. Route
+        # each result into the fundamental entry under the pipeline's
+        # valuation_scenarios key (same shape: the full engine result that
+        # compact_valuation_view reads). Entries are copied, never mutated in
+        # place — _normalize runs more than once per report on the same data.
+        fundamental = data.get("fundamental_analysis") or {}
+        valuation_bucket = data.get("valuation_analysis")
+        if isinstance(valuation_bucket, dict) and valuation_bucket:
+            fundamental = dict(fundamental)
+            for symbol in symbols:
+                result = valuation_bucket.get(symbol)
+                if not isinstance(result, dict):
+                    continue
+                entry = fundamental.get(symbol)
+                entry = dict(entry) if isinstance(entry, dict) else {}
+                if not entry.get("valuation_scenarios"):
+                    entry["valuation_scenarios"] = result
+                fundamental[symbol] = entry
+
         return {
             "query": data.get("query", ""),
             "symbols": symbols,
             "market_data": market,
             "financial_data": data.get("financial_data") or {},
             "technical_analysis": data.get("technical_analysis") or {},
-            "fundamental_analysis": data.get("fundamental_analysis") or {},
+            "fundamental_analysis": fundamental,
             "sentiment_flat": sentiment,
             "overall_sentiment": overall_sentiment,
             "risk_flat": risk,
@@ -170,6 +221,15 @@ class ReportService:
                 "currency": mkt.get("currency"),
                 "market_cap": mkt.get("market_cap"),
                 "as_of": mkt.get("as_of"),
+                # Snapshot depth the data agent already mapped (52-week band,
+                # average volume, prior close, industry, business summary) but
+                # the overview discarded — same pure passthrough as above.
+                "previous_close": mkt.get("previous_close"),
+                "avg_volume": mkt.get("avg_volume"),
+                "52_week_high": mkt.get("52_week_high"),
+                "52_week_low": mkt.get("52_week_low"),
+                "industry": mkt.get("industry"),
+                "description": _cap_text(mkt.get("description")),
             }
             # Scheduled-uncertainty disclosure (annotation-only, same
             # convention as liquidity/sector_relative): the composite score
@@ -269,6 +329,33 @@ class ReportService:
                 "valuation_scenarios": compact_valuation_view(analysis.get("valuation_scenarios")),
                 "quality": compact_quality_view(analysis.get("quality")),
             }
+            # Depth passthrough: the scorer computed a numeric score and the
+            # raw metric values behind every dimension rating; dropping them
+            # made each rating un-auditable on the wire. Optional-key
+            # convention: absent or insufficient_data dimensions add no keys
+            # (the scorer's insufficient path reports a hardcoded score 0 —
+            # absence, not a real zero).
+            for dim in ("profitability", "valuation", "financial_health"):
+                block = analysis.get(dim)
+                if not isinstance(block, dict) or block.get("status") == "insufficient_data":
+                    continue
+                dim_score = block.get("score")
+                if isinstance(dim_score, int | float):
+                    by_symbol[symbol][f"{dim}_score"] = dim_score
+                details = block.get("details")
+                if isinstance(details, dict) and details:
+                    by_symbol[symbol][f"{dim}_details"] = details
+            growth = analysis.get("growth")
+            if (
+                isinstance(growth, dict)
+                and growth.get("status") != "insufficient_data"
+                and growth.get("score") is not None
+            ):
+                by_symbol[symbol]["growth"] = {
+                    "score": growth.get("score"),
+                    "rating": growth.get("rating"),
+                    "details": growth.get("details") or {},
+                }
             # CN analyst consensus rides the raw financial_data map (the data
             # agent attaches it there per symbol); the fundamental score never
             # reads it — the same annotation-only passthrough as the risk
@@ -285,15 +372,34 @@ class ReportService:
 
     @classmethod
     def _sentiment(cls, c: dict[str, Any]) -> dict[str, Any]:
-        by_symbol = {
-            symbol: {
+        by_symbol: dict[str, Any] = {}
+        for symbol, analysis in c["sentiment_flat"].items():
+            entry: dict[str, Any] = {
                 "sentiment": analysis.get("sentiment", "neutral"),
                 "score": analysis.get("score", 0),
                 "trend": analysis.get("trend", "stable"),
                 "article_count": analysis.get("article_count", 0),
             }
-            for symbol, analysis in c["sentiment_flat"].items()
-        }
+            # Per-article scores and the LLM verdict are computed upstream then
+            # dropped; both are cheap to carry and render on the card. Empty
+            # score lists add nothing, and the LLM summary rides only when
+            # short (capped like the overview business summary) — the full
+            # text stays upstream.
+            recent_scores = analysis.get("recent_scores")
+            if isinstance(recent_scores, list) and recent_scores:
+                entry["recent_scores"] = recent_scores
+            llm = analysis.get("llm_analysis")
+            if isinstance(llm, dict) and llm:
+                compact: dict[str, Any] = {}
+                for key in ("overall_sentiment", "confidence"):
+                    if llm.get(key) is not None:
+                        compact[key] = llm[key]
+                summary = _cap_text(llm.get("summary"))
+                if summary:
+                    compact["summary"] = summary
+                if compact:
+                    entry["llm_analysis"] = compact
+            by_symbol[symbol] = entry
         return {"by_symbol": by_symbol, "overall": c["overall_sentiment"]}
 
     @classmethod
@@ -329,6 +435,29 @@ class ReportService:
                 block = analysis.get(key)
                 if isinstance(block, dict):
                     by_symbol[symbol][key] = block
+            # Deep tail/relative metrics the engine computed but the card
+            # dropped. Only present when actually measured — degraded
+            # entries stay lean (same convention as the blocks above).
+            for key in (
+                "var_99",
+                "cvar_95",
+                "sortino",
+                "downside_risk",
+                "volatility_percentile_20d",
+                "r_squared",
+                "correlation",
+            ):
+                value = metrics.get(key)
+                if isinstance(value, int | float):
+                    by_symbol[symbol][key] = value
+            # Beta-scaled market-shock impacts: compact scenario→implied
+            # move map. Without beta the engine honestly reports
+            # insufficient_data — nothing to fabricate, key omitted.
+            stress = analysis.get("stress_scenarios")
+            if isinstance(stress, dict):
+                scenarios = stress.get("scenarios")
+                if isinstance(scenarios, dict) and scenarios:
+                    by_symbol[symbol]["stress_scenarios"] = scenarios
 
         overall = c["overall_risk_level"]
         if c["overall_risk_level"] == "medium" and scores:
@@ -366,6 +495,30 @@ class ReportService:
                 ).get("evidence")
                 or []
             )
+            # The risk engine's evidence generator (exported but previously
+            # uncalled) pins the headline risk numbers to their formulas.
+            # market_data's as_of is the cutoff those metrics were computed
+            # at; with no usable cutoff the generator returns nothing by
+            # itself. Metrics are filtered to finite numerics so a malformed
+            # block can never raise inside the report build.
+            risk_metrics = (c["risk_flat"].get(symbol) or {}).get("metrics")
+            if isinstance(risk_metrics, dict) and risk_metrics:
+                numeric = {
+                    key: value
+                    for key, value in risk_metrics.items()
+                    if isinstance(value, int | float) and math.isfinite(value)
+                }
+                if numeric:
+                    records += [
+                        item.model_dump(mode="json")
+                        for item in risk_evidence(
+                            symbol=symbol,
+                            metrics=numeric,
+                            as_of=_as_of_datetime(
+                                (c["market_data"].get(symbol) or {}).get("as_of")
+                            ),
+                        )
+                    ]
             if not records:
                 # Degraded symbols (e.g. thin AkShare A-share payloads with no
                 # historical data) can lack analysis output entirely; surface
