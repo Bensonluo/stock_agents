@@ -547,8 +547,9 @@ class ReportService:
         render an empty shell section.
         """
         by_symbol: dict[str, Any] = {}
+        financial_all = c.get("financial_data") or {}
         for symbol in c["symbols"]:
-            financial = c["financial_data"].get(symbol) or {}
+            financial = financial_all.get(symbol) or {}
             view = build_catalysts_view(
                 symbol,
                 financial.get("event_calendar"),
@@ -557,6 +558,120 @@ class ReportService:
             if view["events"] or view["earnings_surprise"]:
                 by_symbol[symbol] = view
         return {"by_symbol": by_symbol} if by_symbol else {}
+
+    # 决策期限结构: 窗口(天)与各窗口的主导分析层 — 固定映射、显式声明。
+    # 短期由价格动量与消息情绪主导, 中期叠加基本面, 三个月窗口基本面与风险
+    # 接管。这不是给每个期限另编一套动作(会与唯一决策自相矛盾), 而是解释
+    # 同一个决策在不同期限下的依据结构、窗口内事件与观察点。
+    HORIZON_WINDOWS = {"1w": 7, "1m": 31, "3m": 92}
+    HORIZON_DRIVERS = {
+        "1w": ("technical", "sentiment"),
+        "1m": ("technical", "fundamental", "sentiment"),
+        "3m": ("fundamental", "risk"),
+    }
+
+    @classmethod
+    def _horizon_views(cls, c: dict[str, Any]) -> dict[str, Any]:
+        """Per-horizon term structure of the single decision, per symbol.
+
+        Each window states which analysis layers dominate it, the nearest
+        catalyst landing inside it (from the catalysts view), and what to
+        watch (deterministic template lines from measured data — weekly
+        alignment, valuation spread, invalidation). A symbol whose windows
+        carry no catalyst and no watch line is omitted: three constant
+        driver lists are not detail.
+        """
+        catalysts = cls._catalysts(c).get("by_symbol") or {}
+        synthesis = (c.get("research_synthesis") or {}).get("per_symbol") or {}
+        out: dict[str, Any] = {}
+        for symbol in c["symbols"]:
+            events = (catalysts.get(symbol) or {}).get("events") or []
+            debate = (synthesis.get(symbol) or {}).get("debate") or {}
+            invalidation = debate.get("invalidation")
+            horizons: dict[str, Any] = {}
+            has_content = False
+            window_floor = 0.0
+            for horizon, window in cls.HORIZON_WINDOWS.items():
+                entry: dict[str, Any] = {"drivers": list(cls.HORIZON_DRIVERS[horizon])}
+                # Tiered reveal: each horizon shows the nearest catalyst that
+                # ENTERS view at this tier — (prev window, this window]. The
+                # 1w/1m/3m cards then read as progressive detail, not three
+                # copies of the same nearest event.
+                window_events = [
+                    e for e in events if isinstance(e.get("days_until"), int | float)
+                    and window_floor < e["days_until"] <= window
+                ]
+                if window_events:
+                    nearest = window_events[0]
+                    entry["catalyst"] = {
+                        "date": nearest.get("date"),
+                        "type": nearest.get("type"),
+                        "title": nearest.get("title"),
+                        "days_until": nearest.get("days_until"),
+                    }
+                    has_content = True
+                watch = cls._horizon_watch(c, symbol, horizon, invalidation)
+                if watch:
+                    entry["watch"] = watch
+                    has_content = True
+                horizons[horizon] = entry
+                window_floor = window
+            if has_content:
+                out[symbol] = horizons
+        return out
+
+    @staticmethod
+    def _horizon_watch(
+        c: dict[str, Any], symbol: str, horizon: str, invalidation: Any
+    ) -> list[str] | None:
+        """Deterministic per-horizon watch lines from measured data only."""
+        watch: list[str] = []
+        technical = (c.get("technical_analysis") or {}).get(symbol) or {}
+        fundamental = (c.get("fundamental_analysis") or {}).get(symbol) or {}
+        if horizon in ("1w", "1m"):
+            weekly = compact_weekly_view(technical.get("weekly_sma"))
+            if weekly.get("status") not in (None, "unavailable", "insufficient_data"):
+                alignment = weekly.get("alignment") or {}
+                state = alignment.get("state")
+                weeks = alignment.get("weeks_in_state")
+                if state and state != "unknown":
+                    line = f"周线排列{state}"
+                    if isinstance(weeks, int | float):
+                        line += f"(持续{int(weeks)}周)"
+                    watch.append(line)
+                crosses = weekly.get("recent_crosses") or {}
+                for pair, cross in crosses.items():
+                    direction = str(cross.get("direction") or "")
+                    label = {"golden": "金叉", "death": "死叉"}.get(direction, direction)
+                    if not label:
+                        continue
+                    line = f"{pair} {label}"
+                    since = cross.get("weeks_since")
+                    if isinstance(since, int | float):
+                        line += f"({int(since)}周前)"
+                    watch.append(line)
+                    break
+        if horizon == "1m":
+            scenarios = (
+                compact_valuation_view(fundamental.get("valuation_scenarios")) or {}
+            ).get("scenarios") or {}
+            upsides = [
+                item.get("upside_pct")
+                for method in scenarios.values()
+                for item in (method or {}).values()
+                if isinstance(item, dict)
+            ]
+            upsides = [u for u in upsides if isinstance(u, int | float)]
+            if upsides:
+                watch.append(f"情景区间 {min(upsides):+.0f}% ~ {max(upsides):+.0f}%")
+        if horizon == "3m":
+            quality = compact_quality_view(fundamental.get("quality")) or {}
+            red_flags = quality.get("red_flags")
+            if isinstance(red_flags, list) and red_flags:
+                watch.append(f"财务质量红旗{len(red_flags)}项")
+            if isinstance(invalidation, str) and invalidation.strip():
+                watch.append(f"失效条件: {invalidation.strip()}")
+        return watch or None
 
     @classmethod
     def _synthesis(cls, c: dict[str, Any]) -> dict[str, Any]:
@@ -599,6 +714,12 @@ class ReportService:
         # Allocation across the buy-worthy names — deterministic, additive;
         # None (fewer than two eligible) leaves the section unchanged.
         summary["suggested_weights"] = cls._suggested_weights(c, summary)
+        # Term structure of the single decision: per-horizon drivers, window
+        # catalysts and watch lines. Absent when nothing measured (the
+        # optional-key convention — three constant driver lists are noise).
+        horizons = cls._horizon_views(c)
+        if horizons:
+            summary["horizons"] = horizons
         return summary
 
     @staticmethod
