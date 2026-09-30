@@ -64,11 +64,23 @@ class TestBenchmarkTickerSelection:
 
         assert benchmark_ticker_for("600000") == "000001.SS"
 
+    def test_hk_codes_map_to_hang_seng(self):
+        from app.tools.data.fetcher import benchmark_ticker_for
+
+        # Bare zero-padded codes and .HK-suffixed forms are HK — beta against
+        # the S&P 500 was a wrong-market number (audit gap #4), not a degraded
+        # one. 6-digit CN codes must not be mistaken for HK zero-padding.
+        assert benchmark_ticker_for("00700") == "^HSI"
+        assert benchmark_ticker_for("0700") == "^HSI"
+        assert benchmark_ticker_for("0700.HK") == "^HSI"
+        assert benchmark_ticker_for("00700.HK") == "^HSI"
+        assert benchmark_ticker_for("600000") == "000001.SS"
+
     def test_everything_else_maps_to_sp500(self):
         from app.tools.data.fetcher import benchmark_ticker_for
 
         assert benchmark_ticker_for("AAPL") == "^GSPC"
-        assert benchmark_ticker_for("0700.HK") == "^GSPC"
+        assert benchmark_ticker_for("MSFT") == "^GSPC"
 
 
 class TestBenchmarkAttach:

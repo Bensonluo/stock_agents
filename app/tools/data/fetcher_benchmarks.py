@@ -13,6 +13,7 @@ from app.tools.data.fetcher_common import (
     _cache_get,
     _cache_set,
     _is_chinese_symbol,
+    _is_hk_symbol,
 )
 from app.tools.data.fetcher_us import _sina_us_hist
 from app.tools.data.provider_health import record_provider_outcome
@@ -22,10 +23,12 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Benchmarks for beta/alpha/R² regression, shared with the pipeline data
-# agent: S&P 500 for international names, SSE Composite for A-shares.
-# Fetched through the shared 30-min cache so ReAct tool calls (one symbol
-# at a time) never re-fetch the same index within one analysis session.
-BENCHMARK_TICKERS = {"us": "^GSPC", "cn": "000001.SS"}
+# agent: S&P 500 for international names, SSE Composite for A-shares,
+# Hang Seng for HK codes (00700's beta regressing against the S&P 500 was
+# a wrong-market number, not a degraded one). Fetched through the shared
+# 30-min cache so ReAct tool calls (one symbol at a time) never re-fetch
+# the same index within one analysis session.
+BENCHMARK_TICKERS = {"us": "^GSPC", "cn": "000001.SS", "hk": "^HSI"}
 BENCHMARK_HISTORY_PERIOD = "2y"
 
 # yfinance sector string -> SPDR sector ETF. Sector-relative regression
@@ -48,9 +51,12 @@ SECTOR_BENCHMARK_ETFS = {
 
 
 def benchmark_ticker_for(symbol: str) -> str:
-    """S&P 500 for international symbols; SSE Composite for 6-digit A-shares."""
+    """S&P 500 for international symbols; SSE Composite for 6-digit A-shares;
+    Hang Seng for HK codes (bare zero-padded or .HK-suffixed)."""
     if _is_chinese_symbol(symbol):
         return BENCHMARK_TICKERS["cn"]
+    if _is_hk_symbol(symbol):
+        return BENCHMARK_TICKERS["hk"]
     return BENCHMARK_TICKERS["us"]
 
 

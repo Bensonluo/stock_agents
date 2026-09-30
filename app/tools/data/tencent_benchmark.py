@@ -22,9 +22,9 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Yahoo benchmark symbol -> Tencent market-prefixed index code (the exact
-# strings benchmark_ticker_for emits; scope stays on the two market indexes —
-# sector ETFs are out).
-_TENCENT_INDEX_MAP = {"000001.SS": "sh000001", "^GSPC": "usINX"}
+# strings benchmark_ticker_for emits; scope stays on the three market indexes
+# — sector ETFs are out).
+_TENCENT_INDEX_MAP = {"000001.SS": "sh000001", "^GSPC": "usINX", "^HSI": "hkHSI"}
 
 _TENCENT_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/kline/kline"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
