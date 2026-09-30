@@ -48,7 +48,7 @@ const QUICK_SYMBOLS = [
 
 const EXAMPLE_QUERIES = [
   '分析这只股票的投资价值',
-  '多方和空方最强的论据分别是什么?',
+  '多方和空方各自的核心论据是什么?',
   '当前估值处于什么区间,有哪些风险?',
   '适合长期持有还是短线交易?',
 ]
@@ -57,7 +57,7 @@ const CAPABILITIES = [
   {
     icon: Swords,
     title: '多空质询',
-    description: 'Bull 与 Bear 各自引用证据交锋,给出最强反方观点与失效条件。',
+    description: 'Bull 与 Bear 各自引用证据交锋,给出对方核心观点与失效条件。',
   },
   {
     icon: ShieldCheck,

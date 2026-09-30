@@ -199,7 +199,7 @@ export function ReactReport({ answer, report: structuredReport }: {
       {report.decision_synthesis?.synthesis && (
         <div className="p-4 border border-indigo-100 bg-indigo-50/50 rounded-lg">
           <p className="text-xs font-medium text-indigo-600 mb-1">
-            决策综合{report.decision_synthesis.top_pick ? ` · 首选 ${report.decision_synthesis.top_pick}` : ''}
+            决策综合{report.decision_synthesis.top_pick ? ` · 综合分居首 ${report.decision_synthesis.top_pick}` : ''}
           </p>
           <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">{report.decision_synthesis.synthesis}</p>
         </div>

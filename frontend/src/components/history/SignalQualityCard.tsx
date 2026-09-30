@@ -304,7 +304,7 @@ export function SignalQualityCard() {
                   })}
                 </div>
                 <p className="text-[11px] text-muted-foreground/70 pt-1">
-                  排序能力随持有期拉长的衰减——IC 在哪个窗口最大，信号的天然持有期就在哪。
+                  排序能力随持有期拉长的衰减——IC 在哪个窗口达到峰值，信号的天然持有期就在哪。
                 </p>
               </div>
             )}
