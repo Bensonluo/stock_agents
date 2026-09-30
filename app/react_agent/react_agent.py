@@ -4,6 +4,7 @@ Graph: agent_reason -> [tool_execute | END] -> observe -> reflect -> [agent_reas
 """
 
 import ast
+import asyncio
 import json
 from typing import Any, Literal
 
@@ -138,8 +139,29 @@ async def tool_execute_node(state: ReActState) -> dict[str, Any]:
             )
             continue
 
+        # A hung tool call (an upstream request without its own timeout)
+        # never raises — the loop stalls forever and holds an
+        # analysis-capacity slot (iteration 170). Bound every invocation
+        # (iteration 175); 0 disables the guard.
+        timeout = settings.react_tool_timeout
         try:
-            result = await tool.ainvoke(tool_args)
+            if timeout > 0:
+                result = await asyncio.wait_for(tool.ainvoke(tool_args), timeout=timeout)
+            else:
+                result = await tool.ainvoke(tool_args)
+        except TimeoutError:
+            error_msg = f"Error executing {tool_name}: exceeded react_tool_timeout={timeout}s"
+            tool_result_messages.append(
+                ToolMessage(content=error_msg, tool_call_id=tool_id, name=tool_name)
+            )
+            errors.append(
+                {
+                    "agent": "react_agent",
+                    "error_type": "ToolTimeout",
+                    "message": error_msg,
+                }
+            )
+            continue
         except Exception as e:
             error_msg = f"Error executing {tool_name}: {str(e)}"
             tool_result_messages.append(

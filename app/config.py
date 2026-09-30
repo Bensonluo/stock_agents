@@ -140,6 +140,11 @@ class Settings(BaseSettings):
     agent_max_iterations: int = 15
     agent_cost_limit: float = 0.50  # USD
     agent_reasoning_model: str = "glm-5.3-flash"
+    # Per-tool-invocation wall clock in the ReAct loop (iteration 175). The
+    # fetch HTTP ceilings are 15-20s and the LLM client 90s, but a tool whose
+    # internal upstream call hangs never raises — the loop stalls forever and
+    # holds an analysis-capacity slot (iteration 170). 0 disables the bound.
+    react_tool_timeout: float = 120.0
 
     # Backtesting
     backtest_initial_cash: float = 10000.0
