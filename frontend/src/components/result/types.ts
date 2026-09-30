@@ -61,6 +61,7 @@ export interface AnalysisResult {
   execution_metadata?: {
     execution_time?: number
     had_errors?: boolean
+    agent_timings?: Record<string, number>
   }
 }
 

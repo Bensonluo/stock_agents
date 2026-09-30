@@ -246,6 +246,24 @@ export function PipelineResultPage({ threadId }: { threadId: string | null }) {
         </div>
       </header>
 
+      {result.execution_metadata?.agent_timings &&
+        Object.keys(result.execution_metadata.agent_timings).length > 0 && (
+          <div className="max-w-6xl mx-auto px-4 pt-4 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+            <span className="font-medium text-slate-600">耗时分解</span>
+            {Object.entries(result.execution_metadata.agent_timings)
+              .sort((a, b) => b[1] - a[1])
+              .map(([name, secs]) => (
+                <span
+                  key={name}
+                  className="rounded-full bg-slate-100 px-2 py-0.5 font-mono"
+                  title={`${name} 阶段耗时`}
+                >
+                  {name} {secs.toFixed(1)}s
+                </span>
+              ))}
+          </div>
+        )}
+
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
         {/* 组合概览 — 多标的 run 的顶层视角（portfolio_summary 首个消费方） */}
         {isMultiSymbol && portfolio && (

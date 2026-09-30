@@ -69,6 +69,7 @@ class AgentState(TypedDict):
     errors: Annotated[list[dict], add]  # Appended per failure (never echoed in full)
     retry_count: Annotated[dict[str, int], merge_dicts]  # Failures per agent (retry budget)
     agent_status: Annotated[dict[str, str], merge_dicts]  # Last-attempt outcome per agent
+    agent_timings: Annotated[dict[str, float], merge_dicts]  # Last-attempt duration (s) per agent
     execution_metadata: dict  # Execution metadata
     error_summary: (
         dict  # Filled by the error handler node (must be in the schema or writes are dropped)
@@ -130,6 +131,7 @@ def create_initial_state(
         errors=[],
         retry_count={},
         agent_status={},
+        agent_timings={},
         error_summary={},
         execution_metadata={
             "started_at": datetime.now(),

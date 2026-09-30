@@ -468,6 +468,9 @@ class MultiAgentOrchestrator:
             # Update execution metadata
             result["execution_metadata"]["completed_at"] = datetime.now()
             result["execution_metadata"]["execution_time"] = execution_time
+            # Per-agent duration breakdown (merge_dicts channel survives the
+            # parallel superstep); surfaced here so API/history consumers get it.
+            result["execution_metadata"]["agent_timings"] = result.get("agent_timings", {})
 
             # Convert numpy types to Python native types for serialization
             result = _convert_to_serializable(result)
@@ -660,6 +663,7 @@ class MultiAgentOrchestrator:
             # Mark completed
             update["agent_status"] = {agent_name: "completed"}
             execution_time = time.time() - start_time
+            update["agent_timings"] = {agent_name: execution_time}
 
             update_agent_status(thread_id, agent_name, "completed")
             add_log(
@@ -723,6 +727,7 @@ class MultiAgentOrchestrator:
                 agent_name: state.get("retry_count", {}).get(agent_name, 0) + 1
             }
             update["agent_status"] = {agent_name: "failed"}
+            update["agent_timings"] = {agent_name: execution_time}
 
             if monitor.broadcast_manager:
                 await monitor.broadcast_manager.broadcast_agent_event(
