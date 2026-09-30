@@ -137,6 +137,15 @@ export default function HomePage() {
       return
     }
 
+    // Mirrors the backend MAX_SYMBOLS_PER_REQUEST default (client guard is
+    // UX; the server validator is authoritative — a drifted local guard
+    // still gets 422'd).
+    if (symbolList.length > 10) {
+      setError('最多支持 10 个股票代码')
+      setLoading(false)
+      return
+    }
+
     if (!query.trim()) {
       setError('请输入研究问题')
       setLoading(false)

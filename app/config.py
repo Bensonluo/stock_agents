@@ -166,6 +166,13 @@ class Settings(BaseSettings):
     # stack unbounded otherwise. 0 disables the guard.
     max_concurrent_analyses: int = 2
 
+    # Request size (iteration 174): cap on symbols per analyze request. The
+    # rate limiter bounds requests per client and the capacity gate bounds
+    # in-flight workflows, but neither bounds request SIZE — each symbol
+    # multiplies fetches/analysis/LLM work, so one 500-symbol POST would
+    # hold a capacity slot indefinitely. 0 disables the cap.
+    max_symbols_per_request: int = 10
+
 
 @lru_cache
 def get_settings() -> Settings:

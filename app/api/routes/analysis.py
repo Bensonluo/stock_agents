@@ -10,10 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.api.analysis_capacity import analysis_slot, reserve_analysis_slot
 from app.api.dependencies import get_orchestrator
 from app.api.rate_limit import rate_limit
+from app.config import get_settings
 from app.monitoring.workflow_status import PIPELINE_AGENTS
 from app.orchestration.state import AgentState
 from app.utils.logging import get_logger
-from app.utils.validators import validate_stock_symbol
+from app.utils.validators import validate_stock_symbol, validate_symbol_count
 
 logger = get_logger(__name__)
 
@@ -48,6 +49,10 @@ class StockAnalysisRequest(BaseModel):
     @classmethod
     def validate_symbols(cls, symbols: list[str]) -> list[str]:
         """Validate stock symbols."""
+        # Count cap first (iteration 174): request size is the input axis the
+        # rate limiter and capacity gate don't bound. Reads settings at call
+        # time so instance-level overrides move it.
+        validate_symbol_count(symbols, get_settings().max_symbols_per_request)
         normalized = []
         for symbol in symbols:
             if not validate_stock_symbol(symbol):

@@ -9,16 +9,18 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.api.analysis_capacity import reserve_analysis_slot
 from app.api.rate_limit import rate_limit
+from app.config import get_settings
 from app.react_agent.react_agent import ReActAgent
 from app.services.report_service import ReportService
 from app.storage.database import AnalysisRecord, get_database
 from app.tools.data.fetcher import fetch_stock_data
 from app.utils.llm_json import extract_json
 from app.utils.logging import get_logger
+from app.utils.validators import validate_symbol_count
 
 logger = get_logger(__name__)
 
@@ -50,6 +52,18 @@ class AnalyzeRequest(BaseModel):
     query: str = Field(description="User query", min_length=1)
     symbols: list[str] = Field(description="Stock symbols to analyze", min_length=1)
     max_iterations: int = Field(default=15, ge=1, le=50)
+
+    @field_validator("symbols")
+    @classmethod
+    def validate_symbol_count_cap(cls, symbols: list[str]) -> list[str]:
+        """Cap symbols per request (iteration 174), mirroring the pipeline twin.
+
+        Count-only by design: the per-symbol regex check stays off this path
+        (iteration 138 boundary — ReAct handles CN/HK/US, where
+        validate_stock_symbol semantics are unverified for this route).
+        """
+        validate_symbol_count(symbols, get_settings().max_symbols_per_request)
+        return symbols
 
 
 class AnalyzeResponse(BaseModel):

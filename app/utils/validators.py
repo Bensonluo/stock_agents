@@ -105,3 +105,14 @@ def validate_sort_order(order: str, default: str = "desc") -> str:
     if order.lower() not in ("asc", "desc"):
         return default
     return order.lower()
+
+
+def validate_symbol_count(symbols: list[str], max_count: int) -> None:
+    """Reject symbol lists larger than max_count (0 disables the cap).
+
+    Each symbol multiplies per-symbol network fetches, analysis and LLM
+    work — without a cap one oversized POST holds an analysis-capacity
+    slot indefinitely (iteration 174).
+    """
+    if max_count > 0 and len(symbols) > max_count:
+        raise ValueError(f"Too many symbols: {len(symbols)} (max {max_count} per request)")

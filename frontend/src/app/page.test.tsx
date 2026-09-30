@@ -79,6 +79,22 @@ describe('HomePage analyze form guards (handleAnalyze)', () => {
     expect(reactAnalyze).not.toHaveBeenCalled()
   })
 
+  it('blocks submit above the symbol-count cap — named error, no API call (iteration 174)', async () => {
+    render(<HomePage />)
+
+    // 11 comma-separated valid tickers cross the 10-symbol cap; the client
+    // guard mirrors MAX_SYMBOLS_PER_REQUEST (backend is authoritative — a
+    // drifted local guard still gets 422'd by the server validator).
+    const symbols = await screen.findByLabelText(/股票代码/)
+    fireEvent.change(symbols, {
+      target: { value: 'A,B,C,D,E,F,G,H,I,J,K' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /开始研究/ }))
+
+    expect(await screen.findByText('最多支持 10 个股票代码')).toBeInTheDocument()
+    expect(reactAnalyze).not.toHaveBeenCalled()
+  })
+
   it('wires the happy path: reactAnalyze payload then monitoring redirect', async () => {
     reactAnalyze.mockResolvedValue({ thread_id: 'react-test-1' })
     render(<HomePage />)
