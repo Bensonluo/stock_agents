@@ -342,3 +342,88 @@ async def fetch_us_consensus(symbol: str) -> dict[str, Any] | None:
             return None  # total failure — retried next call, never cached
         _cache_set(cache_key, raw)  # empty list IS cached (no coverage is a valid answer)
     return us_consensus_annotation(raw)
+
+
+def _label_from_mean(mean: float) -> str:
+    """Yahoo's 1-5 recommendationMean (1=strong buy … 5=strong sell) onto the
+    canonical scale — same polarity, nearest label wins, clamped to the ends.
+    """
+    index = min(max(int(round(mean)) - 1, 0), len(_RATING_LABELS) - 1)
+    return _RATING_LABELS[index]
+
+
+def info_consensus_annotation(info: Any) -> dict[str, Any] | None:
+    """Zero-network consensus block mapped from the yfinance ``ticker.info``
+    payload the financial leg already downloads (audit 2026-09-30: Yahoo's
+    aggregated analyst targets were inside every US/HK fetch and never
+    surfaced). Third pure builder beside consensus_annotation / the Finnhub
+    twin — same record shape, so consumers need no new schema:
+
+        target_price — targetMeanPrice/targetMedianPrice/targetLowPrice/
+                       targetHighPrice ride the CN block's keys (mean/median/
+                       low/high); numberOfAnalystOpinions is ``count``. The
+                       block needs a positive targetMeanPrice; the other
+                       fields are emitted only when info actually carries
+                       them. ``window_days`` is NOT emitted — the provider
+                       snapshot has no rating-window semantics to borrow.
+        ratings      — recommendationKey/recommendationMean + the analyst
+                       count. The source carries no per-band counts, so
+                       ``counts`` is the canonical five-key dict at zero
+                       (no fabricated observations — dominant/mean/total
+                       hold the real evidence); ``dominant`` is the
+                       provider's own key string, bucketed from the 1-5
+                       mean only when the key string is missing. ``mean``
+                       (additive key) keeps the raw scalar.
+
+    ``implied_upside`` follows the CN block: mean/target − 1 against the
+    caller's price, falling back to info's own currentPrice (the market
+    leg sources the same field). Status mirrors consensus_annotation:
+    "ok" on hard-number evidence (targets), "insufficient_data" when only
+    the recommendation summary exists. None when info has neither —
+    missing/None/NaN fields and non-dict payloads degrade to absence.
+    """
+    if not isinstance(info, dict):
+        return None
+
+    target: dict[str, Any] | None = None
+    mean = _to_float(info.get("targetMeanPrice"))
+    if mean is not None and mean > 0:
+        target = {}
+        count = _to_int(info.get("numberOfAnalystOpinions"))
+        if count is not None and count > 0:
+            target["count"] = count
+        target["mean"] = round(mean, 4)
+        for key, raw in (
+            ("median", info.get("targetMedianPrice")),
+            ("low", info.get("targetLowPrice")),
+            ("high", info.get("targetHighPrice")),
+        ):
+            value = _to_float(raw)
+            if value is not None and value > 0:
+                target[key] = round(value, 4)
+        price = _to_float(info.get("currentPrice") or info.get("regularMarketPrice"))
+        if price is not None and price > 0:
+            target["implied_upside"] = round(mean / price - 1, 4)
+
+    ratings: dict[str, Any] | None = None
+    key = info.get("recommendationKey")
+    has_key = isinstance(key, str) and bool(key)
+    mean_rating = _to_float(info.get("recommendationMean"))
+    if has_key or (mean_rating is not None and 0 < mean_rating <= 5):
+        ratings = {"counts": {label: 0 for label in _RATING_LABELS}}
+        if has_key:
+            ratings["dominant"] = key
+        elif mean_rating is not None:
+            ratings["dominant"] = _label_from_mean(mean_rating)
+        if mean_rating is not None:
+            ratings["mean"] = round(mean_rating, 4)
+        ratings["total"] = _to_int(info.get("numberOfAnalystOpinions")) or 0
+
+    if target is None and ratings is None:
+        return None
+    block: dict[str, Any] = {"status": "ok" if target is not None else "insufficient_data"}
+    if target is not None:
+        block["target_price"] = target
+    if ratings is not None:
+        block["ratings"] = ratings
+    return block

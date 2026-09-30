@@ -84,6 +84,7 @@ from app.tools.data.fetcher_news import (  # noqa: F401
     _earnings_value,  # noqa: F401
     dedup_news,  # noqa: F401
     earnings_records,  # noqa: F401
+    earnings_surprise_summary,  # noqa: F401
     fetch_cn_news,  # noqa: F401
     finnhub_news_articles,  # noqa: F401
     yfinance_news_articles,  # noqa: F401

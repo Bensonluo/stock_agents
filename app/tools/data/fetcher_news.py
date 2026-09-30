@@ -217,3 +217,39 @@ def earnings_records(frame: Any) -> list[dict[str, Any]]:
         return records
     except Exception:
         return []
+
+
+# How many reported quarters the compact surprise summary keeps. The wire
+# key is the literal "last_4" — changing this constant must change that
+# key (and its consumers) with it.
+EARNINGS_SURPRISE_WINDOW = 4
+
+
+def earnings_surprise_summary(records: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    """Canonical earnings records → compact surprise history.
+
+    The data agent already downloads the full earnings_dates frame every
+    run; this pure pass surfaces the surprise history it was silently
+    dropping. Only records with an actual value count (future scheduled
+    quarters have an estimate but nothing to compare), sorted most-recent
+    first by ISO date (deterministic — frame order is never trusted) and
+    capped at EARNINGS_SURPRISE_WINDOW. None when nothing has reported, so
+    the caller can omit the key entirely (the absence convention).
+    """
+    if not records:
+        return None
+    reported = [record for record in records if record.get("eps_actual") is not None]
+    if not reported:
+        return None
+    reported.sort(key=lambda record: str(record.get("date") or ""), reverse=True)
+    return {
+        "last_4": [
+            {
+                "date": record.get("date"),
+                "estimate": record.get("eps_estimate"),
+                "actual": record.get("eps_actual"),
+                "surprise_pct": record.get("surprise_pct"),
+            }
+            for record in reported[:EARNINGS_SURPRISE_WINDOW]
+        ]
+    }

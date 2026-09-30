@@ -17,7 +17,6 @@ from typing import Any
 
 from app.orchestration.orchestrator import MultiAgentOrchestrator
 from app.orchestration.state import create_initial_state
-
 from tests.unit.orchestration.test_agent_timings import (
     CountingSpyAgent,
     StubRunAgent,

@@ -33,6 +33,7 @@ _akshare_semaphore = asyncio.Semaphore(5)
 from app.tools.data.consensus import (  # noqa: E402
     fetch_cn_consensus,
     fetch_us_consensus,
+    info_consensus_annotation,
 )
 from app.tools.data.fetcher import (  # noqa: E402
     BENCHMARK_TICKERS,
@@ -44,6 +45,7 @@ from app.tools.data.fetcher import (  # noqa: E402
     _sync_fetch_tencent_cn_hist,
     benchmark_ticker_for,
     earnings_records,
+    earnings_surprise_summary,
     fetch_benchmark_history,
     fetch_cn_news,
     fetch_cn_sector_benchmark,
@@ -206,7 +208,19 @@ def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -
     # column the event window needs; earnings_records keeps it.
     earnings_dates = earnings_records(ticker.earnings_dates)
 
-    return {
+    # Zero-network analyst depth: the same wholesale `info` payload already
+    # carries Yahoo's aggregated analyst targets — mapping them into the
+    # consensus block shape costs no round-trip. Non-CN symbols only: 6-digit
+    # A-shares get the richer THS/Sina block from the tail gather below, so
+    # the info draft is never even built for them (CN precedence is made
+    # structural by the same benchmark_ticker_for split the gather uses,
+    # not left to a merge rule). Toggle off → the whole consensus layer
+    # stays dark, draft included.
+    info_consensus = None
+    if get_settings().consensus_enabled and benchmark_ticker_for(symbol) != BENCHMARK_TICKERS["cn"]:
+        info_consensus = info_consensus_annotation(info)
+
+    result = {
         "symbol": symbol,
         "metrics": {
             "roe": info.get("returnOnEquity"),
@@ -251,6 +265,16 @@ def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -
         "earnings_dates": earnings_dates,
         "timestamp": datetime.now().isoformat(),
     }
+    # EPS surprise history rides the already-downloaded frame — a compact
+    # summary beside the raw records; absence (nothing has reported yet)
+    # omits the key entirely. And the info draft attaches only when it has
+    # content, so rate-limited info degrades to the key-absent convention.
+    surprise_summary = earnings_surprise_summary(earnings_dates)
+    if surprise_summary is not None:
+        result["earnings_surprise"] = surprise_summary
+    if info_consensus is not None:
+        result["consensus"] = info_consensus
+    return result
 
 
 def _sync_fetch_news(yahoo_symbol: str, symbol: str) -> list[dict[str, Any]]:
@@ -519,9 +543,25 @@ class DataCollectionAgent(BaseAgent):
         # fetch failure) leaves the key absent — the option/benchmark
         # absence convention. CN generators run before US in the gather, so
         # the zip order matches [*cn_symbols, *us_symbols].
+        #
+        # Non-CN symbols may already carry the zero-network info draft the
+        # financial leg staged: the fetched block wins per sub-block (its
+        # Finnhub band counts are the richer record) while the draft's
+        # target_price fills the ratings-only gap, and hard-number evidence
+        # upgrades the status — the CN seam's own "ok needs targets" rule.
+        # CN symbols never get a draft (the sync leg's benchmark_ticker_for
+        # split), so the fetched THS/Sina block always lands untouched —
+        # CN precedence is structural, not a merge tie-break.
         for s, block in zip([*cn_symbols, *us_symbols], consensus_blocks):
-            if block is not None:
-                financial_data[s] = {**(financial_data.get(s) or {}), "consensus": block}
+            if block is None:
+                continue
+            current = financial_data.get(s) or {}
+            draft = current.get("consensus")
+            if s not in cn_symbols and isinstance(draft, dict):
+                block = {**draft, **block}
+                if block.get("target_price") is not None:
+                    block["status"] = "ok"
+            financial_data[s] = {**current, "consensus": block}
 
         logger.info(
             f"Collected data for {len(market_data)} symbols, " f"{len(news_data)} news items"
