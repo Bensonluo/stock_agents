@@ -4,13 +4,17 @@
 // only, wires the search box to the search endpoint (submit-gated — no
 // debounce, deterministic), and surfaces the client fallback error when the
 // list request rejects.
+// Iteration 172: react-prefixed records must link to the ReAct result view
+// (mode=react — same discrimination as the home page's viewHistory), and
+// each row gains an inline delete (confirm-gated, list+stats refresh).
 //
 // Mock convention (established in signal-quality-card.test.tsx): @/lib/utils
 // is a dual-purpose module (API client + shadcn cn()) — an integral module
 // mock starves Card/Label/Button of cn before the first assertion, so we
-// partially mock: spread the actual module and override only the three API
-// methods this page calls (getHistory / searchHistory / getHistoryStats).
-import { fireEvent, render, screen } from '@testing-library/react'
+// partially mock: spread the actual module and override only the four API
+// methods this page calls (getHistory / searchHistory / getHistoryStats /
+// deleteHistory).
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // vi.mock factories are hoisted above every const — the shared spies must be
@@ -18,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const getHistory = vi.hoisted(() => vi.fn())
 const searchHistory = vi.hoisted(() => vi.fn())
 const getHistoryStats = vi.hoisted(() => vi.fn())
+const deleteHistory = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/utils', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/utils')>()
@@ -28,6 +33,7 @@ vi.mock('@/lib/utils', async (importOriginal) => {
       getHistory,
       searchHistory,
       getHistoryStats,
+      deleteHistory,
     },
   }
 })
@@ -56,6 +62,7 @@ beforeEach(() => {
   getHistory.mockReset()
   searchHistory.mockReset()
   getHistoryStats.mockReset()
+  deleteHistory.mockReset()
   getHistory.mockResolvedValue(LIST_RESPONSE)
   getHistoryStats.mockResolvedValue({
     total_analyses: 12, completed: 10, failed: 2, pending: 0, running: 0,
@@ -113,5 +120,59 @@ describe('HistoryPage record list', () => {
     render(<HistoryPage />)
 
     expect(await screen.findByText('错误：backend down')).toBeInTheDocument()
+  })
+
+  it('routes react-prefixed records to the ReAct result view', async () => {
+    getHistory.mockResolvedValue({
+      ...LIST_RESPONSE,
+      items: [
+        LIST_RESPONSE.items[0],
+        item({
+          thread_id: 'react-xyz', symbols: ['NVDA'], query: 'Agent 模式分析',
+          status: 'completed', execution_time: 45, created_at: '2026-09-28T12:00:00Z',
+        }),
+      ],
+    })
+
+    render(<HistoryPage />)
+
+    const links = await screen.findAllByRole('link', { name: /查看报告/ })
+    expect(links).toHaveLength(2)
+    // pipeline 记录不带 mode;react- 记录必须带 mode=react(否则 /result 渲染管线视图)
+    expect(links[0]).toHaveAttribute('href', '/result?thread_id=t-001')
+    expect(links[1]).toHaveAttribute('href', '/result?thread_id=react-xyz&mode=react')
+  })
+
+  it('deletes a record after confirm and refreshes list and stats', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    // 第一次:完整列表;删除后的刷新:被删记录消失
+    getHistory
+      .mockResolvedValueOnce(LIST_RESPONSE)
+      .mockResolvedValueOnce({ ...LIST_RESPONSE, items: [LIST_RESPONSE.items[1]], total: 1 })
+
+    render(<HistoryPage />)
+    await screen.findByText('苹果财报分析')
+
+    fireEvent.click(screen.getByRole('button', { name: '删除 t-001' }))
+
+    await waitFor(() => expect(deleteHistory).toHaveBeenCalledWith('t-001'))
+    expect(await screen.findByText('浦发银行基本面')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('苹果财报分析')).not.toBeInTheDocument())
+    // 统计行也随删除刷新(mount 一次 + 删除后一次)
+    expect(getHistoryStats).toHaveBeenCalledTimes(2)
+    confirmSpy.mockRestore()
+  })
+
+  it('keeps the record when the confirm dialog is dismissed', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    render(<HistoryPage />)
+    await screen.findByText('苹果财报分析')
+
+    fireEvent.click(screen.getByRole('button', { name: '删除 t-001' }))
+
+    expect(deleteHistory).not.toHaveBeenCalled()
+    expect(screen.getByText('苹果财报分析')).toBeInTheDocument()
+    confirmSpy.mockRestore()
   })
 })

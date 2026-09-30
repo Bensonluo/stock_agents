@@ -97,3 +97,23 @@ describe('HomePage analyze form guards (handleAnalyze)', () => {
     )
   })
 })
+
+describe('HomePage history tab entry to the full history page', () => {
+  it('links to /history from the history tab (iteration 172)', async () => {
+    // 历史列表是裸 fetch(不走 API client);tab 默认 analyze 不触发,切 tab 才拉
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [], total: 0, page: 1, page_size: 10, has_more: false }),
+    }))
+
+    render(<HomePage />)
+
+    // Radix Tabs 在 jsdom 里 click/pointerDown 都不触发激活(aria-selected
+    // 不变),键盘 Enter 路径稳定——实证钉死,勿改回 click。
+    fireEvent.keyDown(screen.getByRole('tab', { name: /历史记录/ }), { key: 'Enter' })
+
+    const link = await screen.findByRole('link', { name: /完整历史/ })
+    expect(link).toHaveAttribute('href', '/history')
+    vi.unstubAllGlobals()
+  })
+})

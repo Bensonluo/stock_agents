@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
-  History, Search, FileText, ChevronLeft, ChevronRight, Loader2,
+  History, Search, FileText, ChevronLeft, ChevronRight, Loader2, Trash2,
 } from 'lucide-react'
 import { API, type HistoryListItem, type HistoryStatsResponse } from '@/lib/utils'
 import { statusZh } from '@/lib/status'
@@ -94,6 +94,25 @@ export default function HistoryPage() {
 
   const gotoPage = (p: number) => fetchList(p, '')
 
+  // react- 前缀的记录走 ReAct 视图(与首页 viewHistory 同一判别),否则
+  // /result 按管线视图渲染 ReAct 数据——形状对不上。
+  const resultHref = (threadId: string) =>
+    threadId.startsWith('react-')
+      ? `/result?thread_id=${threadId}&mode=react`
+      : `/result?thread_id=${threadId}`
+
+  const handleDelete = async (threadId: string) => {
+    if (!confirm('确定要删除这条记录吗?')) return
+    try {
+      await API.deleteHistory(threadId)
+      // 原地刷新当前页与统计行(统计也计入被删记录)
+      fetchList(page, activeKeyword)
+      API.getHistoryStats().then(setStats).catch(() => {})
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '删除历史记录失败')
+    }
+  }
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="text-center space-y-3 mb-8 pt-4">
@@ -178,7 +197,7 @@ export default function HistoryPage() {
                 </div>
                 {item.status === 'completed' ? (
                   <Button asChild size="sm" className="shrink-0">
-                    <Link href={`/result?thread_id=${item.thread_id}`}>
+                    <Link href={resultHref(item.thread_id)}>
                       <FileText className="mr-1.5 h-4 w-4" />
                       查看报告
                     </Link>
@@ -186,6 +205,16 @@ export default function HistoryPage() {
                 ) : (
                   <span className="text-xs text-muted-foreground shrink-0">—</span>
                 )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0 text-muted-foreground hover:text-red-500"
+                  onClick={() => handleDelete(item.thread_id)}
+                  aria-label={`删除 ${item.thread_id}`}
+                  title="删除这条记录"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
               </CardContent>
             </Card>
           ))}

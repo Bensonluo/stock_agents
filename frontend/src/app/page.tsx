@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -368,14 +369,23 @@ export default function HomePage() {
                     <CardTitle>研究历史</CardTitle>
                     <CardDescription>点击记录查看完整报告</CardDescription>
                   </div>
-                  <div className="relative">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      className="pl-8 w-full sm:w-48"
-                      placeholder="搜索..."
-                      value={searchKeyword}
-                      onChange={(e) => setSearchKeyword(e.target.value)}
-                    />
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        className="pl-8 w-full sm:w-48"
+                        placeholder="搜索..."
+                        value={searchKeyword}
+                        onChange={(e) => setSearchKeyword(e.target.value)}
+                      />
+                    </div>
+                    {/* 独立历史页(分页/统计/状态筛选)在此前全应用无入口 */}
+                    <Button variant="outline" size="sm" asChild className="shrink-0">
+                      <Link href="/history">
+                        完整历史
+                        <ChevronRight className="ml-1 h-4 w-4" />
+                      </Link>
+                    </Button>
                   </div>
                 </div>
               </CardHeader>

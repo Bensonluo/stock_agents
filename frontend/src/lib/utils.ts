@@ -188,6 +188,15 @@ export const API = {
     return response.json() as Promise<HistoryStatsResponse>
   },
 
+  deleteHistory: async (threadId: string) => {
+    const response = await fetch(`${API_BASE_URL}/api/history/${threadId}`, {
+      method: 'DELETE',
+    })
+    if (!response.ok) {
+      throw new Error(await apiErrorMessage(response, '删除历史记录失败'))
+    }
+  },
+
   // Monitoring endpoints
   getHealth: async () => {
     const response = await fetch(`${API_BASE_URL}/api/monitoring/health`)
