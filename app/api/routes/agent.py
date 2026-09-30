@@ -389,19 +389,52 @@ async def _run_analysis(thread_id: str, query: str, symbols: list[str], max_iter
 
     try:
         agent = ReActAgent()
-        result = await agent.analyze(
-            query=query,
-            symbols=symbols,
-            thread_id=thread_id,
-            max_iterations=max_iterations,
-            progress_callback=on_node_complete,
-        )
+        # Overall wall-clock bound (iteration 177): iterations are capped and
+        # every tool call bounded (iteration 175), but the worst-case bounded
+        # run still holds an analysis-capacity slot for tens of minutes.
+        # 0 disables the bound.
+        run_timeout = get_settings().react_run_timeout
+        if run_timeout > 0:
+            result = await asyncio.wait_for(
+                agent.analyze(
+                    query=query,
+                    symbols=symbols,
+                    thread_id=thread_id,
+                    max_iterations=max_iterations,
+                    progress_callback=on_node_complete,
+                ),
+                timeout=run_timeout,
+            )
+        else:
+            result = await agent.analyze(
+                query=query,
+                symbols=symbols,
+                thread_id=thread_id,
+                max_iterations=max_iterations,
+                progress_callback=on_node_complete,
+            )
         _results[thread_id] = result
         _progress_states[thread_id]["status"] = "completed"
         _progress_states[thread_id]["current_step"] = "completed"
         _progress_states[thread_id]["completed_at"] = datetime.now(UTC).isoformat()
         _save_to_db(thread_id, query, symbols, result, "completed")
         logger.info(f"ReAct analysis complete for {thread_id}: {result['iterations']} iterations")
+    except TimeoutError:
+        # Same degradation shape as the generic failure below: the guarded
+        # wrapper's finally still releases the capacity slot.
+        logger.error(f"ReAct analysis timed out for {thread_id} after {run_timeout}s")
+        result = {
+            "answer": f"Analysis timed out after {run_timeout}s (react_run_timeout)",
+            "report": None,
+            "iterations": 0,
+            "tools_used": [],
+            "cost": 0,
+        }
+        _results[thread_id] = result
+        _progress_states[thread_id]["status"] = "failed"
+        _progress_states[thread_id]["current_step"] = "failed"
+        _progress_states[thread_id]["completed_at"] = datetime.now(UTC).isoformat()
+        _save_to_db(thread_id, query, symbols, result, "failed")
     except Exception as e:
         logger.error(f"ReAct analysis failed for {thread_id}: {e}")
         result = {

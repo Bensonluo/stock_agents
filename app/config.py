@@ -145,6 +145,11 @@ class Settings(BaseSettings):
     # internal upstream call hangs never raises — the loop stalls forever and
     # holds an analysis-capacity slot (iteration 170). 0 disables the bound.
     react_tool_timeout: float = 120.0
+    # Overall wall clock for one ReAct run (iteration 177). Iterations are
+    # capped (agent_max_iterations) and every tool call bounded (above), but
+    # the worst-case bounded run still holds an analysis-capacity slot for
+    # tens of minutes. 0 disables the bound.
+    react_run_timeout: float = 900.0
 
     # Backtesting
     backtest_initial_cash: float = 10000.0
