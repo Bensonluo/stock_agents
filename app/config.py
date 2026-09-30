@@ -160,6 +160,12 @@ class Settings(BaseSettings):
     rate_limit_backtest_limit: int = 30
     rate_limit_backtest_window_seconds: int = 600
 
+    # Analysis capacity (iteration 170): global in-flight cap on analysis
+    # workflows. The rate limiter bounds ONE client; this bounds the server
+    # total — concurrent full pipelines (each ~162s of multi-agent LLM work)
+    # stack unbounded otherwise. 0 disables the guard.
+    max_concurrent_analyses: int = 2
+
 
 @lru_cache
 def get_settings() -> Settings:

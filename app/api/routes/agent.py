@@ -4,12 +4,14 @@ import ast
 import asyncio
 import json
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.api.analysis_capacity import reserve_analysis_slot
 from app.api.rate_limit import rate_limit
 from app.react_agent.react_agent import ReActAgent
 from app.services.report_service import ReportService
@@ -82,14 +84,22 @@ class ProgressResponse(BaseModel):
 )
 async def analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks):
     """Start an autonomous stock analysis."""
-    thread_id = f"react-{uuid.uuid4()}"
-    background_tasks.add_task(
-        _run_analysis,
-        thread_id=thread_id,
-        query=request.query,
-        symbols=request.symbols,
-        max_iterations=request.max_iterations,
-    )
+    # Admission control: 503 when the server is at max_concurrent_analyses;
+    # the background task returns the slot when the agent run finishes.
+    release = reserve_analysis_slot()
+    try:
+        thread_id = f"react-{uuid.uuid4()}"
+        background_tasks.add_task(
+            _run_guarded_analysis,
+            thread_id=thread_id,
+            query=request.query,
+            symbols=request.symbols,
+            max_iterations=request.max_iterations,
+            release=release,
+        )
+    except Exception:
+        release()
+        raise
     return AnalyzeResponse(thread_id=thread_id, status="processing")
 
 
@@ -310,6 +320,25 @@ def _save_to_db(thread_id: str, query: str, symbols: list[str], result: dict, st
             )
     except Exception as e:
         logger.warning(f"Failed to save to DB for {thread_id}: {e}")
+
+
+async def _run_guarded_analysis(
+    thread_id: str,
+    query: str,
+    symbols: list[str],
+    max_iterations: int,
+    release: Callable[[], None],
+):
+    """Background wrapper: return the admission slot whatever the outcome."""
+    try:
+        await _run_analysis(
+            thread_id=thread_id,
+            query=query,
+            symbols=symbols,
+            max_iterations=max_iterations,
+        )
+    finally:
+        release()
 
 
 async def _run_analysis(thread_id: str, query: str, symbols: list[str], max_iterations: int):

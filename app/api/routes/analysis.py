@@ -1,11 +1,13 @@
 """Stock analysis endpoints."""
 
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.api.analysis_capacity import analysis_slot, reserve_analysis_slot
 from app.api.dependencies import get_orchestrator
 from app.api.rate_limit import rate_limit
 from app.monitoring.workflow_status import PIPELINE_AGENTS
@@ -151,6 +153,11 @@ async def analyze_stocks(
     Returns:
         Analysis response with thread_id
     """
+    # Admission control: 503 when the server already runs
+    # max_concurrent_analyses workflows; the background task returns the
+    # slot when it finishes.
+    release = reserve_analysis_slot()
+
     thread_id = f"workflow-{uuid.uuid4()}"
 
     logger.info(
@@ -158,22 +165,27 @@ async def analyze_stocks(
         f"query={request.query}, thread_id={thread_id}"
     )
 
-    # Store initial workflow status
-    _store_workflow(
-        thread_id,
-        {
-            "status": "running",
-            "request": request.model_dump(),
-            "started_at": datetime.now(),
-        },
-    )
+    try:
+        # Store initial workflow status
+        _store_workflow(
+            thread_id,
+            {
+                "status": "running",
+                "request": request.model_dump(),
+                "started_at": datetime.now(),
+            },
+        )
 
-    # Execute workflow in background
-    background_tasks.add_task(
-        _execute_workflow,
-        thread_id,
-        request,
-    )
+        # Execute workflow in background
+        background_tasks.add_task(
+            _run_guarded_workflow,
+            thread_id,
+            request,
+            release,
+        )
+    except Exception:
+        release()
+        raise
 
     return AnalysisResponse(
         thread_id=thread_id,
@@ -276,51 +288,64 @@ async def analyze_stocks_sync(request: StockAnalysisRequest) -> AnalysisResultRe
         f"query={request.query}, thread_id={thread_id}"
     )
 
-    try:
-        # Execute workflow
-        result = await _execute_workflow_impl(
-            thread_id,
-            request.query,
-            request.symbols,
-            request.max_retries,
-            request.timeout_per_agent,
-            request.parallel_execution,
-        )
+    # Admission control wraps the whole run: the 503 from a full server must
+    # surface as-is (outside the 500-mapping try below); the slot is held
+    # for the inline run and returned on any exit path.
+    with analysis_slot():
+        try:
+            result = await _execute_workflow_impl(
+                thread_id,
+                request.query,
+                request.symbols,
+                request.max_retries,
+                request.timeout_per_agent,
+                request.parallel_execution,
+            )
 
-        execution_time = time() - start_time
+            execution_time = time() - start_time
 
-        # Store workflow
-        _store_workflow(
-            thread_id,
-            {
-                "status": "completed",
-                "request": request.model_dump(),
-                "result": result,
-                "started_at": datetime.now(),
-                "completed_at": datetime.now(),
-            },
-        )
+            # Store workflow
+            _store_workflow(
+                thread_id,
+                {
+                    "status": "completed",
+                    "request": request.model_dump(),
+                    "result": result,
+                    "started_at": datetime.now(),
+                    "completed_at": datetime.now(),
+                },
+            )
 
-        return AnalysisResultResponse(
-            thread_id=thread_id,
-            query=request.query,
-            symbols=request.symbols,
-            technical_analysis=result.get("technical_analysis", {}),
-            fundamental_analysis=result.get("fundamental_analysis", {}),
-            sentiment_analysis=result.get("sentiment_analysis", {}),
-            risk_assessment=result.get("risk_assessment", {}),
-            decisions=result.get("decision", {}).get("decisions", {}),
-            report=result.get("report", {}),
-            execution_time=execution_time,
-            timestamp=datetime.now().isoformat(),
-        )
+            return AnalysisResultResponse(
+                thread_id=thread_id,
+                query=request.query,
+                symbols=request.symbols,
+                technical_analysis=result.get("technical_analysis", {}),
+                fundamental_analysis=result.get("fundamental_analysis", {}),
+                sentiment_analysis=result.get("sentiment_analysis", {}),
+                risk_assessment=result.get("risk_assessment", {}),
+                decisions=result.get("decision", {}).get("decisions", {}),
+                report=result.get("report", {}),
+                execution_time=execution_time,
+                timestamp=datetime.now().isoformat(),
+            )
 
-    except Exception as e:
-        logger.error(f"Sync analysis failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            logger.error(f"Sync analysis failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # Background task function
+async def _run_guarded_workflow(
+    thread_id: str, request: StockAnalysisRequest, release: Callable[[], None]
+):
+    """Background wrapper: return the admission slot whatever the outcome."""
+    try:
+        await _execute_workflow(thread_id, request)
+    finally:
+        release()
+
+
 async def _execute_workflow(thread_id: str, request: StockAnalysisRequest):
     """Execute workflow in background.
 
