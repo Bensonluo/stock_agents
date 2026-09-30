@@ -1,5 +1,6 @@
 """Multi-agent orchestrator using LangGraph."""
 
+import asyncio
 import json
 from typing import Any
 
@@ -638,7 +639,19 @@ class MultiAgentOrchestrator:
             if mode == "run":
                 agent_result = await agent.run(state)
             else:
-                agent_result = await agent.process(state)
+                # StatelessAgent.process() skips the BaseAgent.run() wrapper,
+                # so nothing bounds it: a hung process() stalls the pipeline
+                # forever and permanently holds an analysis-capacity slot.
+                # Bound it here with timeout_per_agent (<= 0 disables),
+                # mirroring what BaseAgent.run()'s TimeLimiter does for
+                # run-mode agents.
+                timeout = state.get("timeout_per_agent") or 0
+                try:
+                    agent_result = await asyncio.wait_for(
+                        agent.process(state), timeout=timeout if timeout > 0 else None
+                    )
+                except TimeoutError as e:
+                    raise TimeoutError(f"{agent_name} exceeded timeout_per_agent={timeout}s") from e
 
             agent_result = _convert_to_serializable(agent_result)
 
