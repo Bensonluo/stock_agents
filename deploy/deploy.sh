@@ -96,9 +96,13 @@ echo -e "${YELLOW}[4/6] 上传文件到服务器...${NC}"
 # 故 .env、data/、logs/ 等运行时状态整体受保护。data/ 必须整目录排除——
 # 'data/*.db' 不匹配 checkpoints.db-wal/-shm 边车文件,--delete 会误删
 # 运行中 SQLite 的 WAL(提交未 checkpoint 的事务丢失)。
+# 🔴 锚定铁律(2026-09-30 第 5 次部署回滚教训):根级排除必须带前导 '/',
+# 'data/'/'logs/' 不加锚会命中任意深度的同名目录——app/tools/data/(代码)
+# 被整体冻结在服务器旧快照,fetcher 拆分模块与 consensus.py 从未上船,
+# 新镜像 import 崩溃触发自动回滚。嵌套目录按需单列(如 frontend/logs)。
 rsync -avz --delete -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no" \
-    --exclude '.env' \
-    --exclude '.env.*' \
+    --exclude '/.env' \
+    --exclude '/.env.*' \
     --exclude 'node_modules' \
     --exclude '.git' \
     --exclude '__pycache__' \
@@ -118,8 +122,9 @@ rsync -avz --delete -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no" \
     --exclude 'frontend/.next' \
     --exclude 'frontend/.omc' \
     --exclude 'frontend/tsconfig.tsbuildinfo' \
-    --exclude 'data/' \
-    --exclude 'logs/' \
+    --exclude '/data/' \
+    --exclude '/logs/' \
+    --exclude 'frontend/logs' \
     --exclude '.idea' \
     --exclude '.DS_Store' \
     "$PROJECT_ROOT"/ ${SERVER_USER}@${SERVER_IP}:${SERVER_DIR}/
