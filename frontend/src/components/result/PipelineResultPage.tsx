@@ -15,6 +15,8 @@ import { MarketOverview } from './MarketOverview'
 import { AnalysisDetail } from './AnalysisDetail'
 import { SentimentAnalysis } from './SentimentAnalysis'
 import { RiskAssessment } from './RiskAssessment'
+import { CatalystTimeline } from './CatalystTimeline'
+import type { SymbolCatalysts } from './types'
 import { ReportSkeleton } from './ReportSkeleton'
 import { ConsensusBlock } from './report-shared'
 import { BackToTop } from '@/components/layout/BackToTop'
@@ -504,6 +506,12 @@ export function PipelineResultPage({ threadId }: { threadId: string | null }) {
                 </CardContent>
               </Card>
             )}
+
+            {/* 催化剂时间轴 —— 事件标注（by_symbol 逐标的卡；旧报告整键缺席
+             * 时 map 为空，渲染面零扰动） */}
+            {Object.entries(result.report?.sections?.catalysts?.by_symbol || {}).map(([sym, c]) => (
+              <CatalystTimeline key={sym} symbol={sym} data={c as SymbolCatalysts} />
+            ))}
 
             {/* 技术分析 */}
             {result.technical_analysis && (

@@ -16,6 +16,8 @@ import {
   actionZh, actionStyle, trendZh, trendColor, riskZh, riskStyle,
   sentimentZh, scoreOf, SectionCard, OptionImpliedBlock, ConsensusBlock,
 } from './report-shared'
+import { CatalystTimeline } from './CatalystTimeline'
+import type { SymbolCatalysts } from './types'
 import { BarChart3, Brain, Database, Hash, Newspaper, PieChart, Shield } from 'lucide-react'
 
 // ReAct 结构化报告组件 —— 把 answer(JSON)渲染成人类可读的投资报告
@@ -51,6 +53,7 @@ export function ReactReport({ answer, report: structuredReport }: {
   const recommendations = sections.recommendations || {}
   const synthesis = sections.research_synthesis || null
   const evidenceIndex = sections.evidence_index || {}
+  const catalysts = sections.catalysts || {}
 
   const filterEntries = (entries: [string, any][]): [string, any][] =>
     activeSymbol === 'all' ? entries : entries.filter(([s]) => s === activeSymbol)
@@ -68,6 +71,7 @@ export function ReactReport({ answer, report: structuredReport }: {
       ...Object.keys(technical.by_symbol || {}),
       ...Object.keys(fundamental.by_symbol || {}),
       ...(synthesis?.by_symbol ? Object.keys(synthesis.by_symbol) : []),
+      ...Object.keys(catalysts.by_symbol || {}),
     ])
   )
 
@@ -254,6 +258,12 @@ export function ReactReport({ answer, report: structuredReport }: {
           )}
         </SectionCard>
       )}
+
+      {/* 催化剂时间轴 —— 事件标注（by_symbol 逐标的卡；'all' 时逐卡展示，
+       * 选中标的时 filterEntries 只留该标的；旧报告整键缺席 → 零渲染） */}
+      {filterEntries(Object.entries(catalysts.by_symbol || {})).map(([sym, c]) => (
+        <CatalystTimeline key={sym} symbol={sym} data={c as SymbolCatalysts} />
+      ))}
 
       {/* 技术分析 + 基本面(双栏) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

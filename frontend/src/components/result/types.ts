@@ -137,3 +137,34 @@ export interface Consensus {
   target_price?: ConsensusTargetPrice
   ratings?: ConsensusRatings
 }
+
+// 催化剂时间轴标注 —— wire 上的 report.sections.catalysts.by_symbol[symbol]
+// （ReAct 与 pipeline 双视图同源）。镜像后端发射契约：仅当标的至少有一条
+// 未来事件或一条近四季 EPS 预期差时发射 per-symbol 条目，降级 run 整键缺席
+// （optional-key 约定）。纯标注，不参与评分。事件按日期升序、仅含未来事件；
+// detail 为可选的数字字典（分红 {amount, yield_pct} / 解禁 {shares,
+// pct_of_float} / 业绩 {eps_hint}）。*_pct 字段按百分点解释（25 = +25%）。
+export type CatalystBucket = '1w' | '1m' | '3m' | 'later'
+export type CatalystEventType =
+  | 'earnings' | 'dividend' | 'split' | 'preannouncement' | 'unlock' | 'other'
+
+export interface CatalystEvent {
+  date: string // YYYY-MM-DD
+  days_until: number // 距今天数（0 = 今天）
+  bucket: CatalystBucket
+  type: CatalystEventType
+  title: string
+  detail?: Record<string, number>
+}
+
+export interface EarningsSurprise {
+  date: string // YYYY-MM-DD
+  estimate: number
+  actual: number
+  surprise_pct: number // 百分点（wire _pct 约定：25 = +25%）
+}
+
+export interface SymbolCatalysts {
+  events?: CatalystEvent[] // 日期升序、仅未来事件
+  earnings_surprise?: EarningsSurprise[] // 近四季，可能为空
+}
