@@ -73,7 +73,15 @@ class TestExecuteDedup:
         async def no_us_consensus(symbol: str):
             return None  # offline test: no US analyst coverage is the degraded case
 
+        async def no_benchmark(ticker: str):
+            return None  # offline test: benchmark fetch degrades to an absent key
+
         monkeypatch.setattr("app.agents.data_agent.fetch_us_consensus", no_us_consensus)
+        # execute() attaches benchmark/sector series via module-level fetchers;
+        # unmocked, the ^GSPC call makes a real network round-trip (~40s on a
+        # cold cache) — the one hermeticity leak found in the 179 audit.
+        monkeypatch.setattr("app.agents.data_agent.fetch_benchmark_history", no_benchmark)
+        monkeypatch.setattr("app.agents.data_agent.fetch_cn_sector_benchmark", no_benchmark)
         per_symbol = {
             "AAPL": {
                 "market_data": {"AAPL": {}},
