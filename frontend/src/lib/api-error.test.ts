@@ -84,6 +84,48 @@ describe('apiErrorMessage', () => {
   })
 })
 
+describe('apiErrorMessage gate-status mapping (iteration 176)', () => {
+  // The resilience gates answer with English one-liners (rate limiter 429
+  // "Rate limit exceeded — retry after Ns" since iteration 169; capacity
+  // gate 503 "Analysis capacity in use — retry shortly" since iteration
+  // 170). The public demo's UI is Chinese — these two statuses map to
+  // friendly copy, carrying the Retry-After wait when present.
+
+  it('maps 429 to friendly Chinese with the Retry-After wait', async () => {
+    const response = new Response(JSON.stringify({ detail: 'Rate limit exceeded — retry after 41s' }), {
+      status: 429,
+      headers: { 'Retry-After': '42', 'Content-Type': 'application/json' },
+    })
+    expect(await apiErrorMessage(response, 'Analysis request failed')).toBe(
+      '请求过于频繁,请 42 秒后再试',
+    )
+  })
+
+  it('maps 429 without a usable Retry-After to the generic friendly line', async () => {
+    const response = new Response(JSON.stringify({ detail: 'Rate limit exceeded' }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(await apiErrorMessage(response, 'Analysis request failed')).toBe('请求过于频繁,请稍后再试')
+  })
+
+  it('maps 503 (capacity gate) to the busy friendly line', async () => {
+    const response = new Response(JSON.stringify({ detail: 'Analysis capacity in use — retry shortly' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(await apiErrorMessage(response, 'Analysis request failed')).toBe('服务器繁忙,请稍后再试')
+  })
+
+  it('leaves non-gate statuses on the existing contract (422 detail verbatim)', async () => {
+    const msg = await apiErrorMessage(
+      jsonResponse({ detail: 'Not enough data for the requested window' }, 422),
+      'Backtest failed',
+    )
+    expect(msg).toBe('Not enough data for the requested window')
+  })
+})
+
 describe('API error propagation (wiring)', () => {
   it('runBacktest surfaces the backend 422 detail instead of a generic string', async () => {
     vi.stubGlobal(

@@ -25,11 +25,26 @@ function extractDetailMessages(detail: unknown): string[] {
 
 /**
  * Extract the most informative message a failed response can offer:
- * string detail → pydantic array-detail msgs joined with '; ' → body.message
- * → `${fallback} (HTTP ${status})` when the body says nothing usable
- * (including non-JSON bodies, e.g. a proxy's empty 502).
+ * gate statuses (429/503) → friendly Chinese copy with the Retry-After
+ * wait → string detail → pydantic array-detail msgs joined with '; ' →
+ * body.message → `${fallback} (HTTP ${status})` when the body says
+ * nothing usable (including non-JSON bodies, e.g. a proxy's empty 502).
  */
 export async function apiErrorMessage(response: Response, fallback: string): Promise<string> {
+  // The resilience gates answer with English one-liners (rate limiter 429
+  // since iteration 169, capacity gate 503 since iteration 170). The UI is
+  // Chinese — map these two statuses to friendly copy instead of relaying
+  // the raw detail, carrying the Retry-After wait when the header is usable.
+  if (response.status === 429) {
+    const wait = Number(response.headers.get('retry-after'))
+    return Number.isFinite(wait) && wait > 0
+      ? `请求过于频繁,请 ${wait} 秒后再试`
+      : '请求过于频繁,请稍后再试'
+  }
+  if (response.status === 503) {
+    return '服务器繁忙,请稍后再试'
+  }
+
   let body: unknown
   try {
     body = await response.json()
