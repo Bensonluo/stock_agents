@@ -70,7 +70,7 @@ It's a **reference implementation** for production-grade multi-agent systems —
 
 | 📈 Stats | | |
 |:---:|:---:|:---:|
-| **10** data sources | **1246** tests green | **2** architectures |
+| **10** data sources | **1260** tests green | **2** architectures |
 | **5** backtest strategies | **1** shared engine per domain | **WebSocket** real-time |
 
 </div>
@@ -347,6 +347,7 @@ every metric.
 | `OPTION_SIGNALS_ENABLED` | CN option-implied annotation layer — SSE options trio + QVIX market-regime label; pure annotation, no scoring reads it | `true` |
 | `CONSENSUS_ENABLED` | CN analyst-consensus annotation layer — THS EPS forecasts + Sina target prices/ratings per symbol; pure annotation, no scoring reads it | `true` |
 | `RATE_LIMIT_ENABLED` | Per-client sliding-window rate limit on the expensive POSTs (analyze/agent analyze, backtest; GETs unlimited). 10 analysis / 30 backtest per 10 min, tunable via `RATE_LIMIT_*` | `true` |
+| `MAX_CONCURRENT_ANALYSES` | Global cap on concurrently running analysis workflows — 503 when the server is at capacity (the rate limiter bounds one client; this bounds the server total). 0 disables | `2` |
 | `DAILY_RUN_ENABLED` | Opt-in daily watchlist analysis scheduler | `false` |
 | `DAILY_RUN_SYMBOLS` | Comma-separated watchlist for the daily run (cross-sector CN default; IC views need ≥3 scored symbols per run) | `600519,600036,601088,600276,002415,600887` |
 | `DAILY_RUN_TIME` | Daily-run trigger time, server local `HH:MM` | `16:00` |
@@ -389,7 +390,7 @@ stock_agents/
 ├── frontend/                # Next.js dashboard
 ├── deploy/                  # Production deployment scripts
 ├── scripts/                 # smoke_data_chain.py — post-deploy data-chain probe
-├── tests/                   # 1246 tests: unit + integration + path parity
+├── tests/                   # 1260 tests: unit + integration + path parity
 └── docker-compose.yml
 ```
 
@@ -425,6 +426,7 @@ stock_agents/
 - [x] Market-level option-implied annotation — SSE options trio + QVIX regime label (annotation-only, fenced from scoring)
 - [x] Per-symbol CN analyst-consensus annotation — THS EPS forecasts + Sina target prices/ratings (annotation-only, fenced from scoring)
 - [x] API rate limiting — per-client sliding window on the expensive POST endpoints (429 + Retry-After)
+- [x] Analysis concurrency cap — global in-flight limit on workflows (503 + Retry-After when the server is at capacity)
 - [ ] Phase 4: filings RAG, expectations data
 - [ ] Portfolio optimization agent
 - [ ] Multi-language reports (EN/ZH auto-switch)
@@ -434,7 +436,7 @@ stock_agents/
 ## 🧪 Testing
 
 ```bash
-poetry run pytest tests/ -q          # 1246 passed (3 network tests deselected)
+poetry run pytest tests/ -q          # 1260 passed (3 network tests deselected)
 ```
 
 Coverage highlights: every engine has golden-value tests; pipeline/ReAct
@@ -503,7 +505,7 @@ If this project helped you learn multi-agent systems, please ⭐ star the repo.
 - **数据源韧性**:东财 push2his 域名封禁、Yahoo 限流时,腾讯接口自动兜底(A 股日K、全市场快照表、双市场基准指数),美股行业基准在 Yahoo 不可用时由新浪 SPDR 历史兜底;每个 fallback 接缝的 ok/fail/fallback 计数经 `GET /api/monitoring/data-sources` 暴露并在前端监控页展示;核心行情缺失时决策层不发方向性建议(hold、置信 0)
 - **期权隐含标注层**:CN 运行附加一份 SSE 官方期权快照(逐合约 IV → ATM IV/期限结构/25-delta 偏度,官方 PCR)+ QVIX 一年分位 → 恐慌/中性/自满 市场状态标签;流水线与 ReAct 报告均渲染;纯标注——评分/权重/仓位/决策一律不读取,`OPTION_SIGNALS_ENABLED` 可整体关闭
 - **分析师一致预期标注层**:A 股逐标的附加同花顺年度 EPS 预测(近两年 + 隐含增速)+ 新浪机构评级明细(180 天窗口内 ≥3 家目标价均值/中位数、评级计数、对现价隐含上行);原始帧缓存与价格解耦、上行空间每次按现价重算;流水线与 ReAct 报告均渲染;纯标注——基本面评分一律不读取,`CONSENSUS_ENABLED` 可整体关闭
-- **API 限流**:昂贵 POST 端点(分析/回测)按客户端 IP 滑动窗口限流(429 + Retry-After),GET 只读端点不限;`RATE_LIMIT_ENABLED` 可整体关闭
+- **API 限流与并发闸门**:昂贵 POST 端点(分析/回测)按客户端 IP 滑动窗口限流(429 + Retry-After),GET 只读端点不限;全服务器并发分析工作流数有全局上限(满载 503),多客户端叠加也不烧穿 LLM 配额;`RATE_LIMIT_ENABLED` / `MAX_CONCURRENT_ANALYSES` 可调
 - **企业级容错**:每个 Agent 都有熔断器、超时、重试
 - **WebSocket 实时监控**:Agent 执行事件实时推送到前端;监控页含韧性面板(熔断器、重试/超时统计)
 - **策略回测**:SMA、RSI、MACD、Buy & Hold,以及 `technical_score`——逐 bar 重放决策公式技术维度;walk-forward 选参带 Deflated Sharpe 与随机入场零假设基准
