@@ -44,6 +44,7 @@ from app.tools.data.fetcher import (  # noqa: E402
     _sync_fetch_akshare_financials,
     _sync_fetch_tencent_cn_hist,
     benchmark_ticker_for,
+    build_event_calendar,
     earnings_records,
     earnings_surprise_summary,
     fetch_benchmark_history,
@@ -274,6 +275,17 @@ def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -
         result["earnings_surprise"] = surprise_summary
     if info_consensus is not None:
         result["consensus"] = info_consensus
+    # Upcoming event calendar (pure annotation, report-layer contract):
+    # US/HK ride the ticker this function already constructed — calendar/
+    # dividends/splits are three reads off the same session, so a calendar
+    # that rate-limits degrades to key-absent exactly like `info` above.
+    # 6-digit CN symbols take the akshare seam from the async wrapper
+    # (_fetch_financial_data) under the akshare semaphore — nothing
+    # CN-networked happens inside this yfinance leg.
+    if get_settings().events_enabled and benchmark_ticker_for(symbol) != BENCHMARK_TICKERS["cn"]:
+        events = build_event_calendar(symbol, ticker=ticker)
+        if events is not None:
+            result["event_calendar"] = events
     return result
 
 
@@ -697,13 +709,49 @@ class DataCollectionAgent(BaseAgent):
                         f"[data_agent] provider-chain fallback supplied financial data "
                         f"for {symbol}"
                     )
-                    return {**financials, "symbol": symbol}
+                    result = {**financials, "symbol": symbol}
+
+            # CN event calendar (业绩预告/解禁/分红送配): attached after the
+            # fallback resolution so a provider-chain block — which carries
+            # no events of its own — cannot drop it. The akshare calls run
+            # under the akshare semaphore, the same loop-safe pattern as the
+            # financials/history legs.
+            if (
+                result
+                and get_settings().events_enabled
+                and benchmark_ticker_for(symbol) == BENCHMARK_TICKERS["cn"]
+            ):
+                events = await self._fetch_cn_event_calendar(symbol)
+                if events is not None:
+                    result["event_calendar"] = events
 
             return result
 
         except Exception as e:
             logger.error(f"Error fetching financial data for {symbol}: {e}")
             return {}
+
+    async def _fetch_cn_event_calendar(self, symbol: str) -> dict[str, Any] | None:
+        """AkShare event-calendar seam for 6-digit symbols.
+
+        Sync akshare calls stay loop-safe inside asyncio.to_thread under the
+        akshare semaphore — the same pattern as the financials/history legs.
+        None (providers dark / module missing) → the key stays absent.
+        """
+
+        def _cn() -> dict[str, Any] | None:
+            try:
+                import akshare as ak
+            except ImportError:
+                return None
+            return build_event_calendar(symbol, akshare_module=ak)
+
+        try:
+            async with _akshare_semaphore:
+                return await asyncio.to_thread(_cn)
+        except Exception as e:
+            logger.warning(f"[data_agent] CN event calendar failed for {symbol}: {e}")
+            return None
 
     async def _fetch_news(self, symbol: str) -> list[dict[str, Any]]:
         """Fetch news for a symbol.

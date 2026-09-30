@@ -61,6 +61,7 @@ from app.tools.data.fetcher_common import (  # noqa: F401
     _period_to_days,  # noqa: F401
     _snapshot_has_price,  # noqa: F401
 )
+from app.tools.data.fetcher_events import build_event_calendar  # noqa: F401
 from app.tools.data.fetcher_finnhub import (  # noqa: F401
     _FINNHUB_BASE,  # noqa: F401
     _finnhub_fetch,  # noqa: F401

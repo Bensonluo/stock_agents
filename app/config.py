@@ -135,6 +135,12 @@ class Settings(BaseSettings):
     # financial_data[symbol]["consensus"] — pure annotation, no scoring
     # reads it.
     consensus_enabled: bool = True
+    # Per-stock catalyst/event calendar (report-layer contract): US/HK ride
+    # the yfinance ticker the financial leg already constructs (calendar/
+    # dividends/splits); 6-digit CN symbols take the akshare seam (业绩预告/
+    # 解禁/分红送配). Attached under financial_data[symbol]["event_calendar"]
+    # — pure annotation, no scoring reads it.
+    events_enabled: bool = True
 
     # Agent Settings (ReAct)
     agent_max_iterations: int = 15
