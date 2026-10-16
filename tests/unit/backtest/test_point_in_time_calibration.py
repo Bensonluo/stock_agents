@@ -8,13 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.backtest import (
-    calibrate_signals,
-    latest_visible_value,
-    stamp_visibility,
-    visible_from,
-    visible_values_at,
-)
+from app.backtest import calibrate_signals, stamp_visibility, visible_from
 from app.backtest.engine import run_backtest
 
 # ----------------------------------------------------------------------
@@ -37,21 +31,6 @@ class TestPointInTime:
         # 2024 is a leap year: 2023-12-31 + 60 days lands on Feb 29.
         assert block["visible_from"] == ["2025-03-01", "2024-02-29"]
         assert block["data"] == _statement()["data"]  # original block untouched
-
-    def test_period_end_data_is_not_visible_at_period_end(self) -> None:
-        # The newest period (2024-12-31) is invisible at that date; only the
-        # year-older statement has cleared its 60-day lag.
-        assert latest_visible_value(_statement(), "2024-12-31", "Total Revenue") == 100.0
-
-    def test_latest_visible_value_respects_cutoff(self) -> None:
-        assert latest_visible_value(_statement(), "2025-03-01", "Total Revenue") == 120.0
-        assert latest_visible_value(_statement(), "2024-06-01", "Total Revenue") == 100.0
-        assert latest_visible_value(_statement(), "2024-01-01", "Total Revenue") is None
-
-    def test_visible_values_exclude_unfiled_periods(self) -> None:
-        visible = visible_values_at(_statement(), "2024-06-01", "Total Revenue", lag_days=60)
-
-        assert visible == [("2023-12-31", 100.0)]
 
     def test_negative_lag_rejected(self) -> None:
         with pytest.raises(ValueError):

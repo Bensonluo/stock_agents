@@ -6,12 +6,7 @@ from app.backtest.engine import STRATEGIES, STRATEGY_PARAMETERS, BacktestResult,
 from app.backtest.manifest import build_manifest, current_commit, hash_dataframe
 from app.backtest.metrics import compute_metrics
 from app.backtest.null_benchmark import random_entry_null
-from app.backtest.point_in_time import (
-    latest_visible_value,
-    stamp_visibility,
-    visible_from,
-    visible_values_at,
-)
+from app.backtest.point_in_time import stamp_visibility, visible_from
 from app.backtest.walkforward import walk_forward
 
 __all__ = [
@@ -27,12 +22,10 @@ __all__ = [
     "compute_metrics",
     "current_commit",
     "hash_dataframe",
-    "latest_visible_value",
     "random_entry_null",
     "run_backtest",
     "stamp_visibility",
     "visible_from",
-    "visible_values_at",
     "walk_forward",
     "wilson_lower_bound",
 ]
