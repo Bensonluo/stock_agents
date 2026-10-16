@@ -70,7 +70,7 @@ It's a **reference implementation** for production-grade multi-agent systems —
 
 | 📈 Stats | | |
 |:---:|:---:|:---:|
-| **10** data sources | **1389** tests green | **2** architectures |
+| **10** data sources | **1405** tests green | **2** architectures |
 | **5** backtest strategies | **1** shared engine per domain | **WebSocket** real-time |
 
 </div>
@@ -396,7 +396,7 @@ stock_agents/
 ├── frontend/                # Next.js dashboard
 ├── deploy/                  # Production deployment scripts
 ├── scripts/                 # smoke_data_chain.py — post-deploy data-chain probe
-├── tests/                   # 1389 tests: unit + integration + path parity
+├── tests/                   # 1405 tests: unit + integration + path parity
 └── docker-compose.yml
 ```
 
@@ -446,7 +446,7 @@ stock_agents/
 ## 🧪 Testing
 
 ```bash
-poetry run pytest tests/ -q          # 1389 passed (4 network tests deselected)
+poetry run pytest tests/ -q          # 1405 passed (4 network tests deselected)
 ```
 
 Coverage highlights: every engine has golden-value tests; pipeline/ReAct
