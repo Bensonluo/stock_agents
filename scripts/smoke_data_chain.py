@@ -373,6 +373,67 @@ def check_trend_depth() -> tuple[str, str]:
     )
 
 
+def check_us_quarterly_em() -> tuple[str, str]:
+    """US quarterly trend fallback liveness (iteration 201, us_quarterly_em_enabled).
+
+    The deploy host is Yahoo-rate-limited on every endpoint, so the US leg
+    of quarterly trends rides the East Money F10 fallback
+    (stock_financial_us_report_em, 单季报). EM F10 liveness from this
+    container is the one open caveat iteration 201 could not verify (ssh
+    probing banned; push2his's domain-level block is a different endpoint
+    cluster). Pre-deploy SKIP on the Settings-attribute gate (iteration
+    134's pattern); a dark source is an informational FAIL — the wire
+    degrades to the pre-fallback shape, it breaks nothing.
+    """
+    try:
+        from app.config import get_settings
+
+        settings = get_settings()
+    except ImportError:
+        return "SKIP", "app.config absent (pre-deploy image)"
+    if not hasattr(settings, "us_quarterly_em_enabled"):
+        return "SKIP", "US quarterly EM fallback absent (pre-deploy image)"
+    if not settings.trend_depth_enabled:
+        return "SKIP", "trend depth layer off -- US quarterly leg inert by config"
+    if not settings.us_quarterly_em_enabled:
+        return "SKIP", "us_quarterly_em_enabled off by config"
+
+    block = None
+    err = ""
+    try:
+        from app.tools.data.fetcher_us_quarterly import fetch_us_quarterly_income_em
+
+        block = fetch_us_quarterly_income_em("AAPL")
+    except Exception as e:  # noqa: BLE001 -- one-line status per check, never crash
+        err = type(e).__name__
+    income = block.get("income_statement") if isinstance(block, dict) else None
+    quarters = len(income.get("dates") or []) if isinstance(income, dict) else 0
+
+    if quarters >= 2:
+        # Live proof the analysis seam consumes the fallback source.
+        from app.analysis.fundamental.trends import trend_annotation
+
+        trend = trend_annotation({"statements_quarterly": block})
+        if trend is not None:
+            return (
+                "PASS",
+                f"EM F10 单季报 answers: {quarters} quarters, trend basis={trend['basis']} "
+                f"({len(trend.get('metrics', {}))} metrics) -- US quarterly trend leg lit "
+                "via fallback on this host",
+            )
+        return (
+            "PASS",
+            f"EM F10 单季报 answers: {quarters} quarters, no consumable trend rows -- "
+            "annotation degrades honestly",
+        )
+    return (
+        "FAIL",
+        f"EM F10 dark ({err or 'no usable frame'}) -- informational, not a deploy "
+        "blocker; US quarterly trends stay dark on this Yahoo-429 host, wire "
+        "degrades honestly",
+    )
+
+
 def check_full_analysis() -> tuple[str, str]:
     """End-to-end analyze/sync pipeline call (--full gated)."""
     started = time.monotonic()
@@ -451,6 +512,7 @@ def main() -> int:
         ("SSE option snapshot", check_sse_option_snapshot),
         ("option-implied annotation chain", check_option_implied_annotation),
         ("trend-depth data layer", check_trend_depth),
+        ("US quarterly EM fallback (AAPL)", check_us_quarterly_em),
     ]
     if "--full" in sys.argv:
         checks.append(("full analysis chain (--full)", check_full_analysis))
