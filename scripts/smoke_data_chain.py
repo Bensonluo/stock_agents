@@ -302,6 +302,77 @@ def check_option_implied_annotation() -> tuple[str, str]:
     )
 
 
+def check_trend_depth() -> tuple[str, str]:
+    """Trend-depth data layer (iterations 190-192, trend_depth_enabled).
+
+    The CN indicator history and US quarterly statements are the inputs the
+    fundamental trend annotation rides on. Pre-deploy SKIP on the
+    Settings-attribute gate (the pre-trend image's Settings lacks the flag
+    entirely -- an ImportError-style crash would misread as "deploy broke
+    it", iteration 134's lesson). Source-dark legs are informational FAILs:
+    a dark EM/Sina or Yahoo feed degrades the wire to the pre-trend shape,
+    it breaks nothing.
+    """
+    try:
+        from app.config import get_settings
+
+        settings = get_settings()
+    except ImportError:
+        return "SKIP", "app.config absent (pre-deploy image)"
+    if not hasattr(settings, "trend_depth_enabled"):
+        return "SKIP", "trend depth layer absent (pre-deploy image)"
+    if not settings.trend_depth_enabled:
+        return "SKIP", "trend_depth_enabled off by config"
+
+    # CN leg: the same seam the pipeline's AkShare agent calls.
+    cn: dict | None = None
+    cn_err = ""
+    try:
+        from app.tools.data.fetcher_cn import _sync_fetch_akshare_financials
+
+        cn = _sync_fetch_akshare_financials("600519", ak)
+    except Exception as e:  # noqa: BLE001 -- one-line status per check, never crash
+        cn_err = f"{type(e).__name__}"
+    history = cn.get("indicators_history") if isinstance(cn, dict) else None
+    cn_rows = len(history) if isinstance(history, list) else 0
+
+    # US leg: informational only -- Yahoo-429 is the known host shape, the
+    # quarterly statements just ride whatever the ticker session has.
+    us_cols = 0
+    us_err = ""
+    try:
+        import yfinance as yf
+
+        frame = yf.Ticker("AAPL").quarterly_income_stmt
+        us_cols = 0 if frame is None else len(frame.columns)
+    except Exception as e:  # noqa: BLE001
+        us_err = f"{type(e).__name__}"
+    us_note = f"{us_cols} quarter cols" if us_cols else f"dark ({us_err or 'empty'})"
+
+    if cn_rows >= 2:
+        # Live proof the analysis seam emits off this history.
+        from app.analysis.fundamental.trends import trend_annotation
+
+        trend = trend_annotation(cn)
+        if trend is not None:
+            return (
+                "PASS",
+                f"CN indicators_history {cn_rows} rows, trend basis={trend['basis']} "
+                f"as_of={trend.get('as_of', '?')} ({len(trend.get('metrics', {}))} metrics); "
+                f"US quarterly {us_note}",
+            )
+        return (
+            "PASS",
+            f"CN indicators_history {cn_rows} rows, no same-period anchor -- "
+            f"annotation degrades honestly; US quarterly {us_note}",
+        )
+    return (
+        "FAIL",
+        f"CN indicators_history dark ({cn_err or 'no history rows'}) -- informational, "
+        "not a deploy blocker; the wire degrades to the pre-trend shape",
+    )
+
+
 def check_full_analysis() -> tuple[str, str]:
     """End-to-end analyze/sync pipeline call (--full gated)."""
     started = time.monotonic()
@@ -379,6 +450,7 @@ def main() -> int:
         ("EM sector-benchmark chain", check_em_sector_chain),
         ("SSE option snapshot", check_sse_option_snapshot),
         ("option-implied annotation chain", check_option_implied_annotation),
+        ("trend-depth data layer", check_trend_depth),
     ]
     if "--full" in sys.argv:
         checks.append(("full analysis chain (--full)", check_full_analysis))
