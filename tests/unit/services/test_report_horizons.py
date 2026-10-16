@@ -90,9 +90,7 @@ def _rich_extra() -> dict[str, Any]:
         },
         "risk_analysis": {"TEST": {"risk_level": "medium", "risk_score": 40}},
         "research_synthesis": {
-            "per_symbol": {
-                "TEST": {"debate": {"invalidation": "连续两季营收同比转负"}}
-            }
+            "per_symbol": {"TEST": {"debate": {"invalidation": "连续两季营收同比转负"}}}
         },
     }
 
@@ -115,8 +113,10 @@ class TestHorizonViews:
         assert "周线排列bullish" in watch_1w and "持续6周" in watch_1w
         assert "金叉" in watch_1w
 
-        assert any("情景区间" in line and "-29%" in line and "+24%" in line
-                   for line in horizons["1m"]["watch"])
+        assert any(
+            "情景区间" in line and "-29%" in line and "+24%" in line
+            for line in horizons["1m"]["watch"]
+        )
 
         watch_3m = " ".join(horizons["3m"]["watch"])
         assert "红旗1项" in watch_3m
@@ -139,9 +139,13 @@ class TestHorizonViews:
 
     def test_catalyst_only_symbol_still_gets_horizons(self) -> None:
         extra = {
-            "financial_data": {"TEST": {"event_calendar": {"upcoming": [
-                {"date": _day(5), "type": "earnings", "title": "财报发布"}
-            ]}}}
+            "financial_data": {
+                "TEST": {
+                    "event_calendar": {
+                        "upcoming": [{"date": _day(5), "type": "earnings", "title": "财报发布"}]
+                    }
+                }
+            }
         }
         horizons = ReportService.build_sections(_data(extra))["recommendations"]["horizons"]["TEST"]
         assert horizons["1w"]["catalyst"]["type"] == "earnings"
@@ -150,12 +154,16 @@ class TestHorizonViews:
     def test_insufficient_weekly_pack_never_fakes_watch(self) -> None:
         extra = _rich_extra()
         extra["technical_analysis"]["TEST"]["weekly_sma"] = {
-            "status": "insufficient_data", "reason": "thin history"
+            "status": "insufficient_data",
+            "reason": "thin history",
         }
         extra["financial_data"] = {}
         extra["fundamental_analysis"]["TEST"].pop("valuation_scenarios")
         extra["fundamental_analysis"]["TEST"]["quality"] = {
-            "status": "available", "revenue_trend": {}, "cash_quality": {}, "red_flags": []
+            "status": "available",
+            "revenue_trend": {},
+            "cash_quality": {},
+            "red_flags": [],
         }
         extra["research_synthesis"] = {}
         summary = ReportService.build_sections(_data(extra))["recommendations"]

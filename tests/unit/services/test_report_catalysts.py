@@ -36,10 +36,19 @@ def _rich_financial() -> dict[str, Any]:
         "TEST": {
             "event_calendar": {
                 "upcoming": [
-                    {"date": _day(40), "type": "dividend", "title": "除息日", "detail": {"amount": 0.25}},
+                    {
+                        "date": _day(40),
+                        "type": "dividend",
+                        "title": "除息日",
+                        "detail": {"amount": 0.25},
+                    },
                     {"date": _day(3), "type": "earnings", "title": "财报发布"},
-                    {"date": _day(15), "type": "unlock", "title": "限售解禁",
-                     "detail": {"shares": 457665903, "pct_of_float": 0.0211}},
+                    {
+                        "date": _day(15),
+                        "type": "unlock",
+                        "title": "限售解禁",
+                        "detail": {"shares": 457665903, "pct_of_float": 0.0211},
+                    },
                     {"date": _day(-5), "type": "earnings", "title": "过去财报"},  # past → dropped
                     {"date": "not-a-date", "type": "other", "title": "坏行"},  # undated → dropped
                     "garbage-row",  # non-dict → dropped
@@ -89,9 +98,15 @@ class TestCatalystsSection:
         assert "catalysts" not in sections
 
     def test_surprise_only_symbol_still_gets_entry(self) -> None:
-        financial = {"TEST": {"earnings_surprise": {"last_4": [
-            {"date": _day(-30), "estimate": 1.0, "actual": 1.1, "surprise_pct": 0.1}
-        ]}}}
+        financial = {
+            "TEST": {
+                "earnings_surprise": {
+                    "last_4": [
+                        {"date": _day(-30), "estimate": 1.0, "actual": 1.1, "surprise_pct": 0.1}
+                    ]
+                }
+            }
+        }
         sections = ReportService.build_sections(_data(financial))
         view = sections["catalysts"]["by_symbol"]["TEST"]
         assert view["events"] == []
@@ -113,17 +128,21 @@ class TestCatalystsSection:
         assert "catalysts" not in sections
 
     def test_later_bucket_and_late_dates(self) -> None:
-        financial = {"TEST": {"event_calendar": {"upcoming": [
-            {"date": _day(200), "type": "other", "title": "远期事件"},
-        ]}}}
+        financial = {
+            "TEST": {
+                "event_calendar": {
+                    "upcoming": [
+                        {"date": _day(200), "type": "other", "title": "远期事件"},
+                    ]
+                }
+            }
+        }
         view = ReportService.build_sections(_data(financial))["catalysts"]["by_symbol"]["TEST"]
         assert view["events"][0]["bucket"] == "later"
 
     def test_multi_symbol_partial_coverage(self) -> None:
         financial = dict(_rich_financial())
-        sections = ReportService.build_sections(
-            _data(financial, symbols=["TEST", "EMPTY"])
-        )
+        sections = ReportService.build_sections(_data(financial, symbols=["TEST", "EMPTY"]))
         by_symbol = sections["catalysts"]["by_symbol"]
         assert set(by_symbol) == {"TEST"}  # EMPTY has nothing → omitted
 

@@ -201,12 +201,23 @@ def test_summary_is_none_without_any_reported_quarters() -> None:
 
 
 class _FakeTicker:
-    def __init__(self, info: dict, earnings_dates: Any = None):
+    def __init__(
+        self,
+        info: dict,
+        earnings_dates: Any = None,
+        quarterly_frames: dict[str, pd.DataFrame | None] | None = None,
+    ):
         self.info = info
         self.income_stmt = pd.DataFrame()
         self.balance_sheet = pd.DataFrame()
         self.cashflow = pd.DataFrame()
         self.earnings_dates = earnings_dates
+        # Trend depth: real yfinance exposes these three aliases off the
+        # same session; None mirrors a rate-limited/absent statement.
+        frames = quarterly_frames or {}
+        self.quarterly_income_stmt = frames.get("income")
+        self.quarterly_balance_sheet = frames.get("balance")
+        self.quarterly_cashflow = frames.get("cash")
 
 
 def _financial_fetch(monkeypatch: pytest.MonkeyPatch, ticker: _FakeTicker) -> dict[str, Any]:
@@ -291,6 +302,81 @@ def test_empty_info_and_frame_omit_both_keys_without_crash(
     assert "consensus" not in result
     assert "earnings_surprise" not in result
     assert result["earnings_dates"] == []
+
+
+# --------------------------------------------------------------------------
+# Trend depth: quarterly statements ride the same ticker session
+# --------------------------------------------------------------------------
+
+
+def _quarterly_frames() -> dict[str, pd.DataFrame]:
+    """Realistic statement shapes: line-item index, DatetimeIndex columns."""
+    return {
+        "income": pd.DataFrame(
+            {pd.Timestamp("2026-06-30"): [123.0, 45.0], pd.Timestamp("2026-03-31"): [100.0, 40.0]},
+            index=["Total Revenue", "Net Income"],
+        ),
+        "balance": pd.DataFrame(
+            {pd.Timestamp("2026-06-30"): [500.0], pd.Timestamp("2026-03-31"): [480.0]},
+            index=["Total Assets"],
+        ),
+        "cash": pd.DataFrame(
+            {pd.Timestamp("2026-06-30"): [12.0], pd.Timestamp("2026-03-31"): [10.0]},
+            index=["Operating Cash Flow"],
+        ),
+    }
+
+
+def test_quarterly_statements_ride_the_financial_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Trend depth on: the three quarterly statements flow through the same
+    stmt_converter (visibility stamps included) under statements_quarterly —
+    annual frames alone can't show inflection points inside the year."""
+    frames = _quarterly_frames()
+
+    def _converter(df: pd.DataFrame) -> dict[str, Any]:
+        return {"rows": list(df.index), "cols": [d.strftime("%Y-%m-%d") for d in df.columns]}
+
+    monkeypatch.setattr(
+        data_agent_mod.yf, "Ticker", lambda _s: _FakeTicker({"trailingPE": 10.0}, None, frames)
+    )
+    result = data_agent_mod._sync_fetch_financial_data("AAPL", "AAPL", _converter)
+
+    block = result["statements_quarterly"]
+    assert block["income_statement"]["rows"] == ["Total Revenue", "Net Income"]
+    assert block["income_statement"]["cols"] == ["2026-06-30", "2026-03-31"]
+    assert block["balance_sheet"]["rows"] == ["Total Assets"]
+    assert block["cash_flow"]["rows"] == ["Operating Cash Flow"]
+
+
+def test_trend_depth_off_omits_quarterly_statements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Toggle off = exactly the pre-trend payload: annual statements only."""
+    monkeypatch.setattr(get_settings(), "trend_depth_enabled", False)
+
+    result = _financial_fetch(
+        monkeypatch, _FakeTicker({"trailingPE": 10.0}, None, _quarterly_frames())
+    )
+
+    assert "statements_quarterly" not in result
+    assert "income_statement" in result  # annual statements untouched
+
+
+def test_missing_quarterly_attrs_omit_the_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ticker without the quarterly aliases (older yfinance, stripped fake)
+    must degrade to key absence via getattr — never an AttributeError."""
+    ticker = _FakeTicker({"trailingPE": 10.0}, None, _quarterly_frames())
+    del ticker.quarterly_income_stmt, ticker.quarterly_balance_sheet
+    del ticker.quarterly_cashflow
+    monkeypatch.setattr(data_agent_mod.yf, "Ticker", lambda _s: ticker)
+
+    result = data_agent_mod._sync_fetch_financial_data("AAPL", "AAPL", lambda _df: {})
+
+    assert "statements_quarterly" not in result
 
 
 # --------------------------------------------------------------------------

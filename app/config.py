@@ -141,6 +141,14 @@ class Settings(BaseSettings):
     # 解禁/分红送配). Attached under financial_data[symbol]["event_calendar"]
     # — pure annotation, no scoring reads it.
     events_enabled: bool = True
+    # Multi-period trend depth (audit gap #1): US/HK financial legs also
+    # fetch the three quarterly statements under
+    # financial_data[symbol]["statements_quarterly"] (same ticker, no new
+    # session); CN keeps the FULL Sina indicator history under
+    # financial_data[symbol]["indicators_history"] (YTD-cumulative rows —
+    # same-period-prior-year comparison only). False = annual-only
+    # statements and latest-row CN metrics, exactly the pre-trend behavior.
+    trend_depth_enabled: bool = True
 
     # Agent Settings (ReAct)
     agent_max_iterations: int = 15

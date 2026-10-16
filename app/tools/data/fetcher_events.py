@@ -113,7 +113,7 @@ def _parse_date(value: Any) -> date | None:
     into a date; anything unparseable is None, never guessed."""
     if value is None or isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         # YYYYMMDD ints are real dates; epoch-style numbers would silently
         # become 1970 timestamps under pd.to_datetime — refuse them.
         text = str(int(value))
@@ -173,7 +173,7 @@ def _calendar_get(cal: Any, key: str) -> Any:
 def _as_date_list(value: Any) -> list[date]:
     """Earnings Date arrives as a datetime, a list of datetimes, a Series —
     normalize every shape to parsed dates (unparseable entries dropped)."""
-    if value is None or isinstance(value, (str, bytes)):
+    if value is None or isinstance(value, str | bytes):
         items = [] if value is None else [value]
     elif hasattr(value, "__iter__"):
         items = list(value)

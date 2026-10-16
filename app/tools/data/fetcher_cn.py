@@ -4,11 +4,12 @@ fetcher.py (behavior-preserving); outside callers keep importing from
 fetcher.py."""
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import pandas as pd
 
+from app.config import get_settings
 from app.tools.data.fetcher_common import DEFAULT_HISTORY_DAYS, _cn_tencent_symbol
 from app.tools.data.provider_health import record_provider_outcome
 from app.utils.logging import get_logger
@@ -163,6 +164,22 @@ def _pct_to_ratio(value: Any) -> float | None:
     return number / 100.0
 
 
+def _raw_number(value: Any) -> float | None:
+    """Raw indicator cell → float; NaN/None/non-numeric → None.
+
+    The unscaled twin of `_pct_to_ratio` for metrics that are already
+    ratios or absolute values (current/quick ratio, EPS) and must pass
+    through the history block as plain JSON-safe numbers.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:  # NaN — AkShare marks missing periods this way
+        return None
+    return number
+
+
 def _debt_to_equity_from_asset_ratio(pct: Any) -> float | None:
     """Debt/equity from AkShare's debt-to-ASSETS percentage.
 
@@ -197,6 +214,55 @@ def _indicator_value(row: Any, *names: str) -> Any:
     return None
 
 
+def _iso_period(cell: Any) -> str | None:
+    """Sina 日期 cell → ISO string; anything else → None (row unplaceable).
+
+    akshare delivers ``datetime.date`` cells (verified in its source:
+    ``pd.to_datetime(...).dt.date``), but string cells pass through
+    unchanged so a schema drift degrades to skipping that row, not the
+    whole history block.
+    """
+    if isinstance(cell, datetime):
+        return cell.date().isoformat()
+    if isinstance(cell, date):
+        return cell.isoformat()
+    if isinstance(cell, str) and cell:
+        return cell
+    return None
+
+
+def _indicator_metrics(row: Any) -> dict[str, Any]:
+    """One Sina indicator row → canonical metric dict.
+
+    Shared by the latest-row metrics block and every indicators_history
+    row — one mapper, so the trend points and the headline can never drift
+    apart. Canonical names + ratio units: the same keys and thresholds the
+    yfinance path emits and scoring.py buckets.
+    """
+    return {
+        "roe": _pct_to_ratio(_indicator_value(row, "净资产收益率")),
+        # Total-asset return has worn three spellings across releases.
+        "roa": _pct_to_ratio(
+            _indicator_value(row, "总资产净利润率", "总资产利润率", "总资产净利率")
+        ),
+        "gross_margin": _pct_to_ratio(_indicator_value(row, "销售毛利率")),
+        "profit_margin": _pct_to_ratio(_indicator_value(row, "销售净利率")),
+        "debt_to_asset": _pct_to_ratio(_indicator_value(row, "资产负债率")),
+        "debt_to_equity": _debt_to_equity_from_asset_ratio(_indicator_value(row, "资产负债率")),
+        "current_ratio": _raw_number(_indicator_value(row, "流动比率")),
+        "quick_ratio": _raw_number(_indicator_value(row, "速动比率")),
+        # Valuation inputs — without these every A-share scored
+        # insufficient_data on the whole scenario-valuation engine.
+        # The rows are cumulative report periods, but the earnings
+        # method's scenario VALUES are EPS-invariant (eps cancels
+        # through price/eps), so a partial-year row distorts only the
+        # displayed multiple assumption, never the range.
+        "trailing_eps": _raw_number(_indicator_value(row, "摊薄每股收益", "加权每股收益")),
+        "earnings_growth": _pct_to_ratio(_indicator_value(row, "净利润增长率")),
+        "revenue_growth": _pct_to_ratio(_indicator_value(row, "主营业务收入增长率")),
+    }
+
+
 def _sync_fetch_akshare_financials(symbol: str, ak) -> dict[str, Any] | None:
     """Synchronous AkShare financials fetch — shared by both agent paths."""
     df = ak.stock_financial_analysis_indicator(symbol=symbol)
@@ -205,35 +271,24 @@ def _sync_fetch_akshare_financials(symbol: str, ak) -> dict[str, Any] | None:
         return None
 
     latest = df.iloc[-1]
-    return {
+    result = {
         "symbol": symbol,
-        "metrics": {
-            # Canonical names + ratio units — the same keys and thresholds
-            # the yfinance path emits and scoring.py buckets. The old renamed
-            # keys (net_margin) scored zero, and percent-valued ROE maxed
-            # every threshold it touched.
-            "roe": _pct_to_ratio(_indicator_value(latest, "净资产收益率")),
-            # Total-asset return has worn three spellings across releases.
-            "roa": _pct_to_ratio(
-                _indicator_value(latest, "总资产净利润率", "总资产利润率", "总资产净利率")
-            ),
-            "gross_margin": _pct_to_ratio(_indicator_value(latest, "销售毛利率")),
-            "profit_margin": _pct_to_ratio(_indicator_value(latest, "销售净利率")),
-            "debt_to_asset": _pct_to_ratio(_indicator_value(latest, "资产负债率")),
-            "debt_to_equity": _debt_to_equity_from_asset_ratio(
-                _indicator_value(latest, "资产负债率")
-            ),
-            "current_ratio": _indicator_value(latest, "流动比率"),
-            "quick_ratio": _indicator_value(latest, "速动比率"),
-            # Valuation inputs — without these every A-share scored
-            # insufficient_data on the whole scenario-valuation engine.
-            # The rows are cumulative report periods, but the earnings
-            # method's scenario VALUES are EPS-invariant (eps cancels
-            # through price/eps), so a partial-year row distorts only the
-            # displayed multiple assumption, never the range.
-            "trailing_eps": _indicator_value(latest, "摊薄每股收益", "加权每股收益"),
-            "earnings_growth": _pct_to_ratio(_indicator_value(latest, "净利润增长率")),
-            "revenue_growth": _pct_to_ratio(_indicator_value(latest, "主营业务收入增长率")),
-        },
+        "metrics": _indicator_metrics(latest),
         "timestamp": datetime.now().isoformat(),
     }
+    # Trend depth: the full dated table rides along as per-period rows.
+    # The rows are YTD-cumulative within a reporting year, so consumers
+    # must compare same-period-prior-year, never quarter-over-quarter —
+    # the shape note lives in the config flag's comment. A row without a
+    # placeable date is skipped (the latest-row metrics block above never
+    # depended on 日期, so degraded frames keep the old behavior).
+    if get_settings().trend_depth_enabled and "日期" in df.columns:
+        history = []
+        for _, row in df.iterrows():
+            period = _iso_period(row.get("日期"))
+            if period is None:
+                continue
+            history.append({"date": period, "metrics": _indicator_metrics(row)})
+        if history:
+            result["indicators_history"] = history
+    return result

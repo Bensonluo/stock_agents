@@ -286,6 +286,21 @@ def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -
         events = build_event_calendar(symbol, ticker=ticker)
         if events is not None:
             result["event_calendar"] = events
+    # Multi-period trend depth: the same ticker session already exposes the
+    # three quarterly statements — annual-only frames can't show inflection
+    # points inside the year. getattr keeps a stripped/older ticker at key
+    # absence; the statements flow through the SAME converter, so quarterly
+    # visibility stamps (backtest point-in-time safety) come for free.
+    if get_settings().trend_depth_enabled:
+        q_income = getattr(ticker, "quarterly_income_stmt", None)
+        q_balance = getattr(ticker, "quarterly_balance_sheet", None)
+        q_cash = getattr(ticker, "quarterly_cashflow", None)
+        if q_income is not None or q_balance is not None or q_cash is not None:
+            result["statements_quarterly"] = {
+                "income_statement": stmt_converter(q_income) if q_income is not None else {},
+                "balance_sheet": stmt_converter(q_balance) if q_balance is not None else {},
+                "cash_flow": stmt_converter(q_cash) if q_cash is not None else {},
+            }
     return result
 
 

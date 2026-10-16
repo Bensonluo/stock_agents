@@ -598,7 +598,9 @@ class ReportService:
                 # 1w/1m/3m cards then read as progressive detail, not three
                 # copies of the same nearest event.
                 window_events = [
-                    e for e in events if isinstance(e.get("days_until"), int | float)
+                    e
+                    for e in events
+                    if isinstance(e.get("days_until"), int | float)
                     and window_floor < e["days_until"] <= window
                 ]
                 if window_events:
@@ -652,9 +654,9 @@ class ReportService:
                     watch.append(line)
                     break
         if horizon == "1m":
-            scenarios = (
-                compact_valuation_view(fundamental.get("valuation_scenarios")) or {}
-            ).get("scenarios") or {}
+            scenarios = (compact_valuation_view(fundamental.get("valuation_scenarios")) or {}).get(
+                "scenarios"
+            ) or {}
             upsides = [
                 item.get("upside_pct")
                 for method in scenarios.values()
