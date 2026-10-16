@@ -149,6 +149,15 @@ class Settings(BaseSettings):
     # same-period-prior-year comparison only). False = annual-only
     # statements and latest-row CN metrics, exactly the pre-trend behavior.
     trend_depth_enabled: bool = True
+    # US quarterly trend fallback (East Money 单季报): the Tencent Cloud
+    # deploy host is Yahoo-rate-limited on every endpoint (verified
+    # 2026-09-25), so the yfinance quarterly frames behind
+    # trend_depth_enabled are dark in production. akshare's
+    # stock_financial_us_report_em serves pre-differenced discrete quarters
+    # over the CN network the akshare CN legs already use, filling ONLY a
+    # missing financial_data[symbol]["statements_quarterly"] — a live
+    # yfinance result keeps precedence. False = yfinance-only.
+    us_quarterly_em_enabled: bool = True
 
     # Agent Settings (ReAct)
     agent_max_iterations: int = 15

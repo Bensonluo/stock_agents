@@ -55,6 +55,9 @@ from app.tools.data.fetcher import (  # noqa: E402
     sector_benchmark_ticker,
 )
 from app.tools.data.fetcher import dedup_news as _dedup_news  # noqa: E402
+from app.tools.data.fetcher_us_quarterly import (  # noqa: E402
+    fetch_us_quarterly_income_em,
+)
 from app.tools.data.option_signals import (  # noqa: E402
     fetch_qvix_context,
     fetch_sse_option_snapshot,
@@ -740,11 +743,44 @@ class DataCollectionAgent(BaseAgent):
                 if events is not None:
                     result["event_calendar"] = events
 
+            # US quarterly trend depth (East Money fill-only): the deploy
+            # host is Yahoo-rate-limited on every endpoint (verified
+            # 2026-09-25), so the yfinance quarterly frames are dark there
+            # and the US leg of quarterly trends never fires. EM serves
+            # pre-differenced discrete quarters over the CN network the
+            # akshare legs already use. Live yfinance results keep
+            # precedence; any failure leaves the key absent.
+            if (
+                result
+                and "statements_quarterly" not in result
+                and get_settings().trend_depth_enabled
+                and get_settings().us_quarterly_em_enabled
+                and detect_symbol_type(symbol) == "us"
+            ):
+                quarterly = await self._fetch_us_quarterly_statements(symbol)
+                if quarterly is not None:
+                    logger.info(
+                        f"[data_agent] EM quarterly fallback supplied "
+                        f"statements_quarterly for {symbol}"
+                    )
+                    result["statements_quarterly"] = quarterly
+
             return result
 
         except Exception as e:
             logger.error(f"Error fetching financial data for {symbol}: {e}")
             return {}
+
+    async def _fetch_us_quarterly_statements(self, symbol: str) -> dict[str, Any] | None:
+        """East Money quarterly-income seam for US symbols.
+
+        Sync akshare call stays loop-safe inside asyncio.to_thread under the
+        akshare semaphore — the same pattern as the CN events/financials
+        legs. None (endpoint dark / module missing / shape unexpected) →
+        the key stays absent.
+        """
+        async with _akshare_semaphore:
+            return await asyncio.to_thread(fetch_us_quarterly_income_em, symbol)
 
     async def _fetch_cn_event_calendar(self, symbol: str) -> dict[str, Any] | None:
         """AkShare event-calendar seam for 6-digit symbols.
