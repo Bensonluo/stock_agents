@@ -85,6 +85,7 @@ It's a **reference implementation** for production-grade multi-agent systems —
 6. **Backtesting you can trust** — signals fill at the next bar's open, commissions/slippage/stamp tax included, force-liquidation at the end, walk-forward with Wilson-bounded hit rates, and a reproducibility manifest (data hash + params + commit); the `technical_score` strategy replays the live decision formula's technical dimension bar-by-bar, so the engine prices what the agent actually recommends
 7. **Market-level option-implied annotation, fenced from scoring** — every CN run attaches one SSE options snapshot (official per-contract IV surface → ATM IV per expiry, term structure, 25-delta skew, plus the official put/call ratio) and the QVIX one-year percentile maps to a 恐慌/中性/自满 market-regime label; both the pipeline and ReAct reports render the block, and it is annotation-only by construction — risk scores, weights, position sizing and decisions never read it (`OPTION_SIGNALS_ENABLED` toggles the whole layer)
 8. **Per-symbol analyst-consensus annotation for A-shares** — THS annual EPS forecasts (nearest + next year, implied growth over a positive base) and Sina institute ratings (target-price mean/median gated at ≥3 observations inside a 180-day window, rating counts with a bullish tie-break, implied upside against the live price) attach under `financial_data[symbol]["consensus"]` on every 6-digit run, both pipeline and ReAct; raw frames cache price-independent so upside recomputes per call, and the block is annotation-only — the fundamental score never reads it (`CONSENSUS_ENABLED` toggles the whole layer)
+9. **Multi-period fundamental trend annotation** — CN runs carry the full Sina indicator history and US/HK runs the three quarterly statements from the same ticker session; the analysis seam emits a per-symbol trend block (CN: the latest report period vs the same period a year earlier — the only honest comparison for YTD-cumulative rows; US/HK: a 4-quarter revenue/net-income QoQ series), both pipeline and ReAct render it, and it is annotation-only — no score, weight or decision reads it (`TREND_DEPTH_ENABLED` toggles the layer)
 
 ---
 
@@ -349,6 +350,7 @@ every metric.
 | `LLM_TIMEOUT` | HTTP ceiling for every LLM client; research budgets (narrator 45s / panel 90s) stay at or below it | `90` |
 | `OPTION_SIGNALS_ENABLED` | CN option-implied annotation layer — SSE options trio + QVIX market-regime label; pure annotation, no scoring reads it | `true` |
 | `CONSENSUS_ENABLED` | CN analyst-consensus annotation layer — THS EPS forecasts + Sina target prices/ratings per symbol; pure annotation, no scoring reads it | `true` |
+| `TREND_DEPTH_ENABLED` | Fundamental trend annotation layer — CN full Sina indicator history (same-period YoY) + US/HK quarterly statements (4-quarter QoQ); pure annotation, no scoring reads it | `true` |
 | `RATE_LIMIT_ENABLED` | Per-client sliding-window rate limit on the expensive POSTs (analyze/agent analyze, backtest; GETs unlimited). 10 analysis / 30 backtest per 10 min, tunable via `RATE_LIMIT_*` | `true` |
 | `MAX_CONCURRENT_ANALYSES` | Global cap on concurrently running analysis workflows — 503 when the server is at capacity (the rate limiter bounds one client; this bounds the server total). 0 disables | `2` |
 | `MAX_SYMBOLS_PER_REQUEST` | Cap on symbols per analyze request (pipeline + ReAct) — request size is the input axis neither the rate limiter nor the capacity gate bounds. 0 disables | `10` |
@@ -513,6 +515,7 @@ If this project helped you learn multi-agent systems, please ⭐ star the repo.
 - **数据源韧性**:东财 push2his 域名封禁、Yahoo 限流时,腾讯接口自动兜底(A 股日K、全市场快照表、双市场基准指数),美股行业基准在 Yahoo 不可用时由新浪 SPDR 历史兜底;每个 fallback 接缝的 ok/fail/fallback 计数经 `GET /api/monitoring/data-sources` 暴露并在前端监控页展示;核心行情缺失时决策层不发方向性建议(hold、置信 0)
 - **期权隐含标注层**:CN 运行附加一份 SSE 官方期权快照(逐合约 IV → ATM IV/期限结构/25-delta 偏度,官方 PCR)+ QVIX 一年分位 → 恐慌/中性/自满 市场状态标签;流水线与 ReAct 报告均渲染;纯标注——评分/权重/仓位/决策一律不读取,`OPTION_SIGNALS_ENABLED` 可整体关闭
 - **分析师一致预期标注层**:A 股逐标的附加同花顺年度 EPS 预测(近两年 + 隐含增速)+ 新浪机构评级明细(180 天窗口内 ≥3 家目标价均值/中位数、评级计数、对现价隐含上行);原始帧缓存与价格解耦、上行空间每次按现价重算;流水线与 ReAct 报告均渲染;纯标注——基本面评分一律不读取,`CONSENSUS_ENABLED` 可整体关闭
+- **基本面趋势标注层**:CN 挂全量新浪指标历史、US/HK 挂同一 ticker 会话的三份季报;分析层逐标的发趋势块(CN:最新财期对比同期上年——YTD 累计行唯一诚实的口径;US/HK:近四季营收/净利环比序列),流水线与 ReAct 报告均渲染;纯标注——评分一律不读取,`TREND_DEPTH_ENABLED` 可整体关闭
 - **API 限流与并发闸门**:昂贵 POST 端点(分析/回测)按客户端 IP 滑动窗口限流(429 + Retry-After),GET 只读端点不限;全服务器并发分析工作流数有全局上限(满载 503),单次请求的股票代码数也有上限(超限 422),多客户端叠加也不烧穿 LLM 配额;`RATE_LIMIT_ENABLED` / `MAX_CONCURRENT_ANALYSES` / `MAX_SYMBOLS_PER_REQUEST` 可调
 - **企业级容错**:每个 Agent 都有熔断器、超时、重试
 - **WebSocket 实时监控**:Agent 执行事件实时推送到前端;监控页含韧性面板(熔断器、重试/超时统计)
