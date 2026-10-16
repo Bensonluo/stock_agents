@@ -366,6 +366,13 @@ class ReportService:
             consensus = (c["financial_data"].get(symbol) or {}).get("consensus")
             if isinstance(consensus, dict):
                 by_symbol[symbol]["consensus"] = consensus
+            # Multi-period trend annotation (basis label + per-metric deltas
+            # off indicators_history / statements_quarterly): pure
+            # passthrough — the scorer computed it, the wire just carries it.
+            # Absent → key omitted, same optional-key convention.
+            trend = analysis.get("trend")
+            if isinstance(trend, dict) and trend:
+                by_symbol[symbol]["trend"] = trend
 
         overall_rating = "hold"
         if numeric_scores:

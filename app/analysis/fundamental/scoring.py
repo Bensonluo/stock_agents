@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.analysis.fundamental.trends import trend_annotation
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -68,6 +69,12 @@ def analyze_fundamental_scoring(
                 "overall_score": overall,
                 "recommendation": _recommendation(overall["score"]),
             }
+            # Multi-period trend annotation (pure): reads the history the
+            # data layer attached, changes no score above. Absent history →
+            # no key — the pre-trend wire shape, bit-for-bit.
+            trend = trend_annotation(fin)
+            if trend is not None:
+                results[symbol]["trend"] = trend
         except Exception as e:
             logger.error(f"Fundamental analysis failed for {symbol}: {e}")
 
