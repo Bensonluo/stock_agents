@@ -461,28 +461,34 @@ async def websocket_monitoring_endpoint(
     # Get client IP for rate limiting
     client_ip = _get_client_ip(websocket)
 
+    # Security: the IP slot is only released when it was actually acquired.
+    # Unconditional release in `finally` would let every rejected connection
+    # decrement a live slot — eroding the per-IP limit until it no longer
+    # blocks anything.
+    ip_slot_acquired = False
+
     try:
         # Security: Check IP connection limit before accepting
         if not await _can_accept_ip(client_ip):
             logger.warning(f"Connection rejected: IP limit exceeded for {client_ip}")
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
+        ip_slot_acquired = True
 
-        # Accept the WebSocket connection
-        await websocket.accept()
-
-        logger.info(
-            f"WebSocket connection established: connection_id={connection_id}, "
-            f"thread_id={client_thread_id}, ip={client_ip}"
-        )
-
-        # Register with connection manager
+        # Register with connection manager — connect() performs the single
+        # ASGI accept; accepting here as well would send a second
+        # 'websocket.accept' and kill the connection at the protocol layer.
         if client_thread_id:
             await connection_manager.connect(websocket, client_thread_id)
         else:
             # Generate a temporary thread_id for unfiltered connections
             client_thread_id = f"temp_{connection_id}"
             await connection_manager.connect(websocket, client_thread_id)
+
+        logger.info(
+            f"WebSocket connection established: connection_id={connection_id}, "
+            f"thread_id={client_thread_id}, ip={client_ip}"
+        )
 
         # Initialize client subscription
         subscription = ClientSubscription()
@@ -579,8 +585,9 @@ async def websocket_monitoring_endpoint(
         # Disconnect from connection manager
         await connection_manager.disconnect(websocket, client_thread_id)
 
-        # Release IP connection slot
-        await _release_ip(client_ip)
+        # Release IP connection slot (only if this connection acquired one)
+        if ip_slot_acquired:
+            await _release_ip(client_ip)
 
         logger.info(
             f"WebSocket connection closed: connection_id={connection_id}, "
