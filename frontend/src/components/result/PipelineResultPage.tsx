@@ -18,7 +18,7 @@ import { RiskAssessment } from './RiskAssessment'
 import { CatalystTimeline } from './CatalystTimeline'
 import type { SymbolCatalysts } from './types'
 import { ReportSkeleton } from './ReportSkeleton'
-import { ConsensusBlock } from './report-shared'
+import { ConsensusBlock, TrendBlock } from './report-shared'
 import { BackToTop } from '@/components/layout/BackToTop'
 import {
   ArrowLeft, CheckCircle2, AlertCircle, TrendingUp, TrendingDown,
@@ -543,10 +543,11 @@ export function PipelineResultPage({ threadId }: { threadId: string | null }) {
                 </CardHeader>
                 <CardContent>
                   {Object.entries(result.report?.sections?.fundamental_analysis?.by_symbol || {})
-                    .filter(([, f]: any) => f?.consensus)
+                    .filter(([, f]: any) => f?.consensus || f?.trend)
                     .map(([sym, f]: [string, any]) => (
-                      <div key={sym} className="mb-3">
-                        <ConsensusBlock symbol={sym} consensus={f.consensus} />
+                      <div key={sym} className="mb-3 space-y-2">
+                        {f.consensus && <ConsensusBlock symbol={sym} consensus={f.consensus} />}
+                        {f.trend && <TrendBlock symbol={sym} trend={f.trend} />}
                       </div>
                     ))}
                   <AnalysisDetail

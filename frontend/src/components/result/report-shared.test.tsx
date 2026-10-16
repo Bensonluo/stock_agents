@@ -15,10 +15,11 @@
 // and the real cn() import has no side effects.
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { OptionImpliedBlock, ConsensusBlock } from './report-shared'
+import { OptionImpliedBlock, ConsensusBlock, TrendBlock } from './report-shared'
 import type {
   Consensus, ConsensusEpsForecast, ConsensusRatings, ConsensusTargetPrice,
   OptionImplied, OptionImpliedIv,
+  Trend, TrendQoQMetric, TrendYoYMetric,
 } from './types'
 
 const ivFixture = (overrides: Partial<OptionImpliedIv> = {}): OptionImpliedIv => ({
@@ -400,5 +401,124 @@ describe('ConsensusBlock', () => {
     expect(screen.getByText('20 条评级 · 纯标注，不影响评分')).toBeInTheDocument()
     expect(screen.queryByText(/EPS 预测/)).not.toBeInTheDocument()
     expect(screen.queryByText(/目标价/)).not.toBeInTheDocument()
+  })
+})
+
+/* ── TrendBlock ─────────────────────────────────────────────────
+ * DOM pins for the fundamental trend annotation (iteration 191's
+ * wire contract, mirrored in ./types.ts): CN same-period-prior-year
+ * ratios and US/HK quarter-over-quarter series, direction color
+ * routing, the raw-key fallback for metric names the label map
+ * doesn't know, and the honest-absence gate. Same RTL caveat as
+ * ConsensusBlock: nested spans are pinned as their own text. */
+
+const yoyFixture = (overrides: Partial<TrendYoYMetric> = {}): TrendYoYMetric => ({
+  value: 0.31,
+  year_ago: 0.28,
+  delta: 0.03,
+  direction: 'improving',
+  ...overrides,
+})
+
+const qoqFixture = (overrides: Partial<TrendQoQMetric> = {}): TrendQoQMetric => ({
+  quarters: [
+    { quarter: '2025-12-31', value: 98.0 },
+    { quarter: '2026-03-31', value: 100.0 },
+    { quarter: '2026-06-30', value: 123.0 },
+  ],
+  latest_qoq_delta: 23.0,
+  direction: 'improving',
+  ...overrides,
+})
+
+const cnTrend = (overrides: Partial<Trend> = {}): Trend => ({
+  basis: 'same_period_prior_year',
+  as_of: '2026-09-30',
+  metrics: {
+    roe: yoyFixture(),
+    profit_margin: yoyFixture({ value: 0.49, year_ago: 0.49, delta: 0.0, direction: 'flat' }),
+    gross_margin: yoyFixture({ value: 0.55, year_ago: 0.61, delta: -0.06, direction: 'deteriorating' }),
+  },
+  ...overrides,
+})
+
+const usTrend = (overrides: Partial<Trend> = {}): Trend => ({
+  basis: 'quarter_over_quarter',
+  metrics: {
+    revenue: qoqFixture(),
+    net_income: qoqFixture({
+      quarters: [
+        { quarter: '2025-09-30', value: 38.0 },
+        { quarter: '2025-12-31', value: 40.0 },
+        { quarter: '2026-06-30', value: 45.0 },
+      ],
+      latest_qoq_delta: 5.0,
+      direction: 'improving',
+    }),
+  },
+  ...overrides,
+})
+
+describe('TrendBlock', () => {
+  it('renders every CN YoY row: value, prior year, colored delta, basis header, footer', () => {
+    render(<TrendBlock symbol="600519" trend={cnTrend()} />)
+
+    expect(screen.getByText('基本面趋势（同比 · 截至 2026-09-30）')).toBeInTheDocument()
+    // improving: green arrow + signed pp delta
+    expect(screen.getByText('ROE')).toBeInTheDocument()
+    expect(screen.getByText('31.0%')).toBeInTheDocument()
+    expect(screen.getByText('上年 28.0%')).toBeInTheDocument()
+    expect(screen.getByText('↑ +3.0%')).toHaveClass('text-green-600')
+    // flat: slate arrow, no sign noise
+    expect(screen.getByText('→ ±0.0%')).toHaveClass('text-slate-400')
+    // deteriorating: red arrow
+    expect(screen.getByText('毛利率')).toBeInTheDocument()
+    expect(screen.getByText('↓ -6.0%')).toHaveClass('text-red-600')
+
+    expect(screen.getByText('同期上年对比 · 纯标注，不影响评分')).toBeInTheDocument()
+  })
+
+  it('renders US QoQ rows with the quarter series spelled out and latest-prior pairing', () => {
+    render(<TrendBlock symbol="AAPL" trend={usTrend()} />)
+
+    expect(screen.getByText('基本面趋势（环比 · 近4季）')).toBeInTheDocument()
+    expect(screen.getByText('营收')).toBeInTheDocument()
+    // series rendered oldest → newest with arrows, then the colored QoQ delta
+    expect(screen.getByText('98.0 → 100.0 → 123.0')).toBeInTheDocument()
+    expect(screen.getByText('↑ +23.0')).toHaveClass('text-green-600')
+    expect(screen.getByText('净利润')).toBeInTheDocument()
+    expect(screen.getByText('38.0 → 40.0 → 45.0')).toBeInTheDocument()
+
+    expect(screen.getByText('季度环比 · 纯标注，不影响评分')).toBeInTheDocument()
+  })
+
+  it('colors a deteriorating QoQ delta red and renders the 转弱 label', () => {
+    render(
+      <TrendBlock
+        symbol="AAPL"
+        trend={usTrend({
+          metrics: { revenue: qoqFixture({ latest_qoq_delta: -12.5, direction: 'deteriorating' }) },
+        })}
+      />
+    )
+
+    expect(screen.getByText('↓ -12.5')).toHaveClass('text-red-600')
+  })
+
+  it('falls back to the raw metric key when the label map does not know it', () => {
+    render(
+      <TrendBlock
+        symbol="600519"
+        trend={cnTrend({ metrics: { some_new_metric: yoyFixture() } })}
+      />
+    )
+
+    expect(screen.getByText('some_new_metric')).toBeInTheDocument()
+  })
+
+  it('renders nothing at all when metrics is empty', () => {
+    const { container } = render(<TrendBlock symbol="600519" trend={cnTrend({ metrics: {} })} />)
+
+    expect(container).toBeEmptyDOMElement()
   })
 })

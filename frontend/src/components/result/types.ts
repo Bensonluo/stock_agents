@@ -138,6 +138,36 @@ export interface Consensus {
   ratings?: ConsensusRatings
 }
 
+// 基本面趋势标注 —— wire 上的 report.sections.fundamental_analysis.
+// by_symbol[symbol].trend（ReAct 与 pipeline 双视图同源）。镜像
+// app/analysis/fundamental/trends.py 的发射契约：CN（indicators_history）
+// 发 basis=same_period_prior_year 的同比块，US/HK（statements_quarterly）
+// 发 basis=quarter_over_quarter 的环比块；无诚实锚点时整键缺席
+// （optional-key 约定）。纯标注，不参与评分。
+export interface TrendYoYMetric {
+  value: number // 比率单位（0.31 = 31%）
+  year_ago: number
+  delta: number // value − year_ago，百分点差按比率解释
+  direction: 'improving' | 'deteriorating' | 'flat'
+}
+
+export interface TrendQuarterPoint {
+  quarter: string // ISO 日期
+  value: number // 报表原币种绝对值
+}
+
+export interface TrendQoQMetric {
+  quarters: TrendQuarterPoint[] // 旧 → 新，NaN 季已从该行剔除
+  latest_qoq_delta: number // 末两点差（绝对值）
+  direction: 'improving' | 'deteriorating' | 'flat'
+}
+
+export interface Trend {
+  basis: 'same_period_prior_year' | 'quarter_over_quarter'
+  as_of?: string // CN 专用：锚定行日期
+  metrics: Record<string, TrendYoYMetric | TrendQoQMetric>
+}
+
 // 催化剂时间轴标注 —— wire 上的 report.sections.catalysts.by_symbol[symbol]
 // （ReAct 与 pipeline 双视图同源）。镜像后端发射契约：仅当标的至少有一条
 // 未来事件或一条近四季 EPS 预期差时发射 per-symbol 条目，降级 run 整键缺席

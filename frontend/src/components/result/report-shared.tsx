@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { formatNumber, formatPercent, formatSignedPercent, formatCurrency, currencyForSymbol } from '@/lib/format'
-import type { Consensus, OptionImplied } from './types'
+import type { Consensus, OptionImplied, Trend, TrendQoQMetric, TrendYoYMetric } from './types'
 
 /* ReactReport 的共享格式化器与 SectionCard —— 从组件内提取的纯函数
  * （不闭包组件状态；filterEntries 因闭包 activeSymbol 留在组件内）。 */
@@ -256,6 +256,88 @@ export const ConsensusBlock = ({ symbol, consensus: c }: { symbol: string; conse
       <p className="text-slate-400">
         {ratings ? `${ratings.total} 条评级 · ` : ''}纯标注，不影响评分
       </p>
+    </div>
+  )
+}
+
+/* 基本面趋势标注块 —— pipeline / ReAct 两个报告视图共用（镜像
+ * ConsensusBlock 的定位）。纯标注：只读 wire 上的 fundamental
+ * by_symbol[symbol].trend 块（迭代 191：CN indicators_history 同期同比 /
+ * US-HK statements_quarterly 季度环比）；metrics 空或缺席时整块不渲染。
+ * 未知指标键渲染原始键名（数据驱动兜底，后端加指标零前端改动）。 */
+
+const TREND_YOY_LABELS: Record<string, string> = {
+  roe: 'ROE',
+  profit_margin: '净利率',
+  gross_margin: '毛利率',
+  revenue_growth: '营收增速',
+  earnings_growth: '盈利增速',
+}
+
+const TREND_QOQ_LABELS: Record<string, string> = {
+  revenue: '营收',
+  net_income: '净利润',
+}
+
+// direction → 颜色/箭头/文案（同比环比共用；flat 用 ± 而非 +，
+// 「零变化」不是「正变化」）
+export const trendDirectionStyle = (direction: string): { color: string; arrow: string } => {
+  if (direction === 'improving') return { color: 'text-green-600', arrow: '↑' }
+  if (direction === 'deteriorating') return { color: 'text-red-600', arrow: '↓' }
+  return { color: 'text-slate-400', arrow: '→' }
+}
+
+// 整块渲染门：至少一个指标在场（降级 run 整键缺席，由调用方守卫兜底）
+export const hasTrendContent = (trend: Trend | null | undefined): boolean =>
+  !!trend && !!trend.metrics && Object.keys(trend.metrics).length > 0
+
+// symbol prop 预留（镜像 ConsensusBlock 签名便于调用方统一）——CN 比率与
+// US 报表原值都不需要币种路由，故不解构
+export const TrendBlock = ({ trend }: { symbol: string; trend: Trend }) => {
+  if (!hasTrendContent(trend)) return null
+  const isYoy = trend.basis === 'same_period_prior_year'
+  const header = isYoy
+    ? `基本面趋势（同比 · 截至 ${trend.as_of ?? '—'}）`
+    : '基本面趋势（环比 · 近4季）'
+  const footer = isYoy ? '同期上年对比 · 纯标注，不影响评分' : '季度环比 · 纯标注，不影响评分'
+  return (
+    <div className="p-3 border border-slate-200 rounded-lg space-y-1 text-xs">
+      <div className="flex items-center justify-between">
+        <span className="text-slate-500">{header}</span>
+      </div>
+      {Object.entries(trend.metrics).map(([key, metric]) => {
+        const style = trendDirectionStyle(metric.direction)
+        if (isYoy) {
+          const m = metric as TrendYoYMetric
+          return (
+            <div key={key} className="flex justify-between">
+              <span className="text-slate-500">{TREND_YOY_LABELS[key] ?? key}</span>
+              <span className="font-medium">
+                {formatPercent(m.value)}
+                <span className="ml-1 font-normal text-slate-400">{`上年 ${formatPercent(m.year_ago)}`}</span>
+                <span className={cn('ml-1 font-normal', style.color)}>
+                  {metric.direction === 'flat'
+                    ? `${style.arrow} ±${formatPercent(Math.abs(m.delta))}`
+                    : `${style.arrow} ${formatSignedPercent(m.delta)}`}
+                </span>
+              </span>
+            </div>
+          )
+        }
+        const m = metric as TrendQoQMetric
+        return (
+          <div key={key} className="flex justify-between">
+            <span className="text-slate-500">{TREND_QOQ_LABELS[key] ?? key}</span>
+            <span className="font-medium">
+              {m.quarters.map((q) => formatNumber(q.value, 1)).join(' → ')}
+              <span className={cn('ml-1 font-normal', style.color)}>
+                {`${style.arrow} ${m.latest_qoq_delta >= 0 ? '+' : ''}${formatNumber(m.latest_qoq_delta, 1)}`}
+              </span>
+            </span>
+          </div>
+        )
+      })}
+      <p className="text-slate-400">{footer}</p>
     </div>
   )
 }

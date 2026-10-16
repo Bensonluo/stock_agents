@@ -14,7 +14,7 @@ import {
 import { ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts'
 import {
   actionZh, actionStyle, trendZh, trendColor, riskZh, riskStyle,
-  sentimentZh, scoreOf, SectionCard, OptionImpliedBlock, ConsensusBlock,
+  sentimentZh, scoreOf, SectionCard, OptionImpliedBlock, ConsensusBlock, TrendBlock,
 } from './report-shared'
 import { CatalystTimeline } from './CatalystTimeline'
 import type { SymbolCatalysts } from './types'
@@ -427,6 +427,7 @@ export function ReactReport({ answer, report: structuredReport }: {
                       </div>
                     )}
                     {f.consensus && <ConsensusBlock symbol={sym} consensus={f.consensus} />}
+                    {f.trend && <TrendBlock symbol={sym} trend={f.trend} />}
                     {flags.length > 0 && (
                       <div className="space-y-1">
                         {flags.map((flag, i) => (
