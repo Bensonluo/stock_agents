@@ -804,6 +804,8 @@ class DataCollectionAgent(BaseAgent):
         akshare semaphore — the same pattern as the financials/history legs.
         None (providers dark / module missing) → the key stays absent.
         """
+        if not get_settings().akshare_enabled:
+            return None  # config-off no-op: no import, no provider record
 
         def _cn() -> dict[str, Any] | None:
             try:
@@ -849,7 +851,9 @@ class DataCollectionAgent(BaseAgent):
             logger.error(f"Error fetching news for {symbol}: {e}")
             record_provider_outcome("yfinance-news", "fail", f"{type(e).__name__}: {e}")
 
-        if symbol.isdigit() and len(symbol) == 6:
+        # The CN feed is akshare's stock_news_em — gated by AKSHARE_ENABLED
+        # like every other akshare leg; yfinance's own coverage is unaffected.
+        if symbol.isdigit() and len(symbol) == 6 and get_settings().akshare_enabled:
             cn_articles: list[dict[str, Any]] | None = None
             failed = False
             try:
@@ -952,6 +956,13 @@ class AkShareDataAgent(BaseAgent):
 
         if not cn_symbols:
             logger.info("No Chinese symbols found, skipping AkShare collection")
+            return {"market_data": {}, "financial_data": {}}
+
+        # AKSHARE_ENABLED=false: config-off is a no-op, not a provider
+        # failure — bail before any akshare import or fetch. This is the
+        # master gate for the whole CN chain (spot / history / financials).
+        if not get_settings().akshare_enabled:
+            logger.info("AKSHARE_ENABLED=false, skipping Chinese stock data collection")
             return {"market_data": {}, "financial_data": {}}
 
         logger.info(f"Collecting Chinese stock data for {len(cn_symbols)} symbols")

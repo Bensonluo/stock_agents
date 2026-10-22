@@ -75,7 +75,7 @@ Analysis agents produce numpy types (np.float64, np.int64, np.ndarray) that aren
 
 - **yfinance** (`DataCollectionAgent`): US and international stocks
 - **AkShare** (`AkShareDataAgent`): Chinese A-shares (triggered when symbols are 6-digit numbers)
-- Both can be enabled/disabled via `YFINANCE_ENABLED` / `AKSHARE_ENABLED` settings
+- `AKSHARE_ENABLED=false` gates every akshare collection leg (the CN agent, the CN event calendar, and the CN news feed) as a no-op — no provider-health records; `YFINANCE_ENABLED` / `FINNHUB_ENABLED` are declared but not yet wired (reserved, no runtime effect)
 
 ### API Layer
 
