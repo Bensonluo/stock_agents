@@ -27,6 +27,7 @@ import app.tools.data.fetcher_finnhub as fetcher_finnhub_mod
 from app.agents.data_agent import AkShareDataAgent
 from app.config import get_settings
 from app.tools.data.fetcher import fetch_us_news
+from app.tools.data.fetcher_benchmarks import fetch_cn_sector_benchmark
 from app.tools.data.provider_health import provider_health_snapshot, reset_provider_health
 
 _DATES = ("2026-09-22", "2026-09-23", "2026-09-24")
@@ -628,3 +629,120 @@ class TestFinnhubNewsWiring:
         entry = _providers()["finnhub-news"]
         assert entry["fail"] == 1
         assert "nothing" in entry["last_error"]
+
+
+class TestCnSectorBenchWiring:
+    """fetch_cn_sector_benchmark records its outcome — the CN sector leg
+    swallowed its exceptions internally (industry lookup dark, board history
+    dark), leaving the auto_tools caller with an unexplained None. Cache
+    hits stay unrecorded, matching the chain-wide rule."""
+
+    def _clear_sector_cache(self) -> None:
+        import app.tools.data.fetcher_common as fetcher_common_mod
+
+        fetcher_common_mod._cache.clear()
+
+    def _install(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        industry: str | None = "white liquor",
+        hist: dict[str, Any] | None = None,
+        industry_raises: Exception | None = None,
+        hist_raises: Exception | None = None,
+    ) -> None:
+        import app.tools.data.fetcher_benchmarks as benchmarks_mod
+
+        def _name(_symbol: str) -> str | None:
+            if industry_raises is not None:
+                raise industry_raises
+            return industry
+
+        def _history(_industry: str) -> dict[str, Any] | None:
+            if hist_raises is not None:
+                raise hist_raises
+            return hist
+
+        monkeypatch.setattr(benchmarks_mod, "_sync_cn_industry_name", _name)
+        monkeypatch.setattr(benchmarks_mod, "_sync_cn_industry_history", _history)
+
+    @pytest.mark.asyncio
+    async def test_success_records_ok(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._clear_sector_cache()
+        self._install(
+            monkeypatch,
+            industry="white liquor",
+            hist={
+                "symbol": "white liquor",
+                "dates": ["2026-09-21", "2026-09-22"],
+                "close": [100.0, 101.0],
+            },
+        )
+
+        bench = await fetch_cn_sector_benchmark("600519")
+
+        assert bench is not None and bench["dates"] == ["2026-09-21", "2026-09-22"]
+        entry = _providers()["em-sector-benchmark"]
+        assert entry["ok"] == 1 and entry["fail"] == 0
+
+    @pytest.mark.asyncio
+    async def test_industry_lookup_exception_records_fail(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._clear_sector_cache()
+        self._install(monkeypatch, industry_raises=ConnectionError("EM dark"))
+
+        assert await fetch_cn_sector_benchmark("600519") is None
+        entry = _providers()["em-sector-benchmark"]
+        assert entry["fail"] == 1
+        assert "ConnectionError" in entry["last_error"]
+
+    @pytest.mark.asyncio
+    async def test_no_industry_name_records_fail(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._clear_sector_cache()
+        self._install(monkeypatch, industry=None)
+
+        assert await fetch_cn_sector_benchmark("600519") is None
+        entry = _providers()["em-sector-benchmark"]
+        assert entry["fail"] == 1
+        assert "industry" in entry["last_error"]
+
+    @pytest.mark.asyncio
+    async def test_board_history_exception_records_fail(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._clear_sector_cache()
+        self._install(monkeypatch, hist_raises=TimeoutError("board dark"))
+
+        assert await fetch_cn_sector_benchmark("600519") is None
+        entry = _providers()["em-sector-benchmark"]
+        assert entry["fail"] == 1
+        assert "TimeoutError" in entry["last_error"]
+
+    @pytest.mark.asyncio
+    async def test_board_history_empty_records_fail(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._clear_sector_cache()
+        self._install(monkeypatch, hist=None)
+
+        assert await fetch_cn_sector_benchmark("600519") is None
+        entry = _providers()["em-sector-benchmark"]
+        assert entry["fail"] == 1
+        assert "unavailable" in entry["last_error"]
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_records_nothing_and_neer_runs_sync(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._clear_sector_cache()
+        self._install(monkeypatch, industry_raises=AssertionError("must not run"))
+
+        import app.tools.data.fetcher_common as fetcher_common_mod
+
+        cached = {"symbol": "white liquor", "dates": ["2026-09-21"], "close": [100.0]}
+        fetcher_common_mod._cache_set("cn_industry_name_600519", "white liquor")
+        fetcher_common_mod._cache_set("cn_industry_hist_white liquor", cached)
+
+        bench = await fetch_cn_sector_benchmark("600519")
+
+        assert bench is not None and bench["dates"] == ["2026-09-21"]
+        assert "em-sector-benchmark" not in _providers()

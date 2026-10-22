@@ -208,8 +208,10 @@ async def fetch_cn_sector_benchmark(symbol: str) -> dict[str, Any] | None:
             industry = await asyncio.to_thread(_sync_cn_industry_name, symbol)
         except Exception as e:
             logger.warning(f"CN industry lookup failed for {symbol}: {e}")
+            record_provider_outcome("em-sector-benchmark", "fail", f"{type(e).__name__}: {e}")
             return None
         if not industry:
+            record_provider_outcome("em-sector-benchmark", "fail", "no industry name")
             return None
         _cache_set(name_key, industry)
 
@@ -221,7 +223,13 @@ async def fetch_cn_sector_benchmark(symbol: str) -> dict[str, Any] | None:
         bench = await asyncio.to_thread(_sync_cn_industry_history, industry)
     except Exception as e:
         logger.warning(f"CN industry board history failed for {industry}: {e}")
+        record_provider_outcome("em-sector-benchmark", "fail", f"{type(e).__name__}: {e}")
         return None
     if bench is not None:
         _cache_set(hist_key, bench)
+        record_provider_outcome(
+            "em-sector-benchmark", "ok", f"{len(bench.get('dates') or [])} bars ({industry})"
+        )
+    else:
+        record_provider_outcome("em-sector-benchmark", "fail", "board history unavailable")
     return bench
