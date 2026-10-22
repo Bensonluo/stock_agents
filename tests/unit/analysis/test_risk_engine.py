@@ -76,6 +76,19 @@ class TestRelativeMetrics:
         assert metrics["r_squared"] == pytest.approx(1.0)
         assert metrics["alpha_annualized"] == pytest.approx(0.0, abs=1e-4)
 
+    @pytest.mark.filterwarnings("error::RuntimeWarning")
+    def test_flat_stock_vs_varying_benchmark_is_warning_free(self) -> None:
+        # A flat tape (suspended stock, pinned price) has zero stddev —
+        # corrcoef's internal c /= stddev divide must not leak a
+        # RuntimeWarning; correlation honestly comes back NaN.
+        stock = np.zeros(60)
+        benchmark = np.sin(np.linspace(0, 12, 60)) * 0.01
+
+        metrics = relative_risk_metrics(stock, benchmark)
+
+        assert metrics["beta"] == pytest.approx(0.0, abs=1e-12)
+        assert np.isnan(metrics["correlation"])
+
     def test_inadequate_overlap_returns_nones(self) -> None:
         metrics = relative_risk_metrics(np.full(5, 0.01), np.full(5, 0.01))
 

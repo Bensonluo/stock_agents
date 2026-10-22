@@ -291,7 +291,12 @@ def relative_risk_metrics(
     if beta is None:
         return insufficient
 
-    correlation = float(np.corrcoef(stock, benchmark)[0, 1])
+    # Zero-stddev inputs (flat tape vs a moving benchmark) are real-world
+    # degenerate data, not errors: corrcoef divides by stddev internally and
+    # yields NaN — the honest "no linear relation measurable" answer. errstate
+    # keeps numpy's internal divide from leaking a RuntimeWarning to stderr.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        correlation = float(np.corrcoef(stock, benchmark)[0, 1])
     # Annualized excess of the stock over what beta explains of the benchmark,
     # both measured above the risk-free rate.
     daily_rf = float(risk_free_rate_annual) / 252.0

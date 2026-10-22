@@ -81,6 +81,9 @@ target-version = ["py311"]
 
 [tool.pytest.ini_options]
 addopts = "-m 'not network'"
+# Suite hygiene gate (iteration 208): stale marks (sync tests tagged asyncio,
+# unknown markers) fail loudly instead of accumulating as warning noise.
+filterwarnings = ["error::pytest.PytestWarning"]
 markers = [
     "network: tests that call live third-party services and may be rate-limited",
 ]
