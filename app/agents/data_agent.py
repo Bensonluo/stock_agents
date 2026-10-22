@@ -402,6 +402,7 @@ def _sync_fetch_akshare_history(symbol: str, ak) -> dict[str, Any] | None:
     """
     start = (datetime.now() - timedelta(days=DEFAULT_HISTORY_DAYS)).strftime("%Y%m%d")
     end = datetime.now().strftime("%Y%m%d")
+    em_error: str | None = None
     df = None
     try:
         df = ak.stock_zh_a_hist(
@@ -409,8 +410,16 @@ def _sync_fetch_akshare_history(symbol: str, ak) -> dict[str, Any] | None:
         )
     except Exception as e:
         logger.warning(f"AkShare East Money history failed for {symbol}: {e}")
+        em_error = f"{type(e).__name__}: {e}"
     if df is None or df.empty:
+        # Same seam name as fetch_historical's CN branch — same upstream
+        # provider, the one-name-two-call-sites precedent. On the production
+        # host the primary is domain-blocked and only the fallback answered;
+        # without this record the primary's outage was unreadable.
+        record_provider_outcome("akshare-cn-hist", "fail", em_error or "empty East Money frame")
         df = _sync_fetch_tencent_cn_hist(symbol, ak, DEFAULT_HISTORY_DAYS)
+    else:
+        record_provider_outcome("akshare-cn-hist", "ok")
 
     if df is None or df.empty:
         return None

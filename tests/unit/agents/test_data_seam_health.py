@@ -17,6 +17,7 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 
 import app.agents.data_agent as data_agent_mod
@@ -177,3 +178,104 @@ class TestNewsSeamHealth:
         state = _state("em-news-cn")
         assert state is not None
         assert state["fail"] == 1
+
+
+class TestAkshareHistorySeamHealth:
+    """The agent-level CN history path (the production pipeline's leg):
+    the East Money primary recorded nothing — success, empty frame, and
+    exception were all invisible, so on the production host (push2his
+    domain-blocked since 2026-09-27) only the Tencent fallback ever showed
+    in provider-health and the primary's persistent outage was unreadable.
+    Same seam name as fetch_historical's CN branch — same upstream
+    provider, the iteration-101 one-name-two-call-sites precedent."""
+
+    def _em_frame(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {
+                    "日期": "2026-09-22",
+                    "开盘": 1600.0,
+                    "最高": 1625.0,
+                    "最低": 1595.0,
+                    "收盘": 1620.0,
+                    "成交量": 24_000,
+                    "成交额": 3.9e9,
+                }
+            ]
+        )
+
+    def _tx_frame(self) -> pd.DataFrame:
+        # English columns, volume in shares — exactly as stock_zh_a_hist_tx
+        # answers; the shared fallback mapper renames and rescales.
+        return pd.DataFrame(
+            [
+                {
+                    "date": "2026-09-22",
+                    "open": 1600.0,
+                    "close": 1620.0,
+                    "high": 1625.0,
+                    "low": 1595.0,
+                    "volume": 2_400_000,
+                    "amount": 3.9e9,
+                }
+            ]
+        )
+
+    def _ak(self, *, em_frame=None, em_raises=None, tx_frame=None) -> SimpleNamespace:
+        def _em(**_kwargs):
+            if em_raises is not None:
+                raise em_raises
+            return em_frame
+
+        def _tx(**_kwargs):
+            if tx_frame is None:
+                raise AssertionError("tencent must not run")
+            return tx_frame
+
+        return SimpleNamespace(stock_zh_a_hist=_em, stock_zh_a_hist_tx=_tx)
+
+    def test_em_ok_records_ok_and_never_tencent(self) -> None:
+        result = data_agent_mod._sync_fetch_akshare_history(
+            "600519", self._ak(em_frame=self._em_frame())
+        )
+
+        assert result is not None and result["close"] == [1620.0]
+        assert "amount" in result
+        state = _state("akshare-cn-hist")
+        assert state is not None, "EM primary leg must record"
+        assert state["ok"] == 1 and state["last_error"] is None
+        assert _state("tencent-cn-hist") is None  # healthy primary → no fallback record
+
+    def test_em_dark_records_fail_and_tencent_catches(self) -> None:
+        ak = self._ak(em_raises=ConnectionError("TCP dropped"), tx_frame=self._tx_frame())
+
+        result = data_agent_mod._sync_fetch_akshare_history("600519", ak)
+
+        assert result is not None  # fallback supplied the bars
+        state = _state("akshare-cn-hist")
+        assert state is not None and state["fail"] == 1
+        assert "ConnectionError" in state["last_error"]
+        assert _state("tencent-cn-hist")["ok"] == 1
+
+    def test_em_empty_frame_records_fail(self) -> None:
+        ak = self._ak(em_frame=pd.DataFrame(), tx_frame=self._tx_frame())
+
+        result = data_agent_mod._sync_fetch_akshare_history("600519", ak)
+
+        assert result is not None
+        state = _state("akshare-cn-hist")
+        assert state is not None and state["fail"] == 1
+        assert "empty" in state["last_error"]
+        assert _state("tencent-cn-hist")["ok"] == 1
+
+    def test_both_dead_records_both_fails(self) -> None:
+        ak = SimpleNamespace(
+            stock_zh_a_hist=self._ak(em_raises=ConnectionError("dark")).stock_zh_a_hist,
+            stock_zh_a_hist_tx=lambda **_k: None,
+        )
+
+        result = data_agent_mod._sync_fetch_akshare_history("600519", ak)
+
+        assert result is None  # pre-existing degradation unchanged
+        assert _state("akshare-cn-hist")["fail"] == 1
+        assert _state("tencent-cn-hist")["fail"] == 1
