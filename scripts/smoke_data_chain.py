@@ -469,9 +469,14 @@ def check_full_analysis() -> tuple[str, str]:
 def check_provider_health_endpoint() -> tuple[str, str]:
     """GET /api/monitoring/data-sources -- provider outcome counters live.
 
-    Runs after the --full analysis so the counters have had a run to record;
-    even a degraded run records its failed attempts, so an empty providers
-    dict after a completed analysis means the wiring never fired."""
+    Runs after the --full analysis (symbols=[600000], a CN symbol) so the
+    counters have had a run to record; even a degraded run records its failed
+    attempts, so an empty providers dict after a completed analysis means the
+    wiring never fired. Shape/non-empty alone would stay green if a seam went
+    silently dark (the other providers keep the dict non-empty), so the
+    CN-run seams are pinned by name: yfinance-news and em-news-cn record
+    per-run regardless of outcome, akshare-cn-events only when
+    EVENTS_ENABLED is on; em-us-quarterly is US-only, out of scope here."""
     try:
         resp = requests.get("http://localhost:8000/api/monitoring/data-sources", timeout=10)
     except Exception as e:
@@ -497,7 +502,21 @@ def check_provider_health_endpoint() -> tuple[str, str]:
     }
     if set(sample) != expected:
         return "FAIL", f"per-provider shape drift: {sorted(sample)}"
-    return "PASS", f"{n} providers recorded"
+    # Seam pinning: presence -- ok or fail alike -- is the wiring proof. The
+    # settings read is individually guarded like every other app.* import
+    # here; an unreadable config degrades to the unconditional seam set.
+    expected_seams = {"yfinance-news", "em-news-cn"}
+    try:
+        from app.config import get_settings
+
+        if getattr(get_settings(), "events_enabled", False):
+            expected_seams.add("akshare-cn-events")
+    except Exception:
+        pass
+    missing = expected_seams - set(providers)
+    if missing:
+        return "FAIL", f"seams silent after a full CN analysis: {sorted(missing)}"
+    return "PASS", f"{n} providers recorded incl. {sorted(expected_seams)}"
 
 
 def main() -> int:
