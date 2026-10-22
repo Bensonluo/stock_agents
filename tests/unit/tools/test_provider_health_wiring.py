@@ -23,8 +23,10 @@ import app.agents.data_agent as data_agent_mod
 import app.tools.data.fetcher as fetcher_mod
 import app.tools.data.fetcher_benchmarks as fetcher_benchmarks_mod
 import app.tools.data.fetcher_cn as fetcher_cn_mod
+import app.tools.data.fetcher_finnhub as fetcher_finnhub_mod
 from app.agents.data_agent import AkShareDataAgent
 from app.config import get_settings
+from app.tools.data.fetcher import fetch_us_news
 from app.tools.data.provider_health import provider_health_snapshot, reset_provider_health
 
 _DATES = ("2026-09-22", "2026-09-23", "2026-09-24")
@@ -562,3 +564,67 @@ class TestSpotTableWiring:
         providers = _providers()
         assert providers["em-spot-table"]["fail"] == 1
         assert providers["tencent-spot"]["fail"] == 1
+
+
+class TestFinnhubNewsWiring:
+    """fetch_us_news records its outcome (iteration 212/213 gap: the US news
+    fallback was the one chain member invisible to provider-health — its
+    exceptions are swallowed inside the fetcher, so only the fetcher itself
+    can distinguish key-absent no-op from a called-and-dark feed)."""
+
+    @pytest.mark.asyncio
+    async def test_no_key_records_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No FINNHUB_API_KEY is a config-off no-op — never a recorded fail
+        (same semantics the keyed historical layers already pin)."""
+        await fetch_us_news("AAPL")
+        assert "finnhub-news" not in _providers()
+
+    @pytest.mark.asyncio
+    async def test_articles_record_ok_with_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        settings = get_settings()
+        monkeypatch.setattr(settings, "finnhub_api_key", "test-key")
+        items = [
+            {"headline": f"Apple story {i}", "url": f"https://x/{i}", "datetime": 1, "source": "R"}
+            for i in range(2)
+        ]
+        monkeypatch.setattr(fetcher_finnhub_mod, "_finnhub_get", lambda path, params: items)
+
+        articles = await fetch_us_news("AAPL")
+
+        assert len(articles) == 2
+        entry = _providers()["finnhub-news"]
+        assert entry["ok"] == 1 and entry["fail"] == 0
+        assert entry["last_ok_at"] is not None and entry["last_error"] is None
+
+    @pytest.mark.asyncio
+    async def test_exception_records_fail_with_type(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        settings = get_settings()
+        monkeypatch.setattr(settings, "finnhub_api_key", "test-key")
+
+        def _dark(path: str, params: dict) -> list:
+            raise ConnectionError("feed dark")
+
+        monkeypatch.setattr(fetcher_finnhub_mod, "_finnhub_get", _dark)
+
+        articles = await fetch_us_news("AAPL")
+
+        assert articles == []  # caller contract unchanged (empty feed, no raise)
+        entry = _providers()["finnhub-news"]
+        assert entry["fail"] == 1 and entry["ok"] == 0
+        assert "ConnectionError" in entry["last_error"]
+
+    @pytest.mark.asyncio
+    async def test_empty_feed_records_fail(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Key set + feed answered nothing mirrors em-news-cn's honest
+        "feed returned nothing" fail — presence of the record is the wiring
+        proof, the outcome is the feed's honesty."""
+        settings = get_settings()
+        monkeypatch.setattr(settings, "finnhub_api_key", "test-key")
+        monkeypatch.setattr(fetcher_finnhub_mod, "_finnhub_get", lambda path, params: None)
+
+        articles = await fetch_us_news("AAPL")
+
+        assert articles == []
+        entry = _providers()["finnhub-news"]
+        assert entry["fail"] == 1
+        assert "nothing" in entry["last_error"]

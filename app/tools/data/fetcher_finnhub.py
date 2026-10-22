@@ -12,6 +12,7 @@ import requests
 from app.config import get_settings
 from app.tools.data.fetcher_common import _percentage_to_ratio, _period_to_days
 from app.tools.data.fetcher_news import finnhub_news_articles
+from app.tools.data.provider_health import record_provider_outcome
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -172,9 +173,20 @@ async def fetch_us_news(symbol: str) -> list[dict[str, Any]]:
         news = await asyncio.to_thread(_news)
     except Exception as e:
         logger.warning(f"[finnhub-news] failed for {symbol}: {e}")
+        record_provider_outcome("finnhub-news", "fail", f"{type(e).__name__}: {e}")
         return []
     items = news if isinstance(news, list) else []
-    return finnhub_news_articles(items[:20], symbol=symbol)
+    articles = finnhub_news_articles(items[:20], symbol=symbol)
+    # Provider-health recording: this seam was the chain's one invisible
+    # member -- exceptions are swallowed here and the caller cannot tell
+    # key-absent from dark, so the outcome records at the fetcher itself.
+    # No key (early return above) stays unrecorded, matching the keyed
+    # historical layers' config-off semantics.
+    if articles:
+        record_provider_outcome("finnhub-news", "ok", f"{len(articles)} articles")
+    else:
+        record_provider_outcome("finnhub-news", "fail", "feed returned nothing")
+    return articles
 
 
 async def _finnhub_historical(symbol: str, period: str) -> dict[str, Any] | None:
