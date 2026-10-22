@@ -279,3 +279,54 @@ class TestAkshareHistorySeamHealth:
         assert result is None  # pre-existing degradation unchanged
         assert _state("akshare-cn-hist")["fail"] == 1
         assert _state("tencent-cn-hist")["fail"] == 1
+
+
+class TestAkshareFinancialsSeamHealth:
+    """The CN financials leg recorded nothing: dark, empty, and served were
+    all invisible. akshare's stock_financial_analysis_indicator is
+    Sina-sourced (stock_finance_sina.py) — the seam records under
+    sina-cn-financials, whatever the smoke harness's legacy 'EM financial'
+    label says. Exceptions record then re-raise: every caller's contract
+    stays bit-identical."""
+
+    def _frame(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {"日期": "2026-06-30", "净资产收益率": 31.0},
+                {"日期": "2026-09-30", "净资产收益率": 30.5},
+            ]
+        )
+
+    def test_served_frame_records_ok(self) -> None:
+        ak = SimpleNamespace(stock_financial_analysis_indicator=lambda **_k: self._frame())
+
+        result = data_agent_mod._sync_fetch_akshare_financials("600519", ak)
+
+        assert result is not None
+        assert result["metrics"]["roe"] == pytest.approx(0.305)  # latest row
+        state = _state("sina-cn-financials")
+        assert state is not None, "financials leg must record"
+        assert state["ok"] == 1 and state["last_error"] is None
+
+    def test_empty_frame_records_fail(self) -> None:
+        ak = SimpleNamespace(stock_financial_analysis_indicator=lambda **_k: pd.DataFrame())
+
+        result = data_agent_mod._sync_fetch_akshare_financials("600519", ak)
+
+        assert result is None
+        state = _state("sina-cn-financials")
+        assert state is not None and state["fail"] == 1
+        assert "empty" in state["last_error"]
+
+    def test_exception_records_fail_and_reraises(self) -> None:
+        def _raise(**_kwargs):
+            raise ConnectionError("Sina dark")
+
+        ak = SimpleNamespace(stock_financial_analysis_indicator=_raise)
+
+        with pytest.raises(ConnectionError):
+            data_agent_mod._sync_fetch_akshare_financials("600519", ak)
+
+        state = _state("sina-cn-financials")
+        assert state is not None and state["fail"] == 1
+        assert "ConnectionError" in state["last_error"]

@@ -265,10 +265,19 @@ def _indicator_metrics(row: Any) -> dict[str, Any]:
 
 def _sync_fetch_akshare_financials(symbol: str, ak) -> dict[str, Any] | None:
     """Synchronous AkShare financials fetch — shared by both agent paths."""
-    df = ak.stock_financial_analysis_indicator(symbol=symbol)
-
+    # Provider-health (sina-cn-financials): akshare's indicator call is
+    # Sina-sourced (stock_finance_sina.py) despite the smoke harness's
+    # legacy "EM financial" label. Exception records then re-raises — the
+    # agent wrapper's own except path stays live and identical.
+    try:
+        df = ak.stock_financial_analysis_indicator(symbol=symbol)
+    except Exception as e:
+        record_provider_outcome("sina-cn-financials", "fail", f"{type(e).__name__}: {e}")
+        raise
     if df.empty:
+        record_provider_outcome("sina-cn-financials", "fail", "empty indicator frame")
         return None
+    record_provider_outcome("sina-cn-financials", "ok", f"{len(df)} periods")
 
     latest = df.iloc[-1]
     result = {
