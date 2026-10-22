@@ -220,7 +220,12 @@ def _rsi(close: pd.Series, period: int) -> pd.Series:
     avg_loss = _wilder(-delta.clip(upper=0.0))
     # Values begin at bar index `period` (where the seed completes) — the
     # same first-value position the old rolling window produced.
-    out.iloc[period:] = 100 - 100 / (1 + avg_gain / avg_loss)
+    # Degenerate tapes are deliberate NaN/100 semantics, not accidents:
+    # monotone-up divides by a zero avg_loss (RS=inf → RSI 100) and a flat
+    # tape is 0/0 (no momentum signal → NaN, the live engine's None
+    # contract). errstate keeps numpy from warning about both.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out.iloc[period:] = 100 - 100 / (1 + avg_gain / avg_loss)
     return out
 
 

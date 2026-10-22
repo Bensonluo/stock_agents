@@ -12,7 +12,7 @@ import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.services.ic_service import (
     evaluate_confidence_calibration,
@@ -42,8 +42,7 @@ class HistoryListItem(BaseModel):
     updated_at: str
     execution_time: float
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class HistoryDetail(BaseModel):

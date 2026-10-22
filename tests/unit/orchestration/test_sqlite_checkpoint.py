@@ -8,8 +8,6 @@ from typing_extensions import TypedDict
 
 from app.orchestration.checkpoint import SqliteCheckpointManager
 
-pytestmark = pytest.mark.asyncio
-
 
 class _S(TypedDict):
     count: int
@@ -24,6 +22,7 @@ def _build_graph():
 
 
 class TestSqliteCheckpointManager:
+    @pytest.mark.asyncio
     async def test_saver_roundtrip_and_durability(self, tmp_path):
         db = str(tmp_path / "ck.db")
         manager = SqliteCheckpointManager(db_path=db)
@@ -41,6 +40,7 @@ class TestSqliteCheckpointManager:
         assert snap.values["count"] == 2
         await manager2.aclose()
 
+    @pytest.mark.asyncio
     async def test_aload_state_reads_channel_values(self, tmp_path):
         manager = SqliteCheckpointManager(db_path=str(tmp_path / "ck.db"))
         graph = _build_graph().compile(checkpointer=manager.get_checkpoint_saver())
@@ -52,6 +52,7 @@ class TestSqliteCheckpointManager:
         assert await manager.aload_state("no-such-thread") is None
         await manager.aclose()
 
+    @pytest.mark.asyncio
     async def test_unknown_thread_returns_none(self, tmp_path):
         manager = SqliteCheckpointManager(db_path=str(tmp_path / "ck.db"))
         graph = _build_graph().compile(checkpointer=manager.get_checkpoint_saver())

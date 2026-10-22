@@ -8,8 +8,6 @@ from pydantic import BaseModel, Field
 
 from app.utils.llm_json import ainvoke_json, extract_json
 
-pytestmark = pytest.mark.asyncio
-
 
 class _Panel(BaseModel):
     sentiment: Literal["positive", "negative", "neutral"] = "neutral"
@@ -96,35 +94,42 @@ class TestExtractJson:
 
 
 class TestAinvokeJson:
+    @pytest.mark.asyncio
     async def test_plain_prompt_path(self):
         llm = _FakeLLM('```json\n{"a": 1}\n```')
         result = await ainvoke_json(llm, system="s", user="u")
         assert result == {"a": 1}
         assert len(llm.calls) == 1
 
+    @pytest.mark.asyncio
     async def test_schema_validated_prompt_path(self):
         llm = _FakeLLM('{"sentiment": "positive", "confidence": 80}')
         result = await ainvoke_json(llm, system="s", user="u", schema=_Panel)
         assert result == {"sentiment": "positive", "confidence": 80}
 
+    @pytest.mark.asyncio
     async def test_schema_violation_degrades_to_none(self):
         llm = _FakeLLM('{"sentiment": "positive", "confidence": 500}')
         assert await ainvoke_json(llm, system="s", user="u", schema=_Panel) is None
 
+    @pytest.mark.asyncio
     async def test_native_structured_output_path(self):
         llm = _StructuredLLM(_Panel(sentiment="negative", confidence=70))
         result = await ainvoke_json(llm, system="s", user="u", schema=_Panel)
         assert result == {"sentiment": "negative", "confidence": 70}
 
+    @pytest.mark.asyncio
     async def test_native_failure_falls_back_to_prompt_json(self):
         llm = _BrokenStructuredLLM('verdict: {"sentiment": "neutral"}')
         result = await ainvoke_json(llm, system="s", user="u", schema=_Panel)
         assert result == {"sentiment": "neutral", "confidence": 50}
         assert llm.plain_calls == 1
 
+    @pytest.mark.asyncio
     async def test_none_llm_returns_none(self):
         assert await ainvoke_json(None, system="s", user="u") is None
 
+    @pytest.mark.asyncio
     async def test_ainvoke_failure_returns_none(self):
         class _Exploding:
             async def ainvoke(self, messages):
@@ -132,10 +137,12 @@ class TestAinvokeJson:
 
         assert await ainvoke_json(_Exploding(), system="s", user="u") is None
 
+    @pytest.mark.asyncio
     async def test_unparsable_content_returns_none(self):
         llm = _FakeLLM("the model rambled and never produced JSON")
         assert await ainvoke_json(llm, system="s", user="u") is None
 
+    @pytest.mark.asyncio
     async def test_list_content_is_joined(self):
         class _MultiPart:
             async def ainvoke(self, messages):

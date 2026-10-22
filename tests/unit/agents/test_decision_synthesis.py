@@ -16,8 +16,6 @@ import pytest
 from app.agents.decision_agent import DecisionMakingAgent, _market_context_line
 from app.analysis.regime import option_context_line
 
-pytestmark = pytest.mark.asyncio
-
 
 class _StubLLM:
     """Captures prompts; answers with a fixed synthesis string."""
@@ -37,6 +35,7 @@ def _agent_with_stub() -> tuple[DecisionMakingAgent, _StubLLM]:
     return agent, stub
 
 
+@pytest.mark.asyncio
 async def test_none_score_renders_as_na_and_synthesis_survives() -> None:
     agent, stub = _agent_with_stub()
 
@@ -49,6 +48,7 @@ async def test_none_score_renders_as_na_and_synthesis_survives() -> None:
     assert result["top_pick"] == "AAA"
 
 
+@pytest.mark.asyncio
 async def test_top_pick_prefers_real_scores_over_none() -> None:
     agent, _ = _agent_with_stub()
 
@@ -62,6 +62,7 @@ async def test_top_pick_prefers_real_scores_over_none() -> None:
     assert result["top_pick"] == "BBB"
 
 
+@pytest.mark.asyncio
 async def test_portfolio_summary_counts_zero_evidence_holds() -> None:
     agent = DecisionMakingAgent("test-decision")
 
@@ -90,6 +91,7 @@ _REGIME = {
 
 
 class TestRegimeAwareSynthesis:
+    @pytest.mark.asyncio
     async def test_market_context_line_renders_the_regime(self) -> None:
         line = _market_context_line(_REGIME)
 
@@ -106,6 +108,7 @@ class TestRegimeAwareSynthesis:
         # ok block with nothing classifiable to say
         assert _market_context_line({"status": "ok", "bars": 70}) is None
 
+    @pytest.mark.asyncio
     async def test_synthesis_prompt_carries_market_context(self) -> None:
         agent, stub = _agent_with_stub()
 
@@ -116,6 +119,7 @@ class TestRegimeAwareSynthesis:
         assert "Market context:" in stub.prompts[0]
         assert "uptrend" in stub.prompts[0]
 
+    @pytest.mark.asyncio
     async def test_synthesis_prompt_without_regime_is_unchanged(self) -> None:
         agent, stub = _agent_with_stub()
 
@@ -125,6 +129,7 @@ class TestRegimeAwareSynthesis:
 
         assert "Market context" not in stub.prompts[0]
 
+    @pytest.mark.asyncio
     async def test_process_extracts_regime_from_risk_state(self) -> None:
         agent, stub = _agent_with_stub()
         agent.llm = stub  # make the synthesis branch fire
@@ -198,6 +203,7 @@ class TestOptionAwareSynthesis:
         # ok block whose qvix carries no current reading
         assert option_context_line({"status": "ok", "regime": "自满", "qvix": {}}) is None
 
+    @pytest.mark.asyncio
     async def test_synthesis_prompt_carries_option_context(self) -> None:
         agent, stub = _agent_with_stub()
 
@@ -209,6 +215,7 @@ class TestOptionAwareSynthesis:
         assert "options market implies complacency" in stub.prompts[0]
         assert "QVIX 14.85" in stub.prompts[0]
 
+    @pytest.mark.asyncio
     async def test_synthesis_prompt_without_option_is_byte_identical(self) -> None:
         decisions = {"AAA": {"action": "buy", "confidence": 0.7, "score": 72.0}}
         agent_plain, stub_plain = _agent_with_stub()
@@ -220,6 +227,7 @@ class TestOptionAwareSynthesis:
         assert stub_none.prompts[0] == stub_plain.prompts[0]
         assert "options market" not in stub_none.prompts[0]
 
+    @pytest.mark.asyncio
     async def test_synthesis_prompt_joins_both_context_lines_cleanly(self) -> None:
         agent, stub = _agent_with_stub()
 
@@ -235,6 +243,7 @@ class TestOptionAwareSynthesis:
         assert "; the options market implies complacency" in prompt
         assert ".;" not in prompt
 
+    @pytest.mark.asyncio
     async def test_process_extracts_option_context_from_risk_state(self) -> None:
         agent, stub = _agent_with_stub()
         agent.llm = stub  # make the synthesis branch fire
@@ -288,6 +297,7 @@ class TestNullScoreExtractors:
     that dimension's data.
     """
 
+    @pytest.mark.asyncio
     async def test_null_fundamental_score_reads_as_missing(self) -> None:
         agent = DecisionMakingAgent("test-decision")
         score = agent._extract_fundamental_score(
@@ -295,11 +305,13 @@ class TestNullScoreExtractors:
         )
         assert score is None
 
+    @pytest.mark.asyncio
     async def test_null_technical_and_sentiment_scores_read_as_missing(self) -> None:
         agent = DecisionMakingAgent("test-decision")
         assert agent._extract_technical_score({"sentiment": {"score": None}}) is None
         assert agent._extract_sentiment_score({"score": None}) is None
 
+    @pytest.mark.asyncio
     async def test_degraded_run_uses_the_formula_path_not_the_error_fallback(
         self, monkeypatch
     ) -> None:
@@ -350,6 +362,7 @@ class TestComponentScoresPreserveMissingAsNone:
     must surface as None, never a coerced 0.0 (2026-09-26 review, P1-4).
     """
 
+    @pytest.mark.asyncio
     async def test_missing_blocks_surface_none_not_zero(self) -> None:
         agent = DecisionMakingAgent("test-decision")
         assert agent._extract_fundamental_score({}) is None
@@ -359,12 +372,14 @@ class TestComponentScoresPreserveMissingAsNone:
         assert agent._extract_sentiment_score({}) is None
         assert agent._extract_sentiment_score({"score": None}) is None
 
+    @pytest.mark.asyncio
     async def test_measured_scores_still_extract(self) -> None:
         agent = DecisionMakingAgent("test-decision")
         assert agent._extract_fundamental_score({"overall_score": {"score": 80}}) == 60.0
         assert agent._extract_technical_score({"sentiment": {"score": -40}}) == -40
         assert agent._extract_sentiment_score({"score": 25}) == 25
 
+    @pytest.mark.asyncio
     async def test_neutral_fifty_is_a_real_zero_not_a_missing_dimension(self) -> None:
         # (50-50)*2 = 0.0 from a MEASURED overall score: a genuine neutral
         # vote, distinct from the None a missing dimension carries.

@@ -275,6 +275,7 @@ def _patched_loop_factory(monkeypatch, trace: list[str]):
     return fake_loop
 
 
+@pytest.mark.filterwarnings("error::pydantic.PydanticDeprecatedSince20")
 def test_lifespan_default_off_starts_no_daily_loop(monkeypatch) -> None:
     from fastapi.testclient import TestClient
 

@@ -276,12 +276,14 @@ class TestWilderRsi:
         assert full.iloc[:14].isna().all()
         assert not pd.isna(full.iloc[14])
 
+    @pytest.mark.filterwarnings("error::RuntimeWarning")
     def test_monotone_up_is_100(self) -> None:
         from app.backtest.engine import _rsi
 
         series = self._series([100.0 * (1.002**i) for i in range(60)])
         assert _rsi(series, 14).iloc[-1] == pytest.approx(100.0)
 
+    @pytest.mark.filterwarnings("error::RuntimeWarning")
     def test_flat_series_is_nan_not_fabricated(self) -> None:
         from app.backtest.engine import _rsi
 
