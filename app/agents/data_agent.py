@@ -780,7 +780,13 @@ class DataCollectionAgent(BaseAgent):
         the key stays absent.
         """
         async with _akshare_semaphore:
-            return await asyncio.to_thread(fetch_us_quarterly_income_em, symbol)
+            quarterly = await asyncio.to_thread(fetch_us_quarterly_income_em, symbol)
+        if quarterly is not None:
+            n = len((quarterly.get("income_statement") or {}).get("dates") or [])
+            record_provider_outcome("em-us-quarterly", "ok", f"{n} quarters")
+        else:
+            record_provider_outcome("em-us-quarterly", "fail", "EM F10 dark or unusable")
+        return quarterly
 
     async def _fetch_cn_event_calendar(self, symbol: str) -> dict[str, Any] | None:
         """AkShare event-calendar seam for 6-digit symbols.
@@ -799,10 +805,17 @@ class DataCollectionAgent(BaseAgent):
 
         try:
             async with _akshare_semaphore:
-                return await asyncio.to_thread(_cn)
+                calendar = await asyncio.to_thread(_cn)
         except Exception as e:
             logger.warning(f"[data_agent] CN event calendar failed for {symbol}: {e}")
+            record_provider_outcome("akshare-cn-events", "fail", f"{type(e).__name__}: {e}")
             return None
+        if calendar is not None:
+            n = len(calendar.get("events") or [])
+            record_provider_outcome("akshare-cn-events", "ok", f"{n} events")
+        else:
+            record_provider_outcome("akshare-cn-events", "fail", "calendar unavailable")
+        return calendar
 
     async def _fetch_news(self, symbol: str) -> list[dict[str, Any]]:
         """Fetch news for a symbol.
@@ -822,17 +835,25 @@ class DataCollectionAgent(BaseAgent):
         try:
             async with _yfinance_semaphore:
                 articles = await asyncio.to_thread(_sync_fetch_news, yahoo_symbol, symbol)
+            record_provider_outcome("yfinance-news", "ok", f"{len(articles)} articles")
         except Exception as e:
             logger.error(f"Error fetching news for {symbol}: {e}")
+            record_provider_outcome("yfinance-news", "fail", f"{type(e).__name__}: {e}")
 
         if symbol.isdigit() and len(symbol) == 6:
+            cn_articles: list[dict[str, Any]] | None = None
+            failed = False
             try:
                 cn_articles = await asyncio.to_thread(fetch_cn_news, symbol)
             except Exception as e:
                 logger.warning(f"CN news feed failed for {symbol}: {e}")
-                cn_articles = None
+                record_provider_outcome("em-news-cn", "fail", f"{type(e).__name__}: {e}")
+                failed = True
             if cn_articles:
+                record_provider_outcome("em-news-cn", "ok", f"{len(cn_articles)} articles")
                 articles = articles + cn_articles
+            elif not failed:
+                record_provider_outcome("em-news-cn", "fail", "feed returned nothing")
 
         if not articles:
             # Provider-chain news fallback (Finnhub): the yfinance-only path
