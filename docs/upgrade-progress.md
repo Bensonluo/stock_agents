@@ -102,3 +102,17 @@
 - Poetry 2.4.1 经 `uv tool` 安装(`~/.local/bin/poetry`);项目本地 `poetry.toml` 固定 `virtualenvs.in-project=true`。
 - 全量验证命令:`poetry run pytest tests/ -q`(当前 292 passed / 5 network 跳过)。
 - 高价值 lint 门禁:`poetry run ruff check app tests --select E,F,I,N,W --ignore E501` 已全绿;剩余主要为 Ruff `UP` 现代化迁移债务。
+
+## 2026-10-22 状态回填(开项对照)
+
+> 对照上文各期「仍待/🚧」条目,截至 2026-10-22 的实际状态。细节见 memory 台账(迭代 130-210)。
+
+| 原开项 | 现状 |
+|---|---|
+| 数据供应商链「🚧 第一步」 | 已超出该步:共享 5 级链全线接入;CN 侧 AkShare 事件日历/多周期财务/新闻、HK 侧 tencent/eastmoney/akshare-hk-hist 三源、US 侧季报 EM 兜底(yfinance 限流时唯一亮路径)均在链;财报与新闻深度合并已落地;21+ provider seam 经 `record_provider_outcome` 全量记录,`GET /api/monitoring/data-sources` 暴露快照 |
+| 「仍待后续:checkpoint saver 仍为进程内 MemorySaver」 | `CHECKPOINT_BACKEND=auto|sqlite|postgres|memory` 已上线(`langgraph-checkpoint-sqlite`);auto = 有 DATABASE_URL 用 postgres、否则 durable sqlite;单进程内存任务状态的限制仍在(异步任务状态不跨重启) |
+| 「仍待后续:前端组件测试未完成」 | 前端 `npm test` 175 例(TrendBlock 等组件测试在内);tsc --noEmit 零错误(2026-10-22 复核) |
+| 「Phase 4 数据源与研究能力仍未完成」 | 部分落地:CN 事件日历、催化剂时间线、分析师共识标注、期权隐含信号(SSE 三件套 + QVIX 市场层标注)均已上线并有前端消费;Phase 4 计划中其余项以计划文档为准 |
+| 「仍待后续:ReportV2 唯一契约 / 真实 token 成本计量」 | 未变,仍为开项 |
+
+后端 `poetry run pytest tests/ -q` 1468 通过(4 network 标记默认排除);套件警告为零(迭代 207-209 清理)。
