@@ -319,6 +319,8 @@ def _sync_fetch_us_raw(symbol: str) -> list[Any] | None:
     failure — the seam then returns None without recording (iteration
     104 convention: keyless layers never reach the health counters).
     """
+    if not get_settings().finnhub_enabled:
+        return None
     items = _finnhub_get("/stock/recommendation", {"symbol": symbol})
     if items is not None:
         record_provider_outcome("finnhub-recommendation", "ok")
@@ -334,6 +336,8 @@ async def fetch_us_consensus(symbol: str) -> dict[str, Any] | None:
     retried on the next call, never cached. No price argument — the
     endpoint carries none, so there is no upside math to keep fresh.
     """
+    if not get_settings().finnhub_enabled:
+        return None
     cache_key = f"{_US_CACHE_PREFIX}{symbol}"
     raw = _cache_get(cache_key)
     if raw is None:

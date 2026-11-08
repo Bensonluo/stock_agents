@@ -14,10 +14,7 @@
 [![Next.js](https://img.shields.io/badge/Next.js-15.5-black?logo=next.js&logoColor=white)](https://nextjs.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 
-<!-- 🎬 录制说明:录一次完整分析 AAPL 的流程,展示前端 dashboard 实时更新 -->
-<img src="docs/assets/demo.gif" alt="Stock Analysis Demo" width="80%">
-
-*🎬 Replace this with a 30s GIF of the analysis flow — see [Recording Guide](#-demo-recording-guide) below*
+[Research workflow](#-dual-execution-paths) · [Data-source operations](#data-sources) · [Verification](#-testing)
 
 </div>
 
@@ -37,43 +34,27 @@
 
 ## 💡 Why This Project
 
-There are plenty of "LLM stock analysis" demos, but most have the same problems:
+Enterprise stock research requires consistent calculations across workflows, traceable source data, bounded execution, and a way to measure whether past recommendations worked. Provider outages and incomplete market history must be visible before they influence a report.
 
-- ❌ US-only — they ignore the billion-user Chinese A-share market
-- ❌ One agent does everything — slow, unreliable, no specialization
-- ❌ No resilience — one API timeout kills the whole pipeline
-- ❌ No real-time feedback — you wait 2 minutes staring at a spinner
-
-This project solves all of them:
-
-> 🚀 **Two complementary architectures sharing one set of deterministic engines**: an 8-stage LangGraph pipeline for structured reports, plus an autonomous ReAct agent for ad-hoc queries. Every number is engine-computed and traceable (unit, as-of, source, formula); the LLM only narrates and orchestrates. A Bull/Bear cross-examination, evidence auditor and risk committee gate every report before it ships.
-
-It's a **reference implementation** for production-grade multi-agent systems — the kind of architecture you'd build for a real fintech product.
+The system combines a structured LangGraph research pipeline and an autonomous ReAct path over the same deterministic engines. Every computed metric carries its unit, as-of time, source and formula. Bull/Bear cross-examination, evidence auditing and a risk committee inform the final report; historical recommendation replay and costed backtests measure the resulting signals.
 
 ---
 
 ## ✨ Key Highlights
 
-<div align="center">
+| Capability | Current implementation |
+|---|---|
+| Shared research engines | Pipeline + ReAct use the same calculations and evidence contracts; parity tests prevent path drift |
+| Parallel orchestration | Technical/fundamental/sentiment fan out, join before risk; synthesis and decision fan out, join at report generation |
+| Data-source resilience | Market-specific provider fallbacks, coverage gates, provider-health counters; missing core data suppresses directional calls |
+| Measured signal quality | Rank IC/ICIR, Newey-West statistics, regime buckets, Brier calibration, top-k replay and formula-vintage isolation |
+| Reproducible backtesting | Five strategies, next-bar fills, transaction costs, walk-forward, DSR, random-entry benchmark and data/parameter/commit manifest |
+| Bounded operations | Per-client rate limits, global analysis capacity, symbol-count caps, tool/run timeouts, WebSocket monitoring and persisted report history |
 
-| 🤖 Agents | 🌍 Markets | 🛡️ Resilience |
-|:---:|:---:|:---:|
-| **8**-stage pipeline + ReAct | US & international | Circuit breaker |
-| Shared deterministic engines | Chinese A-shares | Retry with backoff |
-| Each with monitoring | Auto-detect by code | Timeout enforcement |
+Options, analyst consensus and fundamental trends are additional report annotations. Their enable flags and data sources are documented below; these layers do not feed scores, position sizes or decisions.
 
-| 📡 Real-time | 🔬 Evidence-constrained | 🧪 Backtesting |
-|:---:|:---:|:---:|
-| WebSocket streaming | Bull/Bear cross-exam | Next-bar fills + costs |
-| Live agent metrics | Evidence auditor gate | Walk-forward + calibration |
-| Circuit breaker status | Risk committee verdicts | Manifest reproducibility |
-
-| 📈 Stats | | |
-|:---:|:---:|:---:|
-| **10** data sources | **1498** tests green | **2** architectures |
-| **5** backtest strategies | **1** shared engine per domain | **WebSocket** real-time |
-
-</div>
+<details>
+<summary>Research controls, market fallbacks and annotation methodology</summary>
 
 ### 🧠 What makes it different
 
@@ -87,11 +68,14 @@ It's a **reference implementation** for production-grade multi-agent systems —
 8. **Per-symbol analyst-consensus annotation for A-shares** — THS annual EPS forecasts (nearest + next year, implied growth over a positive base) and Sina institute ratings (target-price mean/median gated at ≥3 observations inside a 180-day window, rating counts with a bullish tie-break, implied upside against the live price) attach under `financial_data[symbol]["consensus"]` on every 6-digit run, both pipeline and ReAct; raw frames cache price-independent so upside recomputes per call, and the block is annotation-only — the fundamental score never reads it (`CONSENSUS_ENABLED` toggles the whole layer)
 9. **Multi-period fundamental trend annotation** — CN runs carry the full Sina indicator history and US/HK runs the three quarterly statements from the same ticker session; the analysis seam emits a per-symbol trend block (CN: the latest report period vs the same period a year earlier — the only honest comparison for YTD-cumulative rows; US/HK: a 4-quarter revenue/net-income QoQ series), both pipeline and ReAct render it, and it is annotation-only — no score, weight or decision reads it (`TREND_DEPTH_ENABLED` toggles the layer)
 
+
+</details>
+
 ---
 
 ## 🔄 Dual Execution Paths
 
-### Architecture 1: Sequential Pipeline (LangGraph)
+### Architecture 1: Parallel Research Pipeline (LangGraph)
 
 For structured, deterministic reports — two map-reduce fan-outs: the three
 analysis agents run as a parallel superstep behind an explicit join barrier,
@@ -136,9 +120,9 @@ Built-in safety: max iterations, repetition detection, cost tracking, context tr
 
 | Use case | Architecture |
 |----------|-------------|
-| Daily market report (deterministic) | Sequential Pipeline |
+| Daily market report (structured) | Research Pipeline |
 | "Compare AAPL and MSFT" (ad-hoc) | ReAct Agent |
-| Real-time alerting | Sequential + WebSocket |
+| Real-time alerting | Research Pipeline + WebSocket |
 | Interactive exploration | ReAct Agent |
 
 ---
@@ -341,6 +325,7 @@ every metric.
 | `ZHIPUAI_API_KEY` | Zhipu AI API key (primary LLM) | — |
 | `OPENAI_API_KEY` | OpenAI API key (fallback) | — |
 | `PRIMARY_LLM_MODEL` | LLM model for analysis | `glm-5.3-flash` |
+| `FINNHUB_ENABLED` | Enable Finnhub snapshots, candles, news and analyst ratings; when false, skip collection and provider-health records while other sources continue | `true` |
 | `DATABASE_URL` | Optional PostgreSQL checkpoint-manager connection | `postgresql://...` |
 | `MAX_RETRIES` | Max retry attempts per agent | `3` |
 | `TIMEOUT_PER_AGENT` | Timeout per agent (seconds) | `300` |
@@ -364,7 +349,9 @@ run (thread_id `daily-YYYYMMDD` makes it exactly-once and restart-safe; a
 same-day restart catches up a missed trigger). Its records feed the same
 IC / calibration replay as manual runs — the evidence base fills itself.
 
-See `.env.example` for the full list.
+Finnhub's ratings cache is bypassed when disabled; shared market/history
+cache entries keep their normal TTL. `YFINANCE_ENABLED` is reserved and
+currently has no runtime effect. See `.env.example` for the full list.
 
 ---
 
@@ -396,7 +383,7 @@ stock_agents/
 ├── frontend/                # Next.js dashboard
 ├── deploy/                  # Production deployment scripts
 ├── scripts/                 # smoke_data_chain.py — post-deploy data-chain probe
-├── tests/                   # 1498 tests: unit + integration + path parity
+├── tests/                   # 1513 tests: unit + integration + path parity
 └── docker-compose.yml
 ```
 
@@ -404,9 +391,9 @@ stock_agents/
 
 ## 🗺️ Roadmap
 
-- [x] 7-agent sequential pipeline (LangGraph) + research synthesis stage
+- [x] LangGraph research pipeline with two fan-out/join stages and research synthesis
 - [x] ReAct autonomous agent (evidence-constrained tools)
-- [x] Chinese A-share support (AkShare + 5-provider fallback chain)
+- [x] Chinese A-share support with market-specific provider fallbacks and health counters
 - [x] WebSocket real-time monitoring
 - [x] Circuit breaker + retry + timeout
 - [x] Strategy backtesting (5 strategies, V2 costed engine)
@@ -446,13 +433,13 @@ stock_agents/
 ## 🧪 Testing
 
 ```bash
-poetry run pytest tests/ -q          # 1498 passed (4 network tests deselected)
+poetry run pytest tests/ -q          # 1513 passed (4 network tests deselected)
 ```
 
 Coverage highlights: every engine has golden-value tests; pipeline/ReAct
 **parity tests** assert bit-identical outputs for fundamental, risk,
 sentiment and the decision formula; functional tests run the full
-seven-agent sequence and the backtest API through the real engine;
+research pipeline and the backtest API through the real engine;
 point-in-time and no-look-ahead rules are pinned by dedicated suites.
 
 The frontend carries its own vitest net (`npm test` in `frontend/`):
@@ -505,7 +492,7 @@ If this project helped you learn multi-agent systems, please ⭐ star the repo.
 
 ## 🇨🇳 中文说明
 
-**股票分析多智能体系统** — 双执行路径(顺序流水线 + ReAct 自主 Agent)共享单一事实源,支持美股和中国 A 股。
+**股票分析多智能体系统** — 双执行路径(并行研究流水线 + ReAct 自主 Agent)共享单一事实源,支持美股和中国 A 股。
 
 ### 核心亮点
 

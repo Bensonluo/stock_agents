@@ -346,7 +346,7 @@ async def fetch_stock_data(symbol: str) -> dict[str, Any] | None:
         ("tencent-hk", _tencent_hk_fetch) if _is_hk_symbol(symbol) else None,
         ("eastmoney-hk", _eastmoney_hk_fetch) if _is_hk_symbol(symbol) else None,
         ("alphavantage", _alphavantage_fetch),
-        ("finnhub", _finnhub_fetch),
+        ("finnhub", _finnhub_fetch) if get_settings().finnhub_enabled else None,
         ("akshare", _akshare_fetch),
         ("yahoo-api", _yahoo_api_fetch),
     ]
@@ -409,7 +409,7 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
         logger.warning(f"[yfinance-hist] failed for {symbol}: {e}")
 
     # finnhub (snapshot only on free tier — /stock/candle is paid)
-    if get_settings().finnhub_api_key:
+    if get_settings().finnhub_enabled and get_settings().finnhub_api_key:
         try:
             result = await _finnhub_historical(symbol, period)
             if result and result.get("dates"):

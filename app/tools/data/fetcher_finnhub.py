@@ -25,8 +25,9 @@ _FINNHUB_BASE = "https://finnhub.io/api/v1"
 
 def _finnhub_get(path: str, params: dict[str, Any]) -> dict[str, Any] | list | None:
     """Synchronous Finnhub GET. Returns parsed JSON or None on error."""
-    api_key = get_settings().finnhub_api_key
-    if not api_key:
+    settings = get_settings()
+    api_key = settings.finnhub_api_key
+    if not settings.finnhub_enabled or not api_key:
         return None
     qp = {**params, "token": api_key}
     try:
@@ -53,7 +54,8 @@ async def _finnhub_fetch(symbol: str) -> dict[str, Any] | None:
     historical_data block; the technical agent can still derive day-level info
     from the quote's o/h/l/pc fields.
     """
-    if not get_settings().finnhub_api_key:
+    settings = get_settings()
+    if not settings.finnhub_enabled or not settings.finnhub_api_key:
         return None
 
     def _snapshot():
@@ -151,7 +153,8 @@ async def fetch_us_news(symbol: str) -> list[dict[str, Any]]:
     that seam covers 6-digit codes, this one covers everything else. No
     key configured → ``[]`` — the caller keeps its empty-feed behavior.
     """
-    if not get_settings().finnhub_api_key:
+    settings = get_settings()
+    if not settings.finnhub_enabled or not settings.finnhub_api_key:
         return []
 
     def _news():
@@ -195,7 +198,8 @@ async def _finnhub_historical(symbol: str, period: str) -> dict[str, Any] | None
     NOTE: /stock/candle is PAID ONLY on the free tier. This function exists for
     when the user upgrades or supplies an alternative. Returns None for free tier.
     """
-    if not get_settings().finnhub_api_key:
+    settings = get_settings()
+    if not settings.finnhub_enabled or not settings.finnhub_api_key:
         return None
     days = _period_to_days(period)
     end_ts = int(time.time())
