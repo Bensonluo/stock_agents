@@ -22,6 +22,21 @@ logger = get_logger(__name__)
 Base = declarative_base()
 
 
+def _pin_legacy_postgres_driver(url: str) -> str:
+    """Map a driverless postgres URL to the psycopg2 dialect explicitly.
+
+    SQLAlchemy 2.1 changed the default driver for ``postgresql://`` URLs from
+    psycopg2 to psycopg (v3). This project ships psycopg2-binary only, so a
+    driverless URL must be pinned to keep its 2.0-era meaning. URLs that
+    already name a driver (``postgresql+psycopg2://``, ``postgresql+psycopg://``)
+    and non-postgres URLs pass through untouched.
+    """
+    prefix = "postgresql://"
+    if url.startswith(prefix):
+        return "postgresql+psycopg2://" + url[len(prefix) :]
+    return url
+
+
 class CheckpointEntry(Base):
     """Checkpoint database model."""
 
@@ -69,7 +84,9 @@ class PostgresCheckpointManager:
             connection_string: PostgreSQL connection string.
                 If None, uses the connection string from settings.
         """
-        self.connection_string = connection_string or settings.database_url
+        self.connection_string = _pin_legacy_postgres_driver(
+            connection_string or settings.database_url
+        )
         self.engine = create_engine(self.connection_string)
         self.Session = sessionmaker(bind=self.engine)
 
