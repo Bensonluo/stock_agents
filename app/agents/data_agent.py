@@ -151,6 +151,10 @@ def detect_symbol_type(symbol: str) -> str:
 
 def _sync_fetch_market_data(yahoo_symbol: str, symbol: str, hist_converter) -> dict[str, Any]:
     """Synchronous yfinance market data fetch — runs in thread pool."""
+    # YFINANCE_ENABLED off → {} is the caller's native miss (it falls to
+    # the provider chain), mirroring an outage; records nothing.
+    if not get_settings().yfinance_enabled:
+        return {}
     ticker = yf.Ticker(yahoo_symbol)
     info = ticker.info
 
@@ -201,6 +205,10 @@ def _sync_fetch_market_data(yahoo_symbol: str, symbol: str, hist_converter) -> d
 
 def _sync_fetch_financial_data(yahoo_symbol: str, symbol: str, stmt_converter) -> dict[str, Any]:
     """Synchronous yfinance financial data fetch — runs in thread pool."""
+    # YFINANCE_ENABLED off → {} is the caller's native miss (it falls to
+    # the provider chain), mirroring an outage; records nothing.
+    if not get_settings().yfinance_enabled:
+        return {}
     ticker = yf.Ticker(yahoo_symbol)
 
     income_stmt = ticker.income_stmt
@@ -843,13 +851,16 @@ class DataCollectionAgent(BaseAgent):
         """
         yahoo_symbol = convert_to_yahoo_symbol(symbol)
         articles: list[dict[str, Any]] = []
-        try:
-            async with _yfinance_semaphore:
-                articles = await asyncio.to_thread(_sync_fetch_news, yahoo_symbol, symbol)
-            record_provider_outcome("yfinance-news", "ok", f"{len(articles)} articles")
-        except Exception as e:
-            logger.error(f"Error fetching news for {symbol}: {e}")
-            record_provider_outcome("yfinance-news", "fail", f"{type(e).__name__}: {e}")
+        # YFINANCE_ENABLED off skips the leg (no attempt, no yfinance-news
+        # record) — the same gate shape as the AKSHARE_ENABLED CN leg below.
+        if get_settings().yfinance_enabled:
+            try:
+                async with _yfinance_semaphore:
+                    articles = await asyncio.to_thread(_sync_fetch_news, yahoo_symbol, symbol)
+                record_provider_outcome("yfinance-news", "ok", f"{len(articles)} articles")
+            except Exception as e:
+                logger.error(f"Error fetching news for {symbol}: {e}")
+                record_provider_outcome("yfinance-news", "fail", f"{type(e).__name__}: {e}")
 
         # The CN feed is akshare's stock_news_em — gated by AKSHARE_ENABLED
         # like every other akshare leg; yfinance's own coverage is unaffected.

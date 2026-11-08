@@ -32,8 +32,13 @@ def _clean_counters():
 
 
 def _flag(monkeypatch, *, enabled: bool) -> None:
+    # yfinance_enabled=True since iteration 220: the news path's yfinance
+    # leg also reads get_settings() — the fake namespace must satisfy both
+    # gates for the akshare pins to isolate their own flag.
     monkeypatch.setattr(
-        data_agent_mod, "get_settings", lambda: SimpleNamespace(akshare_enabled=enabled)
+        data_agent_mod,
+        "get_settings",
+        lambda: SimpleNamespace(akshare_enabled=enabled, yfinance_enabled=True),
     )
 
 

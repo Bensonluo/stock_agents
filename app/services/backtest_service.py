@@ -303,6 +303,11 @@ class BacktestService:
         Returns:
             DataFrame with OHLCV data
         """
+        # YFINANCE_ENABLED off → straight to the provider chain (the same
+        # fallback a yfinance outage takes), no direct attempt.
+        if not settings.yfinance_enabled:
+            return await self._fetch_data_via_chain(symbol, start_date, end_date)
+
         try:
             ticker = yf.Ticker(symbol)
             df = ticker.history(start=start_date, end=end_date)

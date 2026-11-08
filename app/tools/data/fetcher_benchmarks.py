@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from app.config import get_settings
 from app.tools.data.fetcher_common import (
     DEFAULT_HISTORY_DAYS,
     _cache_get,
@@ -89,6 +90,11 @@ def _sync_fetch_benchmark_history(yahoo_symbol: str) -> dict[str, Any] | None:
             None if bench is not None else "no benchmark data",
         )
         return bench
+
+    # YFINANCE_ENABLED off → the benchmark chain starts at Tencent (index
+    # map) — no yfinance attempt, no yfinance-benchmark record.
+    if not get_settings().yfinance_enabled:
+        return _tencent_with_health()
 
     yf_error: str | None = None
     try:

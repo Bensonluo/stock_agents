@@ -381,32 +381,34 @@ async def fetch_historical(symbol: str, period: str = DEFAULT_HISTORY_PERIOD) ->
 
     yahoo_symbol = _convert_to_yahoo_symbol(symbol)
 
-    # yfinance
-    try:
-        import yfinance as yf
+    # yfinance — YFINANCE_ENABLED off skips the leg entirely (no attempt,
+    # no yfinance-hist record); the chain below serves, mirroring an outage.
+    if get_settings().yfinance_enabled:
+        try:
+            import yfinance as yf
 
-        def _sync():
-            return yf.Ticker(yahoo_symbol).history(period=period)
+            def _sync():
+                return yf.Ticker(yahoo_symbol).history(period=period)
 
-        df = await asyncio.to_thread(_sync)
-        if not df.empty:
-            result = {
-                "symbol": symbol,
-                "period": period,
-                "dates": [d.strftime("%Y-%m-%d") for d in df.index],
-                "open": df["Open"].tolist(),
-                "high": df["High"].tolist(),
-                "low": df["Low"].tolist(),
-                "close": df["Close"].tolist(),
-                "volume": df["Volume"].tolist(),
-            }
-            record_provider_outcome("yfinance-hist", "ok")
-            _cache_set(cache_key, result, ttl=60)
-            return result
-        record_provider_outcome("yfinance-hist", "fail", "empty frame")
-    except Exception as e:
-        record_provider_outcome("yfinance-hist", "fail", f"{type(e).__name__}: {e}")
-        logger.warning(f"[yfinance-hist] failed for {symbol}: {e}")
+            df = await asyncio.to_thread(_sync)
+            if not df.empty:
+                result = {
+                    "symbol": symbol,
+                    "period": period,
+                    "dates": [d.strftime("%Y-%m-%d") for d in df.index],
+                    "open": df["Open"].tolist(),
+                    "high": df["High"].tolist(),
+                    "low": df["Low"].tolist(),
+                    "close": df["Close"].tolist(),
+                    "volume": df["Volume"].tolist(),
+                }
+                record_provider_outcome("yfinance-hist", "ok")
+                _cache_set(cache_key, result, ttl=60)
+                return result
+            record_provider_outcome("yfinance-hist", "fail", "empty frame")
+        except Exception as e:
+            record_provider_outcome("yfinance-hist", "fail", f"{type(e).__name__}: {e}")
+            logger.warning(f"[yfinance-hist] failed for {symbol}: {e}")
 
     # finnhub (snapshot only on free tier — /stock/candle is paid)
     if get_settings().finnhub_api_key:
