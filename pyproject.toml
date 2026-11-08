@@ -16,7 +16,7 @@ priority = "primary"
 [tool.poetry.dependencies]
 python = "^3.11"
 # FastAPI and web framework
-fastapi = "^0.141.1"
+fastapi = "^0.162.2"
 uvicorn = {extras = ["standard"], version = "^0.53.0"}
 pydantic = "^2.5.0"
 pydantic-settings = "^2.1.0"
