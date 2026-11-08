@@ -25,11 +25,15 @@ _FINNHUB_BASE = "https://finnhub.io/api/v1"
 
 def _finnhub_get(path: str, params: dict[str, Any]) -> dict[str, Any] | list | None:
     """Synchronous Finnhub GET. Returns parsed JSON or None on error."""
+    # FINNHUB_ENABLED master gate: every finnhub network call in the codebase
+    # funnels through this choke point (snapshot/profile/metric legs, company
+    # news, the consensus recommendation seam, the paid-tier candle probe).
+    # Config-off mirrors keyless — a no-op, never a provider failure, so it
+    # never reaches the health counters (the no-API-key house rule).
     settings = get_settings()
-    api_key = settings.finnhub_api_key
-    if not settings.finnhub_enabled or not api_key:
+    if not settings.finnhub_enabled or not settings.finnhub_api_key:
         return None
-    qp = {**params, "token": api_key}
+    qp = {**params, "token": settings.finnhub_api_key}
     try:
         r = requests.get(f"{_FINNHUB_BASE}{path}", params=qp, timeout=15)
         if r.status_code == 429:

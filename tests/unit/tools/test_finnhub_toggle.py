@@ -1,221 +1,146 @@
-"""Finnhub config-off skips collection and health records; fallbacks stay live."""
+"""FINNHUB_ENABLED: from dead flag to real toggle (iteration 218).
 
-import sys
+Recon verdict: declared in Settings and documented in .env.example since the
+beginning, but no code ever read it — setting FINNHUB_ENABLED=false silently
+kept full finnhub behavior. Every finnhub network call funnels through the
+single choke point ``_finnhub_get`` (quote/profile/metric, company news, the
+consensus recommendation leg, and the paid-tier candle probe), so the master
+gate lives there — plus the two seams whose local control flow would turn a
+disabled leg into a *recorded* provider failure: ``fetch_us_news`` records
+"feed returned nothing" on an empty fetch, and the consensus seam's ``elif``
+records a fail whenever a key is configured. Config-off is a no-op, not a
+provider failure (the no-API-key house rule) — nothing may appear in
+provider-health even with a key set. The enabled controls pin that the
+default keeps every path live.
+"""
+
+from __future__ import annotations
+
 from types import SimpleNamespace
 
-import pandas as pd
 import pytest
 
-import app.tools.data.consensus as consensus
-import app.tools.data.fetcher as fetcher
-import app.tools.data.fetcher_finnhub as finnhub
-from app.config import get_settings
+import app.tools.data.consensus as consensus_mod
+import app.tools.data.fetcher_finnhub as fetcher_finnhub_mod
+from app.tools.data.consensus import _sync_fetch_us_raw
+from app.tools.data.fetcher_finnhub import (
+    _finnhub_fetch,
+    _finnhub_get,
+    _finnhub_historical,
+    fetch_us_news,
+)
 from app.tools.data.provider_health import provider_health_snapshot, reset_provider_health
+
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
 
 @pytest.fixture(autouse=True)
-def _state(monkeypatch):
-    monkeypatch.setattr(get_settings(), "finnhub_api_key", "test-key")
-    monkeypatch.setattr(get_settings(), "finnhub_enabled", False)
-    fetcher._cache.clear()
+def _clean_counters():
     reset_provider_health()
     yield
-    fetcher._cache.clear()
     reset_provider_health()
 
 
-def test_disabled_http_helper_never_requests(monkeypatch):
-    calls = []
-
-    def _request(*args, **kwargs):
-        calls.append(args)
-        return SimpleNamespace(
-            status_code=200, raise_for_status=lambda: None, json=lambda: {"c": 123}
-        )
-
-    monkeypatch.setattr(finnhub.requests, "get", _request)
-
-    assert finnhub._finnhub_get("/quote", {"symbol": "AAPL"}) is None
-    assert calls == []
+def _flag(monkeypatch, *, enabled: bool) -> None:
+    ns = SimpleNamespace(finnhub_enabled=enabled, finnhub_api_key="key")
+    monkeypatch.setattr(fetcher_finnhub_mod, "get_settings", lambda: ns)
+    monkeypatch.setattr(consensus_mod, "get_settings", lambda: ns)
 
 
-@pytest.mark.parametrize("api_key", [None, "test-key"])
-def test_enabled_http_helper_requires_key(monkeypatch, api_key):
-    monkeypatch.setattr(get_settings(), "finnhub_enabled", True)
-    monkeypatch.setattr(get_settings(), "finnhub_api_key", api_key)
-    calls = []
-
-    def _request(url, **kwargs):
-        calls.append(kwargs["params"])
-        return SimpleNamespace(
-            status_code=200, raise_for_status=lambda: None, json=lambda: {"c": 123}
-        )
-
-    monkeypatch.setattr(finnhub.requests, "get", _request)
-
-    assert finnhub._finnhub_get("/quote", {"symbol": "AAPL"}) == ({"c": 123} if api_key else None)
-    assert calls == ([{"symbol": "AAPL", "token": "test-key"}] if api_key else [])
+def _state(provider: str) -> dict | None:
+    return provider_health_snapshot()["providers"].get(provider)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("entry", "args", "expected"),
-    [
-        ("_finnhub_fetch", ("AAPL",), None),
-        ("_finnhub_historical", ("AAPL", "1y"), None),
-        ("fetch_us_news", ("AAPL",), []),
-    ],
-)
-async def test_disabled_entry_skips_get_and_health(monkeypatch, entry, args, expected):
-    calls = []
-
-    def _get(*args):
-        calls.append(args)
-        return None
-
-    monkeypatch.setattr(finnhub, "_finnhub_get", _get)
-
-    assert await getattr(finnhub, entry)(*args) == expected
-    assert calls == []
-    assert provider_health_snapshot()["providers"] == {}
+def _bomb(*_args, **_kwargs):
+    raise AssertionError("finnhub leg must not run with FINNHUB_ENABLED=false")
 
 
-@pytest.mark.asyncio
-async def test_enabled_snapshot_and_history_collect_normally(monkeypatch):
-    monkeypatch.setattr(get_settings(), "finnhub_enabled", True)
-    calls = []
-    responses = {
-        "/quote": {"c": 123.0},
-        "/stock/profile2": {"name": "Apple"},
-        "/stock/metric": {"metric": {"beta": 1.2}},
-        "/company-news": [{"headline": "Test news"}],
-        "/stock/candle": {"s": "ok", "t": [1792627200], "c": [123.0]},
-    }
+class TestGetChokePoint:
+    def test_off_returns_none_without_http(self, monkeypatch):
+        # A hit-marker, not a bomb: _finnhub_get swallows exceptions from
+        # requests.get, so a raising stub would pass vacuously via the
+        # except branch. The pin must observe that HTTP is never attempted.
+        _flag(monkeypatch, enabled=False)
+        seen = {}
 
-    def _get(path, params):
-        calls.append(path)
-        return responses[path]
+        def _mark(*_args, **_kwargs):
+            seen["hit"] = True
+            return SimpleNamespace(
+                status_code=200,
+                raise_for_status=lambda: None,
+                json=lambda: {"c": 1.0},
+            )
 
-    monkeypatch.setattr(finnhub, "_finnhub_get", _get)
+        monkeypatch.setattr(fetcher_finnhub_mod.requests, "get", _mark)
 
-    snapshot = await finnhub._finnhub_fetch("AAPL")
-    history = await finnhub._finnhub_historical("AAPL", "1y")
+        assert _finnhub_get("/quote", {"symbol": "AAPL"}) is None
+        assert "hit" not in seen
 
-    assert snapshot["market_data"]["current_price"] == 123.0
-    assert snapshot["financial_data"]["metrics"]["beta"] == 1.2
-    assert len(snapshot["news_data"]) == 1
-    assert history["close"] == [123.0]
-    assert sorted(calls) == sorted(responses)
+    def test_enabled_still_sends_token(self, monkeypatch):
+        _flag(monkeypatch, enabled=True)
+        seen = {}
 
+        def _fake_get(_url, params=None, timeout=None):
+            seen["params"] = params
+            return SimpleNamespace(
+                status_code=200,
+                raise_for_status=lambda: None,
+                json=lambda: {"c": 1.0},
+            )
 
-def test_disabled_consensus_raw_skips_get_and_health(monkeypatch):
-    calls = []
+        monkeypatch.setattr(fetcher_finnhub_mod.requests, "get", _fake_get)
 
-    def _get(*args):
-        calls.append(args)
-        return [{"period": "2026-10-01", "buy": 3}]
-
-    monkeypatch.setattr(consensus, "_finnhub_get", _get)
-
-    assert consensus._sync_fetch_us_raw("AAPL") is None
-    assert calls == []
-    assert provider_health_snapshot()["providers"] == {}
+        assert _finnhub_get("/quote", {"symbol": "AAPL"}) == {"c": 1.0}
+        assert seen["params"]["token"] == "key"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("warm_cache", [False, True])
-async def test_disabled_consensus_skips_fetch_and_cached_annotation(monkeypatch, warm_cache):
-    if warm_cache:
-        fetcher._cache_set("consensus_us_raw:AAPL", [{"period": "2026-10-01", "buy": 3}])
+class TestSnapshotLeg:
+    @pytest.mark.asyncio
+    async def test_off_returns_none_before_any_network(self, monkeypatch):
+        _flag(monkeypatch, enabled=False)
+        monkeypatch.setattr(fetcher_finnhub_mod, "_finnhub_get", _bomb)
 
-    def _unexpected(*args):
-        pytest.fail("disabled consensus must not collect")
-
-    monkeypatch.setattr(consensus, "_sync_fetch_us_raw", _unexpected)
-
-    assert await consensus.fetch_us_consensus("AAPL") is None
-    assert provider_health_snapshot()["providers"] == {}
+        assert await _finnhub_fetch("AAPL") is None
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("enabled", [False, True])
-async def test_snapshot_chain_skips_disabled_provider_and_uses_next(monkeypatch, enabled):
-    monkeypatch.setattr(get_settings(), "finnhub_enabled", enabled)
-    calls = []
+class TestUsNewsLeg:
+    @pytest.mark.asyncio
+    async def test_off_returns_empty_and_records_nothing(self, monkeypatch):
+        _flag(monkeypatch, enabled=False)
+        monkeypatch.setattr(fetcher_finnhub_mod, "_finnhub_get", _bomb)
 
-    async def _miss(symbol):
-        return None
+        assert await fetch_us_news("AAPL") == []
+        assert _state("finnhub-news") is None  # config-off records nothing
 
-    async def _priced(symbol):
-        return {"market_data": {"symbol": symbol, "current_price": 123.0}}
+    @pytest.mark.asyncio
+    async def test_enabled_keeps_news_path_live(self, monkeypatch):
+        _flag(monkeypatch, enabled=True)
+        items = [{"headline": "Fed cuts rates", "datetime": 1700000000, "source": "Reuters"}]
+        monkeypatch.setattr(fetcher_finnhub_mod, "_finnhub_get", lambda _path, _params: items)
 
-    async def _finnhub(symbol):
-        calls.append(symbol)
-        return {"market_data": {"symbol": symbol, "current_price": 456.0}}
+        articles = await fetch_us_news("AAPL")
 
-    async def _sleep(_seconds):
-        pass
-
-    monkeypatch.setattr(fetcher, "_yfinance_fetch", _miss)
-    monkeypatch.setattr(fetcher, "_alphavantage_fetch", _miss)
-    monkeypatch.setattr(fetcher, "_finnhub_fetch", _finnhub)
-    monkeypatch.setattr(fetcher, "_akshare_fetch", _priced)
-    monkeypatch.setattr(fetcher.asyncio, "sleep", _sleep)
-
-    result = await fetcher.fetch_stock_data("AAPL")
-
-    assert result["market_data"]["current_price"] == (456.0 if enabled else 123.0)
-    assert calls == (["AAPL"] if enabled else [])
-    providers = provider_health_snapshot()["providers"]
-    assert ("finnhub" in providers) is enabled
-    assert providers["finnhub" if enabled else "akshare"]["ok"] == 1
+        assert len(articles) == 1 and articles[0]["original_symbol"] == "AAPL"
+        state = _state("finnhub-news")
+        assert state is not None and state["ok"] == 1
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("enabled", [False, True])
-async def test_history_chain_skips_disabled_provider_and_uses_next(monkeypatch, enabled):
-    monkeypatch.setattr(get_settings(), "finnhub_enabled", enabled)
-    monkeypatch.setattr(get_settings(), "alpha_vantage_key", None)
-    monkeypatch.setitem(
-        sys.modules,
-        "yfinance",
-        SimpleNamespace(
-            Ticker=lambda symbol: SimpleNamespace(history=lambda **kwargs: pd.DataFrame())
-        ),
-    )
-    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace())
-    calls = []
-    history = {"dates": ["2026-10-22"], "close": [123.0]}
+class TestHistoricalLeg:
+    @pytest.mark.asyncio
+    async def test_off_returns_none_before_any_network(self, monkeypatch):
+        _flag(monkeypatch, enabled=False)
+        monkeypatch.setattr(fetcher_finnhub_mod, "_finnhub_get", _bomb)
 
-    async def _finnhub(symbol, period):
-        calls.append(symbol)
-        return {"symbol": symbol, "period": period, **history, "close": [456.0]}
-
-    async def _sina(symbol, period):
-        return history
-
-    monkeypatch.setattr(fetcher, "_finnhub_historical", _finnhub)
-    monkeypatch.setattr(fetcher, "_sina_us_hist", _sina)
-
-    result = await fetcher.fetch_historical("AAPL", "1y")
-
-    assert result["close"] == ([456.0] if enabled else [123.0])
-    assert calls == (["AAPL"] if enabled else [])
-    providers = provider_health_snapshot()["providers"]
-    assert ("finnhub-hist" in providers) is enabled
-    assert providers["finnhub-hist" if enabled else "sina-us-hist"]["ok"] == 1
+        assert await _finnhub_historical("AAPL", "1y") is None
 
 
-@pytest.mark.asyncio
-async def test_reenabled_news_and_consensus_collect_normally(monkeypatch):
-    monkeypatch.setattr(get_settings(), "finnhub_enabled", True)
-    monkeypatch.setattr(finnhub, "_finnhub_get", lambda *args: [{"headline": "Test news"}])
-    monkeypatch.setattr(
-        consensus, "_finnhub_get", lambda *args: [{"period": "2026-10-01", "buy": 3}]
-    )
+class TestRecommendationSeam:
+    def test_off_records_nothing(self, monkeypatch):
+        # The recommendation seam records a fail on a None fetch whenever a
+        # key is configured — the gate must keep a toggled-off leg from
+        # reaching the health counters even with FINNHUB_API_KEY present.
+        _flag(monkeypatch, enabled=False)
+        monkeypatch.setattr(fetcher_finnhub_mod.requests, "get", _bomb)
 
-    assert len(await finnhub.fetch_us_news("AAPL")) == 1
-    assert (await consensus.fetch_us_consensus("AAPL"))["ratings"]["total"] == 3
-    providers = provider_health_snapshot()["providers"]
-    assert providers["finnhub-news"]["ok"] == 1
-    assert providers["finnhub-recommendation"]["ok"] == 1
+        assert _sync_fetch_us_raw("AAPL") is None
+        assert _state("finnhub-recommendation") is None

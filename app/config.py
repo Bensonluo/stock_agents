@@ -1,7 +1,9 @@
 """Application configuration management."""
 
 from functools import lru_cache
+from typing import Any
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,9 +16,16 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def ignore_removed_redis_setting(cls, values: Any) -> Any:
+        """Accept existing dotenv files after removing the unused Redis setting."""
+        if isinstance(values, dict) and "redis_url" in values:
+            return {key: value for key, value in values.items() if key != "redis_url"}
+        return values
+
     # Database
     database_url: str = "postgresql://admin:password@localhost:5432/stockdb"
-    redis_url: str = "redis://localhost:6379"
 
     # Checkpoint persistence: auto | sqlite | postgres | memory
     # auto = postgres when DATABASE_URL is explicitly set, else durable sqlite

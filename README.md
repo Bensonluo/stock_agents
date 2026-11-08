@@ -350,8 +350,10 @@ same-day restart catches up a missed trigger). Its records feed the same
 IC / calibration replay as manual runs — the evidence base fills itself.
 
 Finnhub's ratings cache is bypassed when disabled; shared market/history
-cache entries keep their normal TTL. `YFINANCE_ENABLED` is reserved and
-currently has no runtime effect. See `.env.example` for the full list.
+cache entries keep their normal TTL. `YFINANCE_ENABLED=false` skips Yahoo
+library collection attempts; other configured providers continue to serve
+the request. Legacy `REDIS_URL` entries are ignored when loading existing
+dotenv files. See `.env.example` for the full list.
 
 ---
 
@@ -383,7 +385,7 @@ stock_agents/
 ├── frontend/                # Next.js dashboard
 ├── deploy/                  # Production deployment scripts
 ├── scripts/                 # smoke_data_chain.py — post-deploy data-chain probe
-├── tests/                   # 1513 tests: unit + integration + path parity
+├── tests/                   # 1527 tests: unit + integration + path parity
 └── docker-compose.yml
 ```
 
@@ -433,7 +435,7 @@ stock_agents/
 ## 🧪 Testing
 
 ```bash
-poetry run pytest tests/ -q          # 1513 passed (4 network tests deselected)
+poetry run pytest tests/ -q          # 1527 passed (4 network tests deselected)
 ```
 
 Coverage highlights: every engine has golden-value tests; pipeline/ReAct

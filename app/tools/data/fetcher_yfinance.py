@@ -5,6 +5,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 
+from app.config import get_settings
 from app.tools.data.fetcher_common import (
     DEFAULT_HISTORY_DAYS,
     _convert_to_yahoo_symbol,
@@ -21,6 +22,11 @@ logger = get_logger(__name__)
 
 async def _yfinance_fetch(symbol: str) -> dict[str, Any] | None:
     """Fetch via yfinance with retry."""
+    # YFINANCE_ENABLED gate — None is the chain's native miss value; the
+    # caller (fetch_stock_data) falls to the next provider, mirroring an
+    # outage. Config-off records nothing (the no-API-key house rule).
+    if not get_settings().yfinance_enabled:
+        return None
     import yfinance as yf
 
     yahoo_symbol = _convert_to_yahoo_symbol(symbol)

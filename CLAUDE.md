@@ -75,8 +75,10 @@ Analysis agents produce numpy types (np.float64, np.int64, np.ndarray) that aren
 
 - **yfinance** (`DataCollectionAgent`): US and international stocks
 - **AkShare** (`AkShareDataAgent`): Chinese A-shares (triggered when symbols are 6-digit numbers)
-- `AKSHARE_ENABLED=false` gates every akshare collection leg (the CN agent, the CN event calendar, and the CN news feed) as a no-op — no provider-health records.
-- `FINNHUB_ENABLED=false` skips Finnhub snapshots, candles, news and analyst ratings without adding provider-health records; the shared provider chains continue to other sources. The Finnhub ratings cache is also bypassed; shared market/history cache entries retain their normal TTL. `YFINANCE_ENABLED` is declared but not yet wired (reserved, no runtime effect).
+- All three data-source toggles are wired no-op gates (config-off records nothing in provider-health): `AKSHARE_ENABLED=false` gates every akshare collection leg (the CN agent, the CN event calendar, and the CN news feed); `FINNHUB_ENABLED=false` gates every finnhub network leg (single choke point `_finnhub_get`: quote/profile/metric, company news, the consensus recommendation seam, the paid-tier candle probe); `YFINANCE_ENABLED=false` gates every yfinance attempt (history chain first leg, snapshot provider, benchmark first leg, agent market/financial/news legs, backtest direct fetch) — each returns its native miss so the fallback chain serves, mirroring an outage
+
+Finnhub ratings are bypassed when disabled, including its independent cache;
+shared market/history cache entries retain their normal TTL.
 
 ### API Layer
 

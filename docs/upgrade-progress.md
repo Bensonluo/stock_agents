@@ -122,3 +122,21 @@
 `FINNHUB_ENABLED` 原为声明后未读取的开关，关闭后仍会采集。本轮接入共享 HTTP、报价/财务快照、历史 K 线、新闻、机构评级入口；报价与历史编排器直接跳过关闭的 Finnhub，继续其他供应商，不增加 Finnhub 健康计数。机构评级关闭时也跳过独立缓存；通用行情/历史缓存仍保留原 TTL。
 
 新增 15 项离线回归，覆盖开关关闭无请求/无监控记录、开启与缺 key、评级冷/热缓存、报价与历史继续兜底。修复前目标用例 9 失败、3 通过；修复后全量 `.venv/bin/python -m pytest tests/ -q` → **1513 passed, 4 deselected**。高价值 Ruff（E/F/I/N/W）、新测试 Black、`git diff --check` 均通过。`.env.example`、README、CLAUDE.md 已同步；`YFINANCE_ENABLED` 仍为保留配置，尚无运行时效果。本轮仅本地验证，未部署。
+
+## 2026-11-09 local repository integration
+
+Merged the updated mainline with the pending Finnhub guards and README edits.
+The integrated tree includes the yfinance toggle, dependency refreshes and
+unused-dependency removals. Finnhub snapshots/history now skip disabled legs
+before recording provider outcomes, and disabled ratings bypass their cache.
+The upstream Finnhub tests are retained alongside nine complementary local
+cases; two additional tests cover legacy dotenv compatibility.
+
+Existing dotenv files may retain the retired `REDIS_URL` key without blocking
+startup. Other unknown keys remain validation errors; Redis is still removed.
+The earlier note that `YFINANCE_ENABLED` was reserved is now superseded: it is
+wired in the integrated mainline. This integration is local only.
+
+Validation: **1527 passed, 4 network tests deselected** (34.73s), high-value
+Ruff, formatting checks, `poetry check --lock` and Git diff checks passed.
+Poetry reports existing metadata deprecations. No frontend files changed.
