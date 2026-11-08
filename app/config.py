@@ -16,7 +16,6 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "postgresql://admin:password@localhost:5432/stockdb"
-    redis_url: str = "redis://localhost:6379"
 
     # Checkpoint persistence: auto | sqlite | postgres | memory
     # auto = postgres when DATABASE_URL is explicitly set, else durable sqlite
