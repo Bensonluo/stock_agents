@@ -322,7 +322,9 @@ def _sync_fetch_us_raw(symbol: str) -> list[Any] | None:
     items = _finnhub_get("/stock/recommendation", {"symbol": symbol})
     if items is not None:
         record_provider_outcome("finnhub-recommendation", "ok")
-    elif get_settings().finnhub_api_key:
+    elif get_settings().finnhub_enabled and get_settings().finnhub_api_key:
+        # The enabled conjunct keeps a toggled-off seam from recording a
+        # fail — config-off mirrors keyless (iteration 104 convention).
         record_provider_outcome("finnhub-recommendation", "fail", "request failed or no data")
     return items
 
