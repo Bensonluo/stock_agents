@@ -39,52 +39,29 @@ url = "https://mirrors.aliyun.com/pypi/simple"
 reference = "aliyun"
 
 [[package]]
-name = "akracer"
-version = "0.0.14"
-description = "akracer is next version of py_mini_racer"
-optional = false
-python-versions = ">=3.8"
-groups = ["main"]
-markers = "platform_system == \"Linux\""
-files = [
-    {file = "akracer-0.0.14-py3-none-any.whl", hash = "sha256:629eaccd0e1d18366804b797eb2692ed47bed0028f55b5a5af3cc277d521df04"},
-    {file = "akracer-0.0.14.tar.gz", hash = "sha256:e084c14bf6d9a02d5da375e3af1cba3d46f103aa1cf3a2010593b3e95bf1c29a"},
-]
-
-[package.source]
-type = "legacy"
-url = "https://mirrors.aliyun.com/pypi/simple"
-reference = "aliyun"
-
-[[package]]
 name = "akshare"
-version = "1.18.96"
+version = "1.20.35"
 description = "AKShare is an elegant and simple financial data interface library for Python, built for human beings!"
 optional = false
 python-versions = ">=3.11"
 groups = ["main"]
 files = [
-    {file = "akshare-1.18.96-py3-none-any.whl", hash = "sha256:d49c98632b741ab069098d8d1c9150f8452f46419d898bbfcba52a3b5c959f59"},
-    {file = "akshare-1.18.96.tar.gz", hash = "sha256:99edbf15e017450dc9bf2aa14da05bf7dbcb4373d6e89c5ae5c4a07d036436a7"},
+    {file = "akshare-1.20.35-py3-none-any.whl", hash = "sha256:4979b84b2941ded032fc989a0e6e78191282d472d4f9bcce29c84260fb2b2c31"},
+    {file = "akshare-1.20.35.tar.gz", hash = "sha256:7851285ae1a101fe93b9087c479b2dd47b7a0832c6186d50c10d9681ddfedc06"},
 ]
 
 [package.dependencies]
-akracer = {version = ">=0.0.13", markers = "platform_system == \"Linux\""}
-beautifulsoup4 = ">=4.9.1"
+beautifulsoup4 = ">=4.11.2"
 curl_cffi = ">=0.13.0"
-decorator = ">=4.4.2"
-html5lib = ">=1.0.1"
-jsonpath = ">=0.82"
-lxml = ">=4.2.1"
-mini-racer = {version = ">=0.12.4", markers = "platform_system != \"Linux\""}
-openpyxl = ">=3.0.3"
-pandas = ">=2.0.0"
-py-mini-racer = {version = ">=0.6.0", markers = "platform_system == \"Linux\""}
+html5lib = ">=1.1"
+lxml = ">=4.9.2"
+mini-racer = ">=0.13.0"
+openpyxl = ">=3.1.0"
+pandas = ">=2.2.2"
 requests = ">=2.22.0"
-tabulate = ">=0.8.6"
 tqdm = ">=4.43.0"
 urllib3 = ">=1.25.8"
-xlrd = ">=1.2.0"
+xlrd = ">=2.0.1"
 
 [package.source]
 type = "legacy"
@@ -715,23 +692,6 @@ url = "https://mirrors.aliyun.com/pypi/simple"
 reference = "aliyun"
 
 [[package]]
-name = "decorator"
-version = "5.2.1"
-description = "Decorators for Humans"
-optional = false
-python-versions = ">=3.8"
-groups = ["main"]
-files = [
-    {file = "decorator-5.2.1-py3-none-any.whl", hash = "sha256:d316bb415a2d9e2d2b3abcc4084c6502fc09240e292cd76a76afc106a1c8e04a"},
-    {file = "decorator-5.2.1.tar.gz", hash = "sha256:65f266143752f734b0a7cc83c46f4618af75b8c5911b00ccb61d0ac9b6da0360"},
-]
-
-[package.source]
-type = "legacy"
-url = "https://mirrors.aliyun.com/pypi/simple"
-reference = "aliyun"
-
-[[package]]
 name = "distro"
 version = "1.9.0"
 description = "Distro - an OS platform information API"
@@ -1305,22 +1265,6 @@ url = "https://mirrors.aliyun.com/pypi/simple"
 reference = "aliyun"
 
 [[package]]
-name = "jsonpath"
-version = "0.82.2"
-description = "An XPath for JSON"
-optional = false
-python-versions = "*"
-groups = ["main"]
-files = [
-    {file = "jsonpath-0.82.2.tar.gz", hash = "sha256:d87ef2bcbcded68ee96bc34c1809b69457ecec9b0c4dd471658a12bd391002d1"},
-]
-
-[package.source]
-type = "legacy"
-url = "https://mirrors.aliyun.com/pypi/simple"
-reference = "aliyun"
-
-[[package]]
 name = "jsonpointer"
 version = "3.0.0"
 description = "Identify specific nodes in a JSON document (RFC 6901) "
@@ -1879,7 +1823,6 @@ description = "Minimal, modern embedded V8 for Python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "platform_system != \"Linux\""
 files = [
     {file = "mini_racer-0.14.1-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:a401ecdf5f73d4714b76dc3a4c9b5780059cf4c59a5b64cff7497dc6c219d5a0"},
     {file = "mini_racer-0.14.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:56cc6965a1665a50d8d613bc43aa83b4cec6b1f09acc69dc4c2845dacb201463"},
@@ -2519,26 +2462,6 @@ files = [
     {file = "psycopg2_binary-2.9.11-cp39-cp39-musllinux_1_2_riscv64.whl", hash = "sha256:b637d6d941209e8d96a072d7977238eea128046effbf37d1d8b2c0764750017d"},
     {file = "psycopg2_binary-2.9.11-cp39-cp39-musllinux_1_2_x86_64.whl", hash = "sha256:41360b01c140c2a03d346cec3280cf8a71aa07d94f3b1509fa0161c366af66b4"},
     {file = "psycopg2_binary-2.9.11-cp39-cp39-win_amd64.whl", hash = "sha256:875039274f8a2361e5207857899706da840768e2a775bf8c65e82f60b197df02"},
-]
-
-[package.source]
-type = "legacy"
-url = "https://mirrors.aliyun.com/pypi/simple"
-reference = "aliyun"
-
-[[package]]
-name = "py-mini-racer"
-version = "0.6.0"
-description = "Minimal, modern embedded V8 for Python."
-optional = false
-python-versions = "*"
-groups = ["main"]
-markers = "platform_system == \"Linux\""
-files = [
-    {file = "py_mini_racer-0.6.0-py2.py3-none-macosx_10_10_x86_64.whl", hash = "sha256:346e73bb89a2024888244d487834be24a121089ceb0641dd0200cb96c4e24b57"},
-    {file = "py_mini_racer-0.6.0-py2.py3-none-manylinux1_x86_64.whl", hash = "sha256:42896c24968481dd953eeeb11de331f6870917811961c9b26ba09071e07180e2"},
-    {file = "py_mini_racer-0.6.0-py2.py3-none-win_amd64.whl", hash = "sha256:97cab31bbf63ce462ba4cd6e978c572c916d8b15586156c7c5e0b2e42c10baab"},
-    {file = "py_mini_racer-0.6.0.tar.gz", hash = "sha256:f71e36b643d947ba698c57cd9bd2232c83ca997b0802fc2f7f79582377040c11"},
 ]
 
 [package.source]
@@ -3622,26 +3545,6 @@ url = "https://mirrors.aliyun.com/pypi/simple"
 reference = "aliyun"
 
 [[package]]
-name = "tabulate"
-version = "0.9.0"
-description = "Pretty-print tabular data"
-optional = false
-python-versions = ">=3.7"
-groups = ["main"]
-files = [
-    {file = "tabulate-0.9.0-py3-none-any.whl", hash = "sha256:024ca478df22e9340661486f85298cff5f6dcdba14f3813e8830015b9ed1948f"},
-    {file = "tabulate-0.9.0.tar.gz", hash = "sha256:0095b12bf5966de529c0feb1fa08671671b3368eec77d7ef7ab114be2c068b3c"},
-]
-
-[package.extras]
-widechars = ["wcwidth"]
-
-[package.source]
-type = "legacy"
-url = "https://mirrors.aliyun.com/pypi/simple"
-reference = "aliyun"
-
-[[package]]
 name = "tenacity"
 version = "9.1.3"
 description = "Retry code until it succeeds"
@@ -4591,4 +4494,4 @@ reference = "aliyun"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "846643c0b543f56270ea9a6dbabbfe0bb97eb25d472fdf07429b35af239eadd3"
+content-hash = "781670b6ef63199896a1469e19745957877aadd33f868547dd29553e72d94305"
