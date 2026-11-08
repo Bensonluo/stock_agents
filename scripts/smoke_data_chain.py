@@ -176,8 +176,15 @@ def check_sector_etf_benchmark() -> tuple[str, str]:
     return "PASS", f"XLF {n} bars via {served}, latest {hist['dates'][-1]}"
 
 
-def check_em_financial_indicator() -> tuple[str, str]:
-    """EM datacenter financial indicators -- the financial-chain anchor."""
+def check_sina_cn_financials() -> tuple[str, str]:
+    """Sina CN financial indicators -- the financial-chain anchor.
+
+    akshare's stock_financial_analysis_indicator lives in stock_finance_sina
+    (upstream money.finance.sina.com.cn), NOT East Money -- this check was
+    mislabeled "EM financial indicator" from birth (corrected iteration
+    219); the name now matches the provider-health seam (sina-cn-financials,
+    iteration 216). The check itself is unchanged: same call, same contract.
+    """
     df = ak.stock_financial_analysis_indicator(symbol="600000")
     if df is None or df.empty:
         return "FAIL", "empty frame from stock_financial_analysis_indicator"
@@ -525,7 +532,7 @@ def main() -> int:
         ("tencent batch spot table", check_tencent_spot_table),
         ("tencent dual-market benchmarks", check_tencent_benchmarks),
         ("sector ETF benchmark chain (XLF)", check_sector_etf_benchmark),
-        ("EM financial indicator (600000)", check_em_financial_indicator),
+        ("Sina CN financials (600000)", check_sina_cn_financials),
         ("EM full-market spot table", check_em_spot_table),
         ("EM sector-benchmark chain", check_em_sector_chain),
         ("SSE option snapshot", check_sse_option_snapshot),
