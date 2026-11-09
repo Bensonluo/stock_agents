@@ -33,7 +33,7 @@ psycopg2-binary = "^2.9.9"
 
 # Data & Analysis
 pandas = "^2.2.0"
-numpy = "^1.26.3"
+numpy = "^2.4.6"
 yfinance = "^1.8.0"
 akshare = "^1.20.35"
 scipy = "^1.12.0"
