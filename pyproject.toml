@@ -23,9 +23,9 @@ pydantic-settings = "^2.1.0"
 
 # LangGraph & LangChain - 1.x line (unused langchain metapackage and
 # langchain-community dropped: zero imports anywhere in the repo)
-langgraph = "^1.0"
-langchain-openai = "^1.0"
-langchain-core = "^1.0"
+langgraph = "^1.2.20"
+langchain-openai = "^1.7.4"
+langchain-core = "^1.7.6"
 
 # Database
 sqlalchemy = "^2.1.8"
