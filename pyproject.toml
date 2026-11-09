@@ -51,11 +51,11 @@ loguru = "^0.7.0"
 langgraph-checkpoint-sqlite = "^3.1.1"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.0.0"
-pytest-asyncio = "^0.23.4"
-pytest-cov = "^4.1.0"
-ruff = "^0.2.0"
-black = "^24.1.1"
+pytest = "^9.2.0"
+pytest-asyncio = "^1.4.1"
+pytest-cov = "^7.1.0"
+ruff = "^0.17.4"
+black = "^26.10.1"
 httpx2 = ">=2.0.0"
 
 [build-system]
@@ -79,6 +79,10 @@ target-version = ["py311"]
 
 [tool.pytest.ini_options]
 addopts = "-m 'not network'"
+# pytest-asyncio 1.x: pin the fixture loop scope explicitly (the unset option
+# emits a PytestDeprecationWarning at configure time, which the suite hygiene
+# gate below escalates to an error). "function" is the future default.
+asyncio_default_fixture_loop_scope = "function"
 # Suite hygiene gate (iteration 208): stale marks (sync tests tagged asyncio,
 # unknown markers) fail loudly instead of accumulating as warning noise.
 filterwarnings = ["error::pytest.PytestWarning"]
