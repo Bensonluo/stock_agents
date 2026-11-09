@@ -18,8 +18,8 @@ python = "^3.11"
 # FastAPI and web framework
 fastapi = "^0.162.2"
 uvicorn = {extras = ["standard"], version = "^0.53.0"}
-pydantic = "^2.5.0"
-pydantic-settings = "^2.1.0"
+pydantic = "^2.14.3"
+pydantic-settings = "^2.16.2"
 
 # LangGraph & LangChain - 1.x line (unused langchain metapackage and
 # langchain-community dropped: zero imports anywhere in the repo)
