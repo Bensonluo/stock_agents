@@ -16,28 +16,28 @@ priority = "primary"
 [tool.poetry.dependencies]
 python = "^3.11"
 # FastAPI and web framework
-fastapi = "^0.162.2"
-uvicorn = {extras = ["standard"], version = "^0.53.0"}
-pydantic = "^2.5.0"
-pydantic-settings = "^2.1.0"
+fastapi = "^0.162.5"
+uvicorn = {extras = ["standard"], version = "^0.54.0"}
+pydantic = "^2.14.3"
+pydantic-settings = "^2.16.2"
 
 # LangGraph & LangChain - 1.x line (unused langchain metapackage and
 # langchain-community dropped: zero imports anywhere in the repo)
-langgraph = "^1.0"
-langchain-openai = "^1.0"
-langchain-core = "^1.0"
+langgraph = "^1.2.20"
+langchain-openai = "^1.7.4"
+langchain-core = "^1.8.0"
 
 # Database
 sqlalchemy = "^2.1.8"
 psycopg2-binary = "^2.9.9"
 
 # Data & Analysis
-pandas = "^2.2.0"
-numpy = "^1.26.3"
+pandas = "^3.1.1"
+numpy = "^2.4.6"
 yfinance = "^1.8.0"
-akshare = "^1.20.35"
-scipy = "^1.12.0"
-scikit-learn = "^1.4.0"
+akshare = "^1.20.37"
+scipy = "^1.17.1"
+scikit-learn = "^1.9.1"
 
 # Backtesting
 
@@ -45,17 +45,17 @@ scikit-learn = "^1.4.0"
 
 # Utilities
 python-dotenv = "^1.0.0"
-httpx = "^0.26.0"
+httpx = "^0.28.1"
 aiofiles = ">=23.2.1"
-loguru = "^0.7.0"
+loguru = "^0.8.0"
 langgraph-checkpoint-sqlite = "^3.1.1"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.0.0"
-pytest-asyncio = "^0.23.4"
-pytest-cov = "^4.1.0"
-ruff = "^0.2.0"
-black = "^24.1.1"
+pytest = "^9.2.0"
+pytest-asyncio = "^1.4.1"
+pytest-cov = "^7.1.0"
+ruff = "^0.17.4"
+black = "^26.10.1"
 httpx2 = ">=2.0.0"
 
 [build-system]
@@ -79,6 +79,10 @@ target-version = ["py311"]
 
 [tool.pytest.ini_options]
 addopts = "-m 'not network'"
+# pytest-asyncio 1.x: pin the fixture loop scope explicitly (the unset option
+# emits a PytestDeprecationWarning at configure time, which the suite hygiene
+# gate below escalates to an error). "function" is the future default.
+asyncio_default_fixture_loop_scope = "function"
 # Suite hygiene gate (iteration 208): stale marks (sync tests tagged asyncio,
 # unknown markers) fail loudly instead of accumulating as warning noise.
 filterwarnings = ["error::pytest.PytestWarning"]
